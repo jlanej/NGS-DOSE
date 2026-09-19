@@ -7,7 +7,7 @@ have HPRC assemblies, and NGS-PCA has already been run on it (`ngspca/`).
 | path | what |
 | --- | --- |
 | `pilot/` | four trios, each sample also as an independent older library; run locally; counts files, the evaluation and plotting scripts, the report and the figure are here |
-| `00_setup.sh`, `01a_dispatch_staged.sh`, `01b_dose_sample.sh`, `01_count.sh`, `02_cohort.sh`, `03_compare_modes.sh` (+ `compare_modes.py`), `04_hprc_satellites.sh`, `config.sh` | the full-cohort run, for SLURM or a plain loop |
+| `00_setup.sh`, `01_stage_and_dose.sh`, `01a_dispatch_staged.sh`, `01b_dose_sample.sh`, `01_count.sh`, `02_cohort.sh`, `03_compare_modes.sh` (+ `compare_modes.py`), `04_hprc_satellites.sh`, `config.sh` | the full-cohort run, for SLURM or a plain loop |
 | `ngs-dose.def` | fallback Apptainer definition of the container image |
 | `hprc_r2_censat.keys.txt`, `hprc_satellites.py` | the HPRC release-2 CenSat annotations (S3 keys; 205 samples, 200 of them in this cohort) and the comparison of satellite estimates against them |
 | `ngspca/` | NGS-PCA output for this cohort (200 coverage PCs, `AUTO_HQ_median`), produced by [NGS-PCA's 1000G example](https://github.com/jlanej/NGS-PCA/tree/master/example/1000G_highcov) |
@@ -39,13 +39,19 @@ come from different cultures of the cell line.
 Full accuracy for everyone: every CRAM is staged, scanned whole, fetched as well (three seconds
 more on a local file), verified, and removed.
 
-```bash
-export WORK_DIR=/scratch/$USER/ngs_dose_1000G
-cd example/1000G                                        # submit from here: config.sh and logs/ are relative to it
-bash 00_setup.sh                                        # reference, pedigree, manifest (sample, URL, MD5), container if SIF is set
+Nothing is installed on the cluster: the image holds the engine, the `ngsdose` package, the
+resource bundle, `aria2c` and these scripts, and the host needs Apptainer, SLURM, `curl` and the
+coreutils. (From a checkout instead: leave `SIF` unset, `cargo build --release`, `pip install .`.)
 
-# stage CRAMs into $CRAM_DIR/<sample>.cram(.crai) by whatever works on your cluster, then
-bash 01a_dispatch_staged.sh                             # one 01b_dose_sample.sh job per CRAM that has landed; re-run as files arrive
+```bash
+apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
+apptainer exec ngs-dose.sif ngs-dose-example $PWD/dose1000G    # the scripts submit jobs, so they live on the host
+cd dose1000G                                            # submit from here: config.sh and logs/ are relative to it
+export SIF=$PWD/../ngs-dose.sif WORK_DIR=/scratch/$USER/ngs_dose_1000G
+
+bash 00_setup.sh                                        # reference, pedigree, manifest (sample, URL, MD5)
+LIMIT=5 bash 01_stage_and_dose.sh                       # smoke test: five samples staged, counted, removed
+sbatch 01_stage_and_dose.sh                             # the cohort: a few transfers at a time, one 01b_dose_sample.sh job per CRAM
 
 MODE=scan sbatch 02_cohort.sh                           # estimate, calibrate, adjust, transmission - on the scans
 MODE=fetch sbatch 02_cohort.sh                          # the same on the targeted fetches, for the comparison
@@ -53,13 +59,20 @@ bash 03_compare_modes.sh                                # sink capture per sampl
 sbatch 04_hprc_satellites.sh                            # satellite array mass against the HPRC assemblies of the same people
 ```
 
+`01_stage_and_dose.sh` keeps a few multi-connection `aria2c` transfers going (the image's
+`aria2c`; it checks each file against the MD5 of the sequence index), holds at most
+`MAX_LOCAL_CRAMS` files on disk, submits one job per landed CRAM and can be re-run at any time:
+finished samples, queued jobs and files already on disk are recognised. Compute nodes need no
+internet unless the manager itself runs as a job; on a cluster where they have none, run it on a
+login or transfer node (`bash 01_stage_and_dose.sh` in tmux).
+
 `01b_dose_sample.sh SAMPLE LINE [MD5]` has the calling convention of NGS-PCA's
 `01b_mosdepth_sample.sh` (verify the MD5 if given, process, check the outputs, delete the CRAM),
 so the aria2 download manager that staged this cohort for NGS-PCA can drive it: it needs its
 per-sample job script and its "already done" test to be settable (`$WORK_DIR/counts_scan/<sample>.json.gz`
-instead of the mosdepth output), nothing else. `01a_dispatch_staged.sh` is the manager-free
-alternative: it neither downloads nor deletes, skips files aria2 is still writing, and submits
-each landed CRAM once. About 14 CPU-minutes and 1.3 GB of memory per sample; the counts files
+instead of the mosdepth output), nothing else. `01a_dispatch_staged.sh` is for files staged by
+other means (Globus, rsync): it neither downloads nor deletes, skips files aria2 is still
+writing, and submits each landed CRAM once. About 14 CPU-minutes and 1.3 GB of memory per sample; the counts files
 are ~230 kB (scan) and ~70 kB (fetch), so the whole cohort is under 1 GB.
 
 Without staging, `01_count.sh` counts straight from the public bucket, a block of the manifest
@@ -112,7 +125,8 @@ Operational notes:
 - With `export SIF=/path/to/ngs-dose.sif` both the engine and the Python steps run through
   Apptainer. `00_setup.sh` pulls the image if the file is not there yet
   (`docker://ghcr.io/jlanej/ngs-dose:latest`, published by `.github/workflows/container.yml` on
-  version tags or on demand; a private package needs `apptainer remote login` first). Where
+  every push to `main`, and as `:X.Y.Z` on version tags; a package that has not been made public
+  needs `apptainer remote login` first). Where
   nothing has been published, `ngs-dose.def` builds the same image from a checkout
   (`apptainer build --fakeroot`, from the repository root). The scripts bind `$WORK_DIR`, the
   repository, the reference directory and `$CRAM_DIR` (`APPTAINER_BINDS` in `config.sh`).

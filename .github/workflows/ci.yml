@@ -4,16 +4,31 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 6 * * 1"          # weekly: dependencies move even when the repository does not
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   test:
+    name: test (${{ matrix.os }}, python ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, python: "3.12", lint: true }
+          - { os: ubuntu-latest, python: "3.10" }          # the oldest Python the package claims to support
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.12" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +45,18 @@ jobs:
         run: brew install samtools xz
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
+      # Lint once, and not on the weekly run: a new compiler's new lints are not a regression of ours
+      - name: Engine - format and lints
+        if: matrix.lint && github.event_name != 'schedule'
+        run: |
+          set -o pipefail               # the status of the pipeline below is clippy's, not the annotator's
+          cargo fmt --check
+          # findings become annotations on the lines they are about
+          cargo clippy --release --all-targets --locked --message-format=json -- -D warnings | python3 .github/scripts/cargo_annotate.py
 
       - name: Engine - build
         run: cargo build --release --locked
@@ -40,29 +66,22 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Python package
         run: pip install -e ".[dev]"
+
+      # defects only (undefined and unused names, syntax, bugbear); configured in pyproject.toml
+      - name: Python - lints
+        if: matrix.lint
+        run: ruff check ngsdose tests example resources/build
 
       # data-free simulation of the estimator, cohort calibration and trio statistics
       - name: Model self-test
         run: ngsdose selftest
 
-      # unit tests, the simulated-genome end-to-end test (engine + estimator against known
-      # truth) and the real-data regression tests on the 1000 Genomes pilot fixtures
+      # unit tests, the simulated-genome end-to-end test (engine + estimator against known truth),
+      # real 1000 Genomes reads, a mock trio cohort through the cohort layer, and the regression
+      # tests on the pilot's counts
       - name: pytest
         run: pytest -v
-
-  container:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build the image
-        run: docker build -t ngs-dose .
-      - name: Smoke test inside the image
-        run: |
-          docker run --rm ngs-dose ngs-dose --version
-          docker run --rm ngs-dose ngsdose selftest
-          docker run --rm -v "$PWD/tests/data:/data:ro" ngs-dose sh -c \
-            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz'

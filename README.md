@@ -61,10 +61,24 @@ Full tables: [example/1000G/pilot/pilot_report.md](example/1000G/pilot/pilot_rep
 
 ## Quick start
 
+From source (the engine needs a Rust toolchain and libclang; the package needs numpy):
+
 ```bash
 cargo build --release                     # the engine: target/release/ngs-dose
 pip install -e .                          # the modelling layer: ngsdose
 ```
+
+Without compiling: the container has the engine, the package, the GRCh38 bundle, `aria2c` and
+the cohort scripts - a cluster needs nothing else but Apptainer and SLURM (`example/1000G`),
+
+```bash
+apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
+apptainer exec ngs-dose.sif ngs-dose count --help
+```
+
+and every [release](https://github.com/jlanej/NGS-DOSE/releases) carries the engine for Linux
+(glibc 2.28 and newer, curl and TLS built in) and for macOS on Apple silicon, the Python wheel,
+and the resource bundle (`export NGSDOSE_RESOURCES=/path/to/resources/GRCh38`).
 
 ```bash
 B=resources/GRCh38
@@ -131,7 +145,9 @@ Engine, estimator, cohort layer and the GRCh38 bundle (45S, 5S, DJ) are implemen
 Rust unit tests, a simulated genome with known truth run end to end, a 2% subsample of real
 NA12878 reads, a mock trio cohort (that subsample sixty times over) through the whole cohort
 layer, bundle-integrity checks and regression tests on the pilot's counts, all in CI
-(the workflow itself has not run yet). Before the cohort run every assumption the counts files
+(Linux and macOS, Python 3.10 to 3.13). Every push to `main` publishes the container image, and
+a version tag makes a release with prebuilt engines, the Python package and the resource bundle
+(`.github/workflows/`). Before the cohort run every assumption the counts files
 rest on was audited against data; seven were wrong and are fixed (DESIGN.md §15). Validated so far on a
 12-sample, 4-trio pilot in which every sample has an independent library replicate. An
 experimental satellite panel (HSat1A/1B/2/3, β-satellite, α-satellite HOR) ships under

@@ -1,12 +1,9 @@
 """The shipped GRCh38 bundle is internally consistent. A cohort run is only as good as these files,
 and nothing else would notice a truncated panel or a controls FASTA that no longer matches its BED."""
 import gzip
-import json
 import subprocess
 from pathlib import Path
 
-import numpy as np
-import pytest
 
 from ngsdose import io, resources
 

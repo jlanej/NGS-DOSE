@@ -1,36 +1,109 @@
 name: Container
 
-# Publishes ghcr.io/<owner>/ngs-dose (engine + ngsdose + the GRCh38 bundle) on version tags, or on
-# demand. On a cluster:  apptainer pull ngs-dose.sif docker://ghcr.io/<owner>/ngs-dose:latest
+# ghcr.io/<owner>/ngs-dose: the engine, the ngsdose package, the GRCh38 bundle, aria2c and the
+# cohort scripts - everything a cluster run needs besides Apptainer and SLURM.
+#   every push to main  ->  :latest and :sha-<commit>
+#   every tag vX.Y.Z    ->  :X.Y.Z and :X.Y
+#   pull requests       ->  built and smoke-tested, not pushed
+# On a cluster:  apptainer pull ngs-dose.sif docker://ghcr.io/<owner>/ngs-dose:latest
+# (GitHub creates a package private: make it public once, under the package's settings, for
+#  that pull to need no login.)
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ngs-dose
+
 jobs:
-  publish:
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ngs-dose:test
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # what is pushed has counted real reads and estimated from them
+      - name: Smoke test inside the image
+        run: |
+          docker run --rm ngs-dose:test ngs-dose --version
+          docker run --rm ngs-dose:test ngsdose selftest
+          docker run --rm -v "$PWD/tests/data:/data:ro" ngs-dose:test sh -c \
+            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz'
+
+      # The way a cluster uses it: the image under Apptainer and nothing else. The cohort scripts are
+      # copied out of the image, a CRAM is staged with the image's aria2c (MD5 checked) from a
+      # stand-in for the public bucket - the real-read fixture under CRAM-style names, over HTTP -
+      # then scanned, fetched, and removed; the estimate is made with the image's bundle.
+      - uses: eWaterCycle/setup-apptainer@v2
+        with:
+          apptainer-version: 1.3.6
+      - name: Container-only cohort flow under Apptainer
+        run: |
+          set -euo pipefail
+          trap 'echo "::error title=container-only flow::$(tail -c 1200 "$RUNNER_TEMP/flow.log" 2>/dev/null | tr "\n" " ")"' ERR
+          exec > >(tee "$RUNNER_TEMP/flow.log") 2>&1
+          apptainer build "$RUNNER_TEMP/ngs-dose.sif" docker-daemon://ngs-dose:test
+          export SIF="$RUNNER_TEMP/ngs-dose.sif" WORK_DIR="$RUNNER_TEMP/work"
+          apptainer exec "$SIF" aria2c --version | head -1      # the stager must find its downloader in the image
+          apptainer exec "$SIF" ngs-dose-example "$RUNNER_TEMP/cohort"
+          mkdir -p "$RUNNER_TEMP/bucket" "$WORK_DIR/reference" "$WORK_DIR/crams"
+          cp tests/data/NA12878.subsample.bam "$RUNNER_TEMP/bucket/MINI.final.cram"
+          cp tests/data/NA12878.subsample.bam.csi "$RUNNER_TEMP/bucket/MINI.final.cram.crai"
+          (cd "$RUNNER_TEMP/bucket" && exec python3 -m http.server 8765 >/dev/null 2>&1) &
+          sleep 2
+          printf 'MINI\thttp://127.0.0.1:8765/MINI.final.cram\t%s\n' "$(md5sum "$RUNNER_TEMP/bucket/MINI.final.cram" | cut -d' ' -f1)" > "$WORK_DIR/manifest.tsv"
+          cd "$RUNNER_TEMP/cohort"
+          RUN_LOCAL=1 THREADS=2 bash 01_stage_and_dose.sh
+          test -s "$WORK_DIR/counts_scan/MINI.json.gz" && test -s "$WORK_DIR/counts_fetch/MINI.json.gz"
+          test -z "$(ls "$WORK_DIR/crams")"                 # the staged file is gone once it has been counted
+          bash -c 'source ./config.sh && ngsdose_py ngsdose estimate "$WORK_DIR/counts_scan/MINI.json.gz" -t -' | cut -f1-3
+          bash 03_compare_modes.sh | tail -12
+
+      # only main and version tags publish; everything else stops at the smoke test
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/ngs-dose
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
+
+      - name: Push
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
