@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/ci-publishing]   # TEMPORARY: exercise the workflows before the PR exists
   pull_request:
   schedule:
     - cron: "17 6 * * 1"          # weekly: dependencies move even when the repository does not

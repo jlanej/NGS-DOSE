@@ -9,7 +9,7 @@ name: Container
 #  that pull to need no login.)
 on:
   push:
-    branches: [main]
+    branches: [main, claude/ci-publishing]   # TEMPORARY: exercise the workflows before the PR exists
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -60,15 +60,16 @@ jobs:
           docker run --rm -v "$PWD/tests/data:/data:ro" ngs-dose:test sh -c \
             'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz'
 
+      # only main and version tags publish; everything else stops at the smoke test
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
         uses: docker/build-push-action@v6
         with:
           context: .
