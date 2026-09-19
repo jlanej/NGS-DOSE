@@ -73,8 +73,10 @@ enum Cmd {
         /// fragment-GC window lengths to tabulate (the modal read length is always added)
         #[arg(long, value_delimiter = ',', default_value = "100,150,200,250,300,350,400,450,500,550,600")]
         l_grid: Vec<usize>,
-        /// bin width (bp) of the placement histogram (where class reads were aligned)
-        #[arg(long, default_value_t = 10000)]
+        /// bin width (bp) of the placement histogram: where class reads were aligned, and how many
+        /// reads of any kind each of those bins holds. 1000 is the grid of `mosdepth --by 1000`.
+        /// Compositional classes (satellite families) are recorded at ten times this width.
+        #[arg(long, default_value_t = 1000)]
         place_bin: i64,
         /// fetch mode: attempts per interval (remote inputs fail transiently)
         #[arg(long, default_value_t = 5)]

@@ -19,10 +19,10 @@ mkdir -p "$COUNTS_DIR" "$WORK_DIR/crai" "$LOG_DIR"
 task="${SLURM_ARRAY_TASK_ID:-0}"
 # a stalled HTTPS connection can hang forever: bound every sample where `timeout` exists (GNU coreutils)
 TMO=(); command -v timeout >/dev/null 2>&1 && TMO=(timeout "$SAMPLE_TIMEOUT")
-run() { if [ -n "$SIF" ]; then "${TMO[@]}" apptainer exec "$SIF" ngs-dose "$@"; else "${TMO[@]}" "$NGSDOSE_BIN" "$@"; fi; }
+run() { if [ -n "$SIF" ]; then "${TMO[@]}" apptainer exec --bind "$APPTAINER_BINDS" "$SIF" ngs-dose "$@"; else "${TMO[@]}" "$NGSDOSE_BIN" "$@"; fi; }
 
 fail=0
-while IFS=$'\t' read -r sample cram; do
+while IFS=$'\t' read -r sample cram _; do
   out="$COUNTS_DIR/$sample.json.gz"
   [ -s "$out" ] && continue
   args=(-i "$cram" -T "$REF_FASTA" -c "$BUNDLE/controls.fa.gz" -p "$BUNDLE/panel.k31.tsv.gz" -@ "$THREADS" -s "$sample" -o "$out.tmp.gz")

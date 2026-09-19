@@ -93,6 +93,83 @@ pub fn spawn_watchdog(limit_s: u64, what: String) {
     });
 }
 
+/// Mapped primary reads per placement bin of the alignment, by leftmost position: all of them and
+/// those flagged duplicate. A depth tool (mosdepth) sees a bin's total; the class placements say
+/// how much of that total is the class. Dense in scan mode, where every read of the file is
+/// tallied by one thread; sparse in fetch mode, where only the fetched intervals are seen.
+#[derive(Clone)]
+pub enum BinTally {
+    Dense(Vec<Vec<[u32; 2]>>),
+    Sparse(FxHashMap<(i32, i32), [u32; 2]>),
+}
+
+impl Default for BinTally {
+    fn default() -> Self {
+        BinTally::Sparse(FxHashMap::default())
+    }
+}
+
+impl BinTally {
+    #[inline]
+    fn bump(&mut self, tid: i32, bin: usize, dup: bool) {
+        let c = match self {
+            BinTally::Dense(v) => {
+                if v.len() <= tid as usize {
+                    v.resize(tid as usize + 1, Vec::new());
+                }
+                let t = &mut v[tid as usize];
+                if t.len() <= bin {
+                    t.resize(bin + 4096, [0, 0]);
+                }
+                &mut t[bin]
+            }
+            BinTally::Sparse(m) => m.entry((tid, bin as i32)).or_insert([0, 0]),
+        };
+        c[0] += 1;
+        c[1] += dup as u32;
+    }
+    fn get(&self, tid: i32, bin: usize) -> [u32; 2] {
+        match self {
+            BinTally::Dense(v) => v.get(tid as usize).and_then(|t| t.get(bin)).copied().unwrap_or([0, 0]),
+            BinTally::Sparse(m) => m.get(&(tid, bin as i32)).copied().unwrap_or([0, 0]),
+        }
+    }
+    fn merge(&mut self, o: &BinTally) {
+        let mut add = |tid: i32, bin: usize, c: [u32; 2]| match self {
+            BinTally::Dense(v) => {
+                if v.len() <= tid as usize {
+                    v.resize(tid as usize + 1, Vec::new());
+                }
+                let t = &mut v[tid as usize];
+                if t.len() <= bin {
+                    t.resize(bin + 1, [0, 0]);
+                }
+                t[bin][0] += c[0];
+                t[bin][1] += c[1];
+            }
+            BinTally::Sparse(m) => {
+                let e = m.entry((tid, bin as i32)).or_insert([0, 0]);
+                e[0] += c[0];
+                e[1] += c[1];
+            }
+        };
+        match o {
+            BinTally::Dense(v) => {
+                for (tid, t) in v.iter().enumerate() {
+                    for (bin, c) in t.iter().enumerate().filter(|(_, c)| c[0] > 0) {
+                        add(tid as i32, bin, *c);
+                    }
+                }
+            }
+            BinTally::Sparse(m) => {
+                for (&(tid, bin), c) in m {
+                    add(tid, bin as usize, *c);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ReadStats {
     pub records: u64,
@@ -107,11 +184,20 @@ pub struct ReadStats {
     pub readlen: Vec<u64>,
     /// mapped primary reads per header contig; complete in scan mode only
     pub contig_reads: Vec<u64>,
+    /// mapped primary reads per placement bin (width `place_bin`)
+    pub bins: BinTally,
+    pub place_bin: i64,
 }
 
 impl ReadStats {
-    pub fn new() -> Self {
-        ReadStats { insert: vec![0; INSERT_MAX + 1], readlen: vec![0; READLEN_MAX + 1], ..Default::default() }
+    pub fn new(place_bin: i64, dense: bool) -> Self {
+        ReadStats {
+            insert: vec![0; INSERT_MAX + 1],
+            readlen: vec![0; READLEN_MAX + 1],
+            bins: if dense { BinTally::Dense(Vec::new()) } else { BinTally::default() },
+            place_bin: place_bin.max(1),
+            ..Default::default()
+        }
     }
     pub fn merge(&mut self, o: &ReadStats) {
         self.records += o.records;
@@ -134,6 +220,7 @@ impl ReadStats {
         for (a, b) in self.contig_reads.iter_mut().zip(&o.contig_reads) {
             *a += b;
         }
+        self.bins.merge(&o.bins);
     }
 }
 
@@ -318,6 +405,19 @@ pub fn classify(panel: &Panel, p: &Params, s: &mut Scratch, out: &mut Vec<Assign
     un
 }
 
+/// Width of the bins in which the alignment positions of a class's reads are recorded. A
+/// satellite family covers tens of megabases, so it gets ten times the width of a positional class.
+pub const COMPOSITIONAL_BIN_FACTOR: i64 = 10;
+
+#[inline]
+fn place_width(p: &Params, kind: Kind) -> i64 {
+    if kind == Kind::Positional {
+        p.place_bin
+    } else {
+        p.place_bin * COMPOSITIONAL_BIN_FACTOR
+    }
+}
+
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn record_assignment(
@@ -358,7 +458,7 @@ fn record_assignment(
             }
         }
     }
-    let pb = if tid < 0 { -1 } else { (pos / p.place_bin) as i32 };
+    let pb = if tid < 0 { -1 } else { (pos / place_width(p, cdef.kind)) as i32 };
     *acc.placements.entry((a.class as u8, tid, pb)).or_insert(0) += 1;
 }
 
@@ -410,6 +510,7 @@ fn handle_record_meta(rec: &bam::Record, controls: &Controls, st: &mut ReadStats
             st.contig_reads.resize(tid as usize + 1, 0);
         }
         st.contig_reads[tid as usize] += 1;
+        st.bins.bump(tid, (rec.pos().max(0) / st.place_bin) as usize, dup);
     }
     let p5 = five_prime(rec);
     let Some((idx, off, is_control)) = controls.locate(rec.tid(), p5) else {
@@ -525,7 +626,7 @@ pub fn scan(input: &Input, panel: &Panel, controls: &Controls, p: &Params) -> Re
     let decomp = p.threads.clamp(1, 8);
     let mut rd = input.open_stream(decomp)?;
     let (tx, rx) = crossbeam_channel::bounded::<Batch>(workers * 2);
-    let mut stats = ReadStats::new();
+    let mut stats = ReadStats::new(p.place_bin, true);
     let accs: Vec<Acc> = std::thread::scope(|scope| -> Result<Vec<Acc>> {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
@@ -615,7 +716,7 @@ pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String
                 scope.spawn(move || -> Result<(Acc, ReadStats)> {
                     let mut rd = input.open_indexed()?;
                     let mut acc = Acc::new(panel, p.bin);
-                    let mut st = ReadStats::new();
+                    let mut st = ReadStats::new(p.place_bin, false);
                     let mut s = Scratch::new(panel.classes.len());
                     let mut rec = bam::Record::new();
                     let mut pending: Vec<(usize, usize, bool)> = Vec::new();
@@ -624,7 +725,7 @@ pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String
                         loop {
                             // an interval is committed only if it was read to its end
                             let mut iv_acc = Acc::new(panel, p.bin);
-                            let mut iv_st = ReadStats::new();
+                            let mut iv_st = ReadStats::new(p.place_bin, false);
                             pending.clear();
                             let res = read_interval(&mut rd, job, panel, controls, p, &mut iv_acc, &mut iv_st, &mut pending, &mut s, &mut rec);
                             match res {
@@ -657,7 +758,7 @@ pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String
         handles.into_iter().map(|h| h.join().expect("worker panicked")).collect()
     });
     let mut acc = Acc::new(panel, p.bin);
-    let mut stats = ReadStats::new();
+    let mut stats = ReadStats::new(p.place_bin, false);
     for r in results {
         let (a, s) = r?;
         acc.merge(&a);
@@ -757,7 +858,15 @@ pub struct Placement {
     pub class: String,
     pub contig: String,
     pub start: i64,
+    /// reads of the class placed in this bin (by leftmost position; unmapped reads that sit at
+    /// their mate's position are included, as an index query would return them)
     pub reads: u32,
+    /// every mapped primary read in the bin, and those of them flagged duplicate: what a depth
+    /// tool sees there, with and without its duplicate filter
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dup: Option<u32>,
 }
 
 /// A contig of the alignment header. Lengths let the estimator refuse a file aligned to another
@@ -807,6 +916,7 @@ pub struct Output {
     pub ambiguous_reads: u64,
     pub below_threshold_reads: u64,
     pub placement_bin: i64,
+    pub placement_bin_compositional: i64,
     pub placements: Vec<Placement>,
     pub eof_marker: &'static str,
     pub contigs: Vec<ContigOut>,
@@ -903,11 +1013,20 @@ pub fn make_output(
     let mut placements: Vec<Placement> = acc
         .placements
         .iter()
-        .map(|(&(class, tid, b), &reads)| Placement {
-            class: panel.classes[class as usize].name.clone(),
-            contig: if tid < 0 { "*".to_string() } else { header_contigs[tid as usize].0.clone() },
-            start: if tid < 0 { 0 } else { b as i64 * p.place_bin },
-            reads,
+        .map(|(&(class, tid, b), &reads)| {
+            let width = place_width(p, panel.classes[class as usize].kind);
+            // the tally is kept at the positional width; a wider bin is the sum of its parts
+            let parts = (width / p.place_bin.max(1)) as usize;
+            let census = (tid >= 0)
+                .then(|| (0..parts).map(|k| st.bins.get(tid, b as usize * parts + k)).fold([0u32, 0u32], |a, c| [a[0] + c[0], a[1] + c[1]]));
+            Placement {
+                class: panel.classes[class as usize].name.clone(),
+                contig: if tid < 0 { "*".to_string() } else { header_contigs[tid as usize].0.clone() },
+                start: if tid < 0 { 0 } else { b as i64 * width },
+                reads,
+                all: census.map(|c| c[0]),
+                dup: census.map(|c| c[1]),
+            }
         })
         .collect();
     // total order (ties broken by contig and position): the file is reproducible byte for byte
@@ -963,6 +1082,7 @@ pub fn make_output(
         ambiguous_reads: acc.ambiguous,
         below_threshold_reads: acc.below_threshold,
         placement_bin: p.place_bin,
+        placement_bin_compositional: p.place_bin * COMPOSITIONAL_BIN_FACTOR,
         placements,
         eof_marker,
         contigs,

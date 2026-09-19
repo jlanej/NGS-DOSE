@@ -2,7 +2,7 @@
 # One-time setup: directories, reference, pedigree, and the sample -> CRAM URL manifest.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
-mkdir -p "$WORK_DIR/reference" "$COUNTS_DIR" "$EST_DIR" "$LOG_DIR" "$WORK_DIR/crai"
+mkdir -p "$WORK_DIR/reference" "$COUNTS_DIR" "$EST_DIR" "$LOG_DIR" "$WORK_DIR/crai" "$CRAM_DIR" "$(dirname "$REF_FASTA")"
 mkdir -p "$EX_DIR/logs"      # SLURM opens `--output=logs/...` relative to the submit directory before the job starts
 
 # the container, when one is asked for (SIF=/path/to/ngs-dose.sif): pull the published image
@@ -18,20 +18,20 @@ if [ ! -s "$REF_FASTA" ]; then
 fi
 [ -s "$PEDIGREE" ] || curl -sSL -o "$PEDIGREE" "$PEDIGREE_URL"
 
-# manifest: SAMPLE <TAB> CRAM_URL, from the two NYGC sequence indexes (2,504 + 698 samples)
+# manifest: SAMPLE <TAB> CRAM_URL <TAB> CRAM_MD5, from the two NYGC sequence indexes (2,504 + 698 samples)
 : > "$MANIFEST"
 for pair in "1000G_2504_high_coverage.sequence.index:data" \
             "additional_698_related/1000G_698_related_high_coverage.sequence.index:additional_698_related/data"; do
   idx="${pair%%:*}"; sub="${pair##*:}"
   # the file name comes from the index's own path column, the sample name is trimmed: three
   # sample names in the 2504 index carry a trailing space
-  curl -sSL "$S3_HTTPS_BASE/$idx" | awk -F'\t' -v b="$S3_HTTPS_BASE/$sub" '!/^#/ {n=split($1, p, "/"); s=$10; gsub(/[ \t\r]+/, "", s); print s "\t" b "/" $3 "/" p[n]}' >> "$MANIFEST"
+  curl -sSL "$S3_HTTPS_BASE/$idx" | awk -F'\t' -v b="$S3_HTTPS_BASE/$sub" '!/^#/ {n=split($1, p, "/"); s=$10; gsub(/[ \t\r]+/, "", s); print s "\t" b "/" $3 "/" p[n] "\t" $2}' >> "$MANIFEST"
 done
 sort -u -o "$MANIFEST" "$MANIFEST"
 echo "manifest: $(wc -l < "$MANIFEST") samples -> $MANIFEST"
 [ "$(wc -l < "$MANIFEST")" -ge 3000 ] || { echo "ERROR: expected 3,202 samples in the manifest; is the network reachable from this node?" >&2; exit 1; }
-if awk -F'\t' 'NF != 2 || $0 ~ / / || $2 !~ /\.cram$/ || seen[$1]++ {bad = 1} END {exit !bad}' "$MANIFEST"; then
-  echo "ERROR: malformed manifest line (whitespace, duplicate sample, or not a .cram)" >&2; exit 1
+if awk -F'\t' 'NF != 3 || $0 ~ / / || $2 !~ /\.cram$/ || $3 !~ /^[0-9a-f]{32}$/ || seen[$1]++ {bad = 1} END {exit !bad}' "$MANIFEST"; then
+  echo "ERROR: malformed manifest line (whitespace, duplicate sample, not a .cram, or no MD5)" >&2; exit 1
 fi
 
 # the samples that also have an HPRC release-2 assembly: the whole-file scan subset

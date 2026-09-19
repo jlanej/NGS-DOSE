@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+DECISION_WIDTH = 10_000
+
 
 def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int = 25) -> tuple[list[tuple[str, int, int, str]], dict]:
     """Intervals holding >= min_frac of a class's reads (and >= min_reads reads, so that a
@@ -22,41 +24,45 @@ def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int =
     Returns (BED rows, per-class capture: the fraction of each sample's scan-mode class reads
     that fall inside the learned sinks)."""
     from .io import load_counts
-    keep: dict[str, set[tuple[str, int]]] = defaultdict(set)
-    summaries = []                                         # per sample: {class: {(contig, start): reads}} is too big; keep totals + kept bins
-    width = None
+    keep: dict[str, set[tuple[str, int, int]]] = defaultdict(set)      # class -> {(contig, start, end)}
+    summaries = []                                         # per sample: class totals and the reads of every bin
     for item in scan_counts:
         c = item if isinstance(item, dict) else load_counts(item)
         if c["mode"] != "scan":
             raise ValueError(f"{c['sample']}: sinks must be learned from scan-mode counts")
-        width = c["placement_bin"]
+        width = c["placement_bin"]                         # scans made with different bin widths can be pooled
         positional = {x["name"] for x in c["classes"] if x["kind"] == "positional"}
         total: dict[str, int] = defaultdict(int)
         for p in c["placements"]:
             total[p["class"]] += p["reads"]
         bins: dict[str, dict[tuple[str, int], int]] = defaultdict(dict)
+        coarse: dict[tuple[str, str, int], int] = defaultdict(int)
         for p in c["placements"]:
             if p["class"] in positional and p["contig"] != "*":
                 bins[p["class"]][(p["contig"], p["start"])] = p["reads"]
-                if p["reads"] >= max(min_reads, min_frac * total[p["class"]]):
-                    keep[p["class"]].add((p["contig"], p["start"]))
+                coarse[(p["class"], p["contig"], p["start"] // DECISION_WIDTH)] += p["reads"]
+        # whether a neighbourhood is a sink is decided per DECISION_WIDTH, whatever the grid of the
+        # scan (a finer grid must not promote three stray reads in one kilobase); a finer grid then
+        # trims the sink to the bins that actually hold reads
+        for cls, per in bins.items():
+            for (contig, start), reads in per.items():
+                if coarse[(cls, contig, start // DECISION_WIDTH)] >= max(min_reads, min_frac * total[cls]):
+                    keep[cls].add((contig, start, start + width))
         summaries.append((c["sample"], {k: total[k] for k in positional}, bins))
     rows = []
     for cls, kept in keep.items():
         by = defaultdict(list)
-        for contig, start in kept:
-            by[contig].append(start)
-        for contig, starts in by.items():
-            starts.sort()
-            s0 = e0 = None
-            for st in starts:
-                if s0 is None:
-                    s0, e0 = st, st + width
-                elif st <= e0 + pad:
-                    e0 = st + width
+        for contig, start, end in kept:
+            by[contig].append((start, end))
+        for contig, ivs in by.items():
+            ivs.sort()
+            s0, e0 = ivs[0]
+            for st, en in ivs[1:]:
+                if st <= e0 + pad:
+                    e0 = max(e0, en)
                 else:
                     rows.append((contig, max(0, s0 - pad), e0 + pad, cls))
-                    s0, e0 = st, st + width
+                    s0, e0 = st, en
             rows.append((contig, max(0, s0 - pad), e0 + pad, cls))
     rows.sort()
     stats: dict[str, dict[str, float]] = defaultdict(dict)

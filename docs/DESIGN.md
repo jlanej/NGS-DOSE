@@ -200,8 +200,13 @@ touches the alignment again, so models can be revised without re-reading a bioba
   families, and only compositional families compete, winner takes all, a read split more evenly
   than 5:1 being left unassigned. A read of a positional class is placed on the unit by the
   median diagonal of its hits, oriented by majority, corrected for the BAM strand convention,
-  and booked in a 50-bp bin per strand. Where class reads were *aligned* is recorded in 10-kb
-  bins: in scan mode that histogram is what sinks are learned from. Several panels can be
+  and booked in a 50-bp bin per strand. Where class reads were *aligned* is recorded too, on
+  the 1-kb grid of `mosdepth --by 1000` (10 kb for the satellite families), together with a
+  census of each such bin: every mapped primary read in it, and how many of those carry the
+  duplicate flag. In scan mode that histogram is what sinks are learned from; the census is
+  what says how much of a bin's depth is the class, which is what any depth-based shortcut
+  would have to rest on (section 13). It costs nothing measurable: a scan of NA12878 takes
+  104 s with it and 105 s without, and the counts file grows from 143 to 230 kB. Several panels can be
   loaded together (`-p` repeated); a k-mer claimed by two panels is dropped from both.
 - **Provenance**: every counts file records the SHA-256 of the panel(s), controls and sinks it
   was made with, and `ngsdose estimate` warns when a cohort mixes them. Regions are matched to
@@ -494,16 +499,35 @@ pipeline should be spot-checked with.
 
 ## 13. What comes next
 
-1. All 3,202 samples of the 1000 Genomes 30× cohort (`example/1000G`) **in fetch mode** — about
-   1.5 TB of transfer and a minute per sample, against 48 TB for whole files; on most clusters
-   the WAN is the scarce resource — and **whole-file scans of the 200 that have HPRC
-   assemblies**, with the satellite panel loaded: placement-independent counts, the satellite
-   families against an assembly truth (`04_hprc_satellites.sh`), and the sinks evaluated and
-   re-learned across populations and both sexes (`03_compare_modes.sh`) — the evidence a
-   biobank needs before it trusts fetch mode. From the cohort: the per-estimator reliability
-   table with paired comparisons and its negative-control traits (`02_cohort.sh`), efficiencies
-   at n = 3,202, adjustment by NGS-PCA's coverage PCs and by the internal control PCs, DJ and
-   chrY as cohort-wide accuracy checks, comparison with Hall et al.'s table sample by sample.
+1. All 3,202 samples of the 1000 Genomes 30× cohort (`example/1000G`) **scanned whole**, from
+   staged CRAMs, with the satellite panel loaded — and fetched as well, three seconds more on a
+   local file (`01b_dose_sample.sh`). The scan is the full-accuracy mode and the reference for
+   everything cheaper: placement-independent counts, the satellite families against an assembly
+   truth for the 200 samples that have HPRC assemblies (`04_hprc_satellites.sh`), sinks
+   evaluated and re-learned across 26 populations and both sexes, and fetch / scan for every
+   sample (`03_compare_modes.sh`). From the cohort: the per-estimator reliability table with
+   paired comparisons and its negative-control traits (`02_cohort.sh`), efficiencies at
+   n = 3,202, adjustment by NGS-PCA's coverage PCs and by the internal control PCs, DJ and chrY
+   as cohort-wide accuracy checks, comparison with Hall et al.'s table sample by sample.
+   - *How far can it be simplified for a biobank?* Three levels, each judged against the scan
+     in the same people, with transmission reliability (the paired bootstrap of section 10) as
+     the arbiter rather than correlation with the full estimate, which shares its errors.
+     (i) **Targeted fetch**, which exists: about half a gigabyte and a minute per genome, no
+     file staged; the cohort says what it loses, sample by sample, and the sinks re-learned on
+     the 1-kb grid say how much smaller the retrieval can be made. (ii) **A depth proxy from
+     bins a cohort already has.** NGS-PCA's mosdepth run (1-kb bins, all contigs, no MAPQ
+     filter, duplicate-flagged reads excluded) is kept for this cohort. In NA12878, 99.8% of
+     the aligned 45S reads fall in 273 of those bins (chr21's rDNA models, KI270733, GL000220);
+     the engine's census of those bins reproduces a duplicate-excluded depth computed
+     independently to 3%. What a proxy gives up is known in kind — no fragment-GC model, no
+     window calibration, no anchor, and a duplicate filter that removes 5.5% of rDNA reads but
+     10.8% of single-copy reads in that sample, a different gap in every sample — and the scans,
+     the kept mosdepth outputs and the census are what it takes to put numbers on each. Within
+     one library type and one pipeline several of those terms are constants, which is the case
+     for trying. (iii) **Less of everything**: fewer controls, smaller sinks, lower depth — all
+     of which can be tried on the counts files alone, because they hold positions and not
+     summaries. None of this needs an answer before the run; it needs the run to keep what the
+     answers will be computed from, and it does.
    - *A Mendelian test on integer states.* DJ windows carry inherited ±1-copy steps (section 8).
      Across 602 trios, a step present in a child and in neither parent is either a de novo
      event or an error, and a step in a parent is transmitted half the time: that calibrates
@@ -574,6 +598,7 @@ held.
 | The cohort script works | a mock cohort: seeded subsamples of the NA12878 fixture named after real 1000 Genomes trio members (66 samples, 22 trios), through `01_count.sh` and `02_cohort.sh` with the real pedigree and NGS-PCA's real PC file | it ran - for the first time; the twelve-sample pilot is too small for control PCs, PC adjustment or the paired bootstrap. With one person sixty-six times over there is nothing to transmit, and every reliability came out at zero within its interval. It also showed `adjust` reporting that twenty PCs "explain" 30% of pure noise at n = 66 | a sixty-sample version is a CI test of the whole cohort layer (`tests/test_cohort_flow.py`); `adjust` reports the chance expectation k/(n-1) and the adjusted R² beside the raw figure |
 | Counts survive a bundle revision | pilot counts made before the chrY and dosage regions existed, estimated with the new bundle | refused: regions were matched to the bundle row for row | matched by name: the control set must be identical, other regions may be missing (section 4); asserted in CI |
 | The manifest is right | every URL of `00_setup.sh`'s manifest requested (HEAD) | three sample names in the 1000 Genomes sequence index end in a space, which put a space into three URLs and file names | names trimmed, file names taken from the index's path column, the manifest validated; all 6,404 CRAM and index URLs answer 200 |
+| The cohort run keeps what a cheaper method would be judged on | what a depth proxy needs: the scan estimate, the cohort's kept mosdepth bins, and the composition of those bins | placements were on a 10-kb grid and held class reads only: enough to learn sinks, not to say how much of a mosdepth bin is rDNA | placements on mosdepth's 1-kb grid with a census of every read in the bin (all, duplicate-flagged); against an independent duplicate-excluded depth over chr21's rDNA bins the census is within 3%; scan and fetch agree bin for bin inside the sinks, asserted in CI |
 | The experimental satellite panel measures array mass | whole-file scans of 1000 Genomes samples that have HPRC release-2 assemblies | two samples so far (HG02258, ACB male; HG01884, ACB female), estimate / assembly: HSat3 0.97, 0.98; HSat1A 0.93, 0.97; HSat1B 0.90, 0.83 (11.8 and 2.2 Mb: the family is mostly on Yq, and the female reads accordingly); α-satellite HOR 0.97, 1.03; **HSat2 1.52, 1.73; β-satellite 0.69, 0.76** | HSat2 and β-satellite are not usable as they stand (k-mer sharing with HSat2-like sequence outside the annotated arrays, and β-satellite diversity beyond CHM13's, are the candidates); 200 samples of the cohort have assemblies: `04_hprc_satellites.sh` |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;

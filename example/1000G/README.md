@@ -7,7 +7,7 @@ have HPRC assemblies, and NGS-PCA has already been run on it (`ngspca/`).
 | path | what |
 | --- | --- |
 | `pilot/` | four trios, each sample also as an independent older library; run locally; counts files, the evaluation and plotting scripts, the report and the figure are here |
-| `00_setup.sh`, `01_count.sh`, `02_cohort.sh`, `03_compare_modes.sh`, `04_hprc_satellites.sh`, `config.sh` | the full-cohort run, for SLURM or a plain loop |
+| `00_setup.sh`, `01a_dispatch_staged.sh`, `01b_dose_sample.sh`, `01_count.sh`, `02_cohort.sh`, `03_compare_modes.sh` (+ `compare_modes.py`), `04_hprc_satellites.sh`, `config.sh` | the full-cohort run, for SLURM or a plain loop |
 | `ngs-dose.def` | fallback Apptainer definition of the container image |
 | `hprc_r2_censat.keys.txt`, `hprc_satellites.py` | the HPRC release-2 CenSat annotations (S3 keys; 205 samples, 200 of them in this cohort) and the comparison of satellite estimates against them |
 | `ngspca/` | NGS-PCA output for this cohort (200 coverage PCs, `AUTO_HQ_median`), produced by [NGS-PCA's 1000G example](https://github.com/jlanej/NGS-PCA/tree/master/example/1000G_highcov) |
@@ -36,34 +36,68 @@ come from different cultures of the cell line.
 
 ## The cohort
 
+Full accuracy for everyone: every CRAM is staged, scanned whole, fetched as well (three seconds
+more on a local file), verified, and removed.
+
 ```bash
 export WORK_DIR=/scratch/$USER/ngs_dose_1000G
 cd example/1000G                                        # submit from here: config.sh and logs/ are relative to it
-bash 00_setup.sh                                        # reference, pedigree, manifests (all 3,202; the 200 with HPRC assemblies)
-N=$(wc -l < $WORK_DIR/manifest.tsv)
-sbatch --array=0-$(( (N - 1) / 10 ))%25 01_count.sh     # fetch mode, the whole cohort: ~0.5 GB and ~1 min per sample
-sbatch 02_cohort.sh                                     # estimate, calibrate, adjust, transmission
+bash 00_setup.sh                                        # reference, pedigree, manifest (sample, URL, MD5), container if SIF is set
 
-N=$(wc -l < $WORK_DIR/manifest.hprc.tsv)                # whole-file scans of the 200 samples with HPRC assemblies
-MODE=scan MANIFEST=$WORK_DIR/manifest.hprc.tsv sbatch --array=0-$(( (N - 1) / 10 ))%10 01_count.sh
-bash 03_compare_modes.sh                                # what the sinks capture in every scanned sample; sinks re-learned
-sbatch 04_hprc_satellites.sh                            # satellite array mass against the assemblies of the same people
+# stage CRAMs into $CRAM_DIR/<sample>.cram(.crai) by whatever works on your cluster, then
+bash 01a_dispatch_staged.sh                             # one 01b_dose_sample.sh job per CRAM that has landed; re-run as files arrive
+
+MODE=scan sbatch 02_cohort.sh                           # estimate, calibrate, adjust, transmission - on the scans
+MODE=fetch sbatch 02_cohort.sh                          # the same on the targeted fetches, for the comparison
+bash 03_compare_modes.sh                                # sink capture per sample, sinks re-learned, fetch / scan per sample
+sbatch 04_hprc_satellites.sh                            # satellite array mass against the HPRC assemblies of the same people
 ```
 
-**Fetch the cohort, scan a subset.** Fetch mode reads the control regions and the class sinks
-through the index, straight from the public bucket: about 1.5 TB of transfer for all 3,202
-samples, nothing staged on disk, and everything the transmission analysis needs (45S, 5S, DJ,
-the known-truth regions, chrM and chrEBV). A scan reads every record — 15 GB per sample, 48 TB
-for the cohort, the download campaign that NGS-PCA's example had to engineer around — and what
-it adds is validation and the experimental classes: it is placement-independent, it records
-where every class read was aligned (so `03_compare_modes.sh` can say how much of each class the
-shipped sinks capture in each person, across populations and both sexes), and it is the only
-mode that measures the satellite families, for which the 200 HPRC assemblies are a truth
-(`04_hprc_satellites.sh`). `MODE=scan` on the full manifest works too, if the bandwidth is there.
+`01b_dose_sample.sh SAMPLE LINE [MD5]` has the calling convention of NGS-PCA's
+`01b_mosdepth_sample.sh` (verify the MD5 if given, process, check the outputs, delete the CRAM),
+so the aria2 download manager that staged this cohort for NGS-PCA can drive it: it needs its
+per-sample job script and its "already done" test to be settable (`$WORK_DIR/counts_scan/<sample>.json.gz`
+instead of the mosdepth output), nothing else. `01a_dispatch_staged.sh` is the manager-free
+alternative: it neither downloads nor deletes, skips files aria2 is still writing, and submits
+each landed CRAM once. About 14 CPU-minutes and 1.3 GB of memory per sample; the counts files
+are ~230 kB (scan) and ~70 kB (fetch), so the whole cohort is under 1 GB.
+
+Without staging, `01_count.sh` counts straight from the public bucket, a block of the manifest
+per array task: `MODE=fetch` moves ~0.5 GB per sample (1.5 TB for the cohort, about a minute
+each) and is how a biobank would run; `MODE=scan` streams the whole file (15 GB per sample over
+one connection):
+
+```bash
+N=$(wc -l < $WORK_DIR/manifest.tsv)
+MODE=fetch sbatch --array=0-$(( (N - 1) / 10 ))%25 01_count.sh
+```
+
+**What the full scan buys, and why this cohort should have it.** A scan is placement-independent;
+it is the only mode that measures the satellite families (200 samples of the cohort have HPRC
+assemblies to hold them against); and it records, on the 1-kb grid of `mosdepth --by 1000`,
+where every class read was aligned *and every other read in those bins* - which is the data
+that decides how far the measurement can be simplified for a biobank:
+
+1. **Targeted fetch** (exists): with both modes run on every sample, `03_compare_modes.sh` gives
+   fetch / scan per sample across 26 populations and both sexes, and re-learns the sinks at
+   n = 3,202 on the finer grid (tighter sinks, fewer requests).
+2. **A depth proxy from bins a cohort already has.** NGS-PCA's mosdepth run over this cohort
+   (1-kb bins, all contigs, no MAPQ filter, duplicates excluded) is kept. In NA12878, 99.8% of
+   the aligned 45S reads sit in 273 of those bins. Whether a fixed set of such bins, normalised
+   to the autosomal median, tracks the full estimate - and at what loss of transmission
+   reliability, which `ngsdose trios --compare-to` measures directly - needs exactly three
+   things: the scans, the kept mosdepth outputs, and the per-bin census that says how much of
+   each bin's depth is the class and how its duplicate-flag rate differs from the genome's
+   (5.5% against 10.8% in NA12878: a depth tool that drops flagged reads over-reads rDNA by the
+   difference, by a different amount in every sample). All three exist after this run.
+3. Anything else - fewer or smaller sinks, fewer controls, lower depth - can be tried on the
+   counts files alone, because they hold positions, not summaries.
 
 Operational notes:
 
-- `01_count.sh` is idempotent (finished samples are skipped), tries each sample three times,
+- `01b_dose_sample.sh` is idempotent under a requeue, verifies that both counts files exist and
+  are whole before it removes a CRAM (`KEEP_CRAMS=1` keeps them), and leaves the CRAM in place
+  if anything failed. `01_count.sh` is idempotent too (finished samples are skipped), tries each sample three times,
   and exits non-zero if any sample still failed; re-submit to retry those. The engine retries
   failed intervals itself, gives up with exit status 75 when a connection has gone silent for
   five minutes (a dead HTTPS connection waits for ever rather than failing; `timeout` is a
@@ -80,9 +114,10 @@ Operational notes:
   (`docker://ghcr.io/jlanej/ngs-dose:latest`, published by `.github/workflows/container.yml` on
   version tags or on demand; a private package needs `apptainer remote login` first). Where
   nothing has been published, `ngs-dose.def` builds the same image from a checkout
-  (`apptainer build --fakeroot`, from the repository root). Bind the repository and `$WORK_DIR` if
-  your site does not do so by default (`export APPTAINER_BIND=$WORK_DIR,$PWD/../..`). Without
-  it: `cargo build --release` (needs libclang, e.g. `module load llvm`) and `pip install .`.
+  (`apptainer build --fakeroot`, from the repository root). The scripts bind `$WORK_DIR`, the
+  repository, the reference directory and `$CRAM_DIR` (`APPTAINER_BINDS` in `config.sh`).
+  Without a container: `cargo build --release` (needs libclang, e.g. `module load llvm`) and
+  `pip install .`.
 - Every counts file records the SHA-256 of the panel, controls and sinks it was made with and
   the lengths of the contigs it used; `ngsdose estimate` warns if a cohort mixes resource sets
   and refuses a file aligned to another reference build.

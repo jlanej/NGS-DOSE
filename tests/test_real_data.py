@@ -225,3 +225,61 @@ def test_counts_made_before_a_truth_set_existed_are_still_usable(counts):
     renamed["regions"][-1]["name"] = "chrEBV:1-2"
     with pytest.raises(ValueError, match="different controls file"):
         estimate.estimate_sample(renamed, *args, region_tables=tables, regions=regions)
+
+
+def test_placements_carry_a_census_of_every_read_in_their_bin(counts):
+    """Where class reads were aligned is recorded on the 1-kb grid of `mosdepth --by 1000`, with
+    every mapped primary read of the bin beside them (and how many are flagged duplicate): what a
+    depth tool sees there, and how much of it is the class. Inside the sinks, a targeted fetch
+    must see exactly what the whole-file scan saw."""
+    s, f = counts["scan"], counts["fetch"]
+    assert s["placement_bin"] == f["placement_bin"] == 1000 and s["placement_bin_compositional"] == 10000
+    placed = [p for p in s["placements"] if p["contig"] != "*"]
+    assert placed and all(p["start"] % 1000 == 0 and 0 <= p["dup"] <= p["all"] for p in placed)
+    assert all("all" not in p for p in s["placements"] if p["contig"] == "*")
+    # class reads are among the bin's reads (bar the odd unmapped mate parked at the position)
+    assert sum(p["reads"] for p in placed) <= sum(p["all"] for p in placed) and all(p["reads"] <= p["all"] + 3 for p in placed)
+    # rDNA bins are nearly pure, which is what makes a depth proxy conceivable at all
+    big = [p for p in placed if p["class"] == "rDNA45S" and p["reads"] >= 100]
+    assert len(big) >= 20 and np.median([p["reads"] / p["all"] for p in big]) > 0.9
+    # scan and fetch agree bin for bin wherever a bin lies wholly inside a sink interval
+    sinks = [l.split("\t") for l in open(BUNDLE.sinks)]
+    inside = lambda p: any(c == p["contig"] and int(a) + 1000 <= p["start"] and p["start"] + 2000 <= int(b) for c, a, b, _ in sinks)
+    key = lambda p: (p["class"], p["contig"], p["start"])
+    fetch = {key(p): p for p in f["placements"]}
+    n = 0
+    for p in placed:
+        if inside(p):
+            n += 1
+            assert fetch[key(p)] == p, (p, fetch.get(key(p)))
+    assert n > 100
+
+
+def test_sinks_are_decided_at_ten_kb_and_trimmed_on_a_finer_grid(counts):
+    """A finer placement grid must make sinks tighter, not more numerous: three stray reads in
+    one kilobase do not become a sink because the grid got finer."""
+    import copy
+    from ngsdose import sinks
+    fine = counts["scan"]
+    coarse = copy.deepcopy(fine)
+    coarse["placement_bin"] = 10000
+    merged = {}
+    for p in coarse["placements"]:
+        if p["contig"] != "*" and p["class"] in ("rDNA45S", "rDNA5S", "DJ"):
+            k = (p["class"], p["contig"], p["start"] // 10000 * 10000)
+            merged[k] = merged.get(k, 0) + p["reads"]
+    coarse["placements"] = [dict(**{"class": c}, contig=g, start=st, reads=n) for (c, g, st), n in merged.items()]
+    rows_f, cap_f = sinks.learn([fine])
+    rows_c, cap_c = sinks.learn([coarse])
+    span = lambda rows, cls: sum(e - s0 for _, s0, e, c in rows if c == cls)
+    for cls in ("rDNA45S", "DJ"):
+        assert span(rows_f, cls) <= span(rows_c, cls)
+        # the decision is the same one, so every fine interval lies inside a coarse interval
+        for g, a, b, c in rows_f:
+            if c == cls:
+                assert any(g == g2 and a2 <= a and b <= b2 for g2, a2, b2, c2 in rows_c if c2 == cls), (g, a, b)
+    # where reads are dense (45S, even in a 2% subsample) trimming loses nothing of note
+    assert cap_f["rDNA45S"]["NA12878"] > cap_c["rDNA45S"]["NA12878"] - 0.002
+    # pooling scans made on different grids works
+    rows_both, _ = sinks.learn([fine, coarse])
+    assert span(rows_both, "rDNA45S") >= span(rows_f, "rDNA45S")

@@ -92,7 +92,8 @@ ngsdose selftest        # simulation checks of the statistics; needs no data
 ```
 
 ```bash
-# whole-file scan: placement-independent, and the only mode for the (experimental) satellite families
+# whole-file scan, the full-accuracy mode: placement-independent, the only mode for the (experimental)
+# satellite families, and a record of where class reads were aligned and what else is in those 1-kb bins
 target/release/ngs-dose count -m scan -@ 10 -i sample.cram -T ref.fa -c $B/controls.fa.gz \
     -p $B/panel.k31.tsv.gz -p resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz -o sample.scan.json.gz
 ```

@@ -5,7 +5,8 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/hprc_%j.out
 # Scan-mode satellite estimates against the HPRC release-2 assemblies of the same people.
-# Needs MODE=scan counts for the HPRC samples (manifest.hprc.tsv, written by 00_setup.sh):
+# Needs scan-mode counts for the HPRC samples (manifest.hprc.tsv, written by 00_setup.sh). A cohort
+# scanned whole (01b_dose_sample.sh) has them; to scan only those 200, straight from the bucket:
 #   N=$(wc -l < $WORK_DIR/manifest.hprc.tsv)
 #   MODE=scan MANIFEST=$WORK_DIR/manifest.hprc.tsv sbatch --array=0-$(( (N - 1) / 10 ))%10 01_count.sh
 set -euo pipefail
