@@ -54,7 +54,8 @@ jobs:
         if: matrix.lint && github.event_name != 'schedule'
         run: |
           cargo fmt --check
-          cargo clippy --release --all-targets --locked -- -D warnings
+          # findings become annotations on the lines they are about
+          cargo clippy --release --all-targets --locked --message-format=json -- -D warnings | python3 .github/scripts/cargo_annotate.py
 
       - name: Engine - build
         run: cargo build --release --locked
