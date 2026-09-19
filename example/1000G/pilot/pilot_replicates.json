@@ -1,0 +1,67 @@
+{
+ "18S, no GC model (published practice)": {
+  "bias": -0.30872321666191677,
+  "sd": 0.10378790517829234,
+  "r": 0.8653469354948917
+ },
+ "28S, no GC model": {
+  "bias": -0.33271350603373595,
+  "sd": 0.1164411872150443,
+  "r": 0.8091325315255793
+ },
+ "all windows, no GC model": {
+  "bias": -0.43555756117949024,
+  "sd": 0.13048828091651116,
+  "r": 0.8145252754122841
+ },
+ "18S, fragment-GC model": {
+  "bias": 0.24889721241339122,
+  "sd": 0.11709974612622498,
+  "r": 0.8530051350239735
+ },
+ "28S, fragment-GC model": {
+  "bias": 0.3557326900709969,
+  "sd": 0.13385561332641252,
+  "r": 0.8306713987453929
+ },
+ "anchor windows, fragment-GC model (single-sample headline)": {
+  "bias": -0.15881563454410622,
+  "sd": 0.04647337424700277,
+  "r": 0.9707480304971674
+ },
+ "calibrated, efficiencies learned per library": {
+  "bias": -0.1278663281571634,
+  "sd": 0.037729777445689124,
+  "r": 0.9787160096206294
+ },
+ "calibrated, NYGC efficiencies applied to the replicates": {
+  "bias": -0.05434031389720259,
+  "sd": 0.03704390712784831,
+  "r": 0.9804209392137053
+ },
+ "rDNA5S, fragment-GC model": {
+  "bias": -0.19200317611033693,
+  "sd": 0.04002450081376902,
+  "r": 0.9842260412407737
+ },
+ "rDNA5S, no GC model": {
+  "bias": -0.9074095073351054,
+  "sd": 0.23108923341634335,
+  "r": 0.8106129771657741
+ },
+ "DJ, fragment-GC model": {
+  "bias": 0.02059757311945595,
+  "sd": 0.015353122401585,
+  "r": 0.5028725049961745
+ },
+ "calibrated per library, consensus anchors learned with the family held out": {
+  "bias": 0.019249043437253574,
+  "sd": 0.03238391945338369,
+  "r": 0.9829682628756375
+ },
+ "single sample, consensus anchors learned with the family held out": {
+  "bias": 0.00608796706724185,
+  "sd": 0.046396051102709106,
+  "r": 0.9615030221768197
+ }
+}

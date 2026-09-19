@@ -1,67 +1,164 @@
 # NGS-DOSE
 
-Sequence-class dosage from WGS: copy number and array mass for rDNA, satellite,
-macrosatellite and telomere classes.
+Sequence-class dosage from short-read WGS: how many 45S rDNA units, 5S units, and copies of
+other multi-copy classes a person carries, measured from the GRCh38 CRAMs that biobanks already
+hold — in about a minute per genome, without downloading it.
 
-**NGS-DOSE is not a CNV caller.** It measures how much of a multi-copy sequence class an
-individual carries — the fraction of the genome that variant callers and CNV callers
-explicitly mask. [NGS-PCA](https://github.com/jlanej/NGS-PCA) computes its denominator
-from the bins it retains; NGS-DOSE measures the bins it excludes.
+**NGS-DOSE is not a CNV caller.** It measures the part of the genome that variant and CNV callers
+mask. [NGS-PCA](https://github.com/jlanej/NGS-PCA) describes a cohort's coverage from the bins it
+retains; NGS-DOSE measures what lives in the bins it excludes.
 
-## What it does
+## How it works
 
-For each class, `2 * observed_bases / autosomal_depth` gives diploid array mass, and
-dividing by the unit length gives diploid copy number. Whether a class gets copies or
-megabases is a property of the class, not a preference: rDNA, 5S, SST1, D4Z4 and DXZ4
-have a defined unit; HSat1/2/3 do not, and reporting "copies" for them would invent
-precision that does not exist.
+```
+CRAM ──ngs-dose count──▶ counts.json ──ngsdose estimate──▶ per-sample CN ──ngsdose cohort / adjust / trios──▶ cohort table
+        (Rust, htslib)      ~50 kB          (Python, numpy)
+```
 
-Depth extraction is delegated to [mosdepth](https://github.com/brentp/mosdepth). What
-NGS-DOSE owns is the part that decides whether the numbers mean anything:
+1. **Count fragment 5′ ends**, in single-copy control regions and in every read that carries
+   class-diagnostic 31-mers. A read is assigned to a class, and placed on its unit, by k-mers —
+   not by where the aligner put it. `scan` reads the whole file; `fetch` retrieves only the
+   control regions and the few *sinks* where a class's reads are known to land (learned from
+   scans), and returns the same counts.
+2. **Model the library**: a Poisson spline of end density on fragment-scale GC, fitted per sample
+   on the controls. Copy number of a window of the unit is `2 × observed / expected`.
+3. **Calibrate the unit**: parts of the rDNA unit drop out far beyond what any genome-wide GC
+   curve predicts (28S reads ~0.75× of 18S on NovaSeq), and *which* parts depends on the
+   sequencing chemistry. Per-window efficiencies are learned per library type, with the scale
+   pinned on *anchor* windows where different chemistries were shown to agree.
+4. **Check it against known truth in every sample**: held-out autosomal sequence (2 copies),
+   chrX (1 or 2), chrY (1 or 0), and the acrocentric distal junction (10 copies), measured by
+   the same code paths as the classes. Mitochondrial genomes and EBV episomes per cell come
+   along as covariates of the tissue or culture the DNA was taken from.
+5. **Cohort layer**: coverage-PC adjustment (NGS-PCA), and transmission reliability in trios to
+   decide which estimator carries the most real variance.
 
-- **Denominator** — NGS-PCA's `AUTO_HQ_median`, the per-sample median over bins that
-  survive the exclusion set, so it is single-copy by construction.
-- **GC** — bias curve fitted from the sample's own retained bins and interpolated; the
-  rDNA unit is 58.1% GC against 40.9% genome-wide, where the curve is steepest.
-- **Batch** — residualised on NGS-PCA coverage components rather than batch labels. The
-  PC basis excludes satellite and segmental duplications, so it is disjoint from every
-  target class: it can absorb library structure but not the dosage being measured.
-- **Validation** — *transmission reliability*: copy number is inherited additively with
-  a midparent coefficient of exactly 1, so the midparent–offspring regression slope
-  estimates the reliability of the measurement rather than its heritability. Run per
-  class, it is a direct test of which classes are measurable at all.
+The reasoning, and the measurements on real data behind each step, are in
+[docs/DESIGN.md](docs/DESIGN.md).
 
-Sampling precision at 30× is 0.03–0.38%, while r = 0.015 reaches significance at
-n = 127,000. The error budget is essentially all systematic, which is why the list
-above is the method and the counting is not.
+## What the pilot shows
+
+Twelve 1000 Genomes samples (four trios, NYGC 30×), each also measured in an independent,
+years-older library of the same cell line (HGSVC HiSeq 2500 2×126, or Illumina Platinum HiSeq
+2000 2×101) whose GC behaviour is the reverse of NYGC's. Everything was counted in fetch mode
+straight from the public CRAMs.
+
+| | |
+| --- | --- |
+| **Speed** | 60–100 s per 30× genome over HTTPS from a home connection, reading about 0.5 GB of a 15.8 GB CRAM; 3 s from local disk; a whole-file scan takes 1 min 40 s on 10 threads |
+| **Known truth** | held-out autosomal sequence 1.996 ± 0.006 (truth 2); chrX in males 0.995 ± 0.004 (truth 1); chrY 0.979 ± 0.004 in males and 0.002 in females (truth 1 and 0); distal junction 9.73 ± 0.13 in the NYGC libraries and 9.93 ± 0.17 in the older ones (truth 10) |
+| **Same person, different library** | the 18S depth ratio used in the literature: −27% between library generations, 10% pair-to-pair SD, r = 0.86. NGS-DOSE with anchors chosen out of sample: +2%, 3.2%, r = 0.98 (one sample, no cohort: +0.6%, 4.6%, r = 0.96). These are upper bounds: the two DNA batches come from different cultures |
+| **Same CRAMs, published values** | r = 0.98 with Hall et al. 2021 on the shared samples; their values run 8% above ours, 5 points of which are the duplicate flag (DESIGN.md, finding 1) |
+| **By-catch** | the controls show HG00732's culture losing an X chromosome (1.84 copies in the 2015 DNA, 1.61 in 2019) |
+
+![pilot figure](example/1000G/pilot/pilot_figure.png)
+
+What it does not show: four trios say nothing about transmission reliability (that is what the
+602-trio run is for), no orthogonal assay has calibrated the absolute rDNA scale, and the
+window efficiencies and anchors were established on three Illumina chemistries only.
+
+Full tables: [example/1000G/pilot/pilot_report.md](example/1000G/pilot/pilot_report.md).
+
+## Quick start
+
+```bash
+cargo build --release                     # the engine: target/release/ngs-dose
+pip install -e .                          # the modelling layer: ngsdose
+```
+
+```bash
+B=resources/GRCh38
+# one genome, straight from the AWS Open Data mirror (~1 min; CRAM decoding needs the reference)
+target/release/ngs-dose count -m fetch -@ 16 \
+    -i https://1000genomes.s3.amazonaws.com/1000G_2504_high_coverage/data/ERR3239334/NA12878.final.cram \
+    -T GRCh38_full_analysis_set_plus_decoy_hla.fa \
+    -p $B/panel.k31.tsv.gz -c $B/controls.fa.gz --sinks $B/sinks.bed -o NA12878.json.gz
+```
+
+```bash
+ngsdose estimate NA12878.json.gz -o estimates/ -t single_sample.tsv
+```
+
+```bash
+# cohort: window calibration, coverage-PC adjustment, transmission reliability
+ngsdose cohort estimates/*.estimate.json.gz -t cohort.tsv --save-efficiencies efficiencies.json
+ngsdose adjust cohort.tsv --pcs ngspca/svd.pcs.txt --n-pc 20 -c rDNA45S.cn -o cohort.adjusted.tsv
+ngsdose trios cohort.adjusted.tsv -p pedigree.txt -c rDNA45S.cn rDNA45S.cn_single rDNA45S.18S.flat \
+    --compare-to rDNA45S.18S.flat       # reliabilities with bootstrap CIs, and paired differences
+```
+
+```bash
+ngsdose selftest        # simulation checks of the statistics; needs no data
+```
+
+```bash
+# whole-file scan, the full-accuracy mode: placement-independent, the only mode for the (experimental)
+# satellite families, and a record of where class reads were aligned and what else is in those 1-kb bins
+target/release/ngs-dose count -m scan -@ 10 -i sample.cram -T ref.fa -c $B/controls.fa.gz \
+    -p $B/panel.k31.tsv.gz -p resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz -o sample.scan.json.gz
+```
+
+A different aligner or decoy set places multi-copy reads differently. Before trusting `fetch`
+on a new pipeline, scan a few whole CRAMs and check the sinks:
+
+```bash
+ngsdose sinks scan*.json.gz --evaluate $B/sinks.bed      # fraction of each class the sinks capture, per sample
+ngsdose sinks scan*.json.gz -o sinks.bed                 # or re-learn them
+```
+
+`example/1000G/` runs the whole 1000 Genomes 30× cohort (SLURM or a plain loop) and holds the
+pilot; `resources/build/` rebuilds the GRCh38 bundle from public inputs.
+
+## Output columns (per sample)
+
+| column | meaning |
+| --- | --- |
+| `rDNA45S.cn` | cohort-calibrated diploid copy number (`ngsdose cohort`) |
+| `rDNA45S.cn_single` | single-sample headline: anchor windows under the fragment-GC model |
+| `rDNA45S.18S`, `.28S`, … / `.flat` | per-feature estimates with / without the GC model; `18S.flat` is the estimator used in the UK Biobank literature |
+| `rDNA5S.cn`, `DJ.cn` | 5S units; distal junction (expected 10) |
+| `truth.auto`, `truth.chrX`, `truth.chrY` | held-out known-copy-number sequence (expected 2; 1 or 2; 1 or 0) |
+| `chrM.copies`, `chrEBV.copies` | mitochondrial genomes and EBV episomes per cell: covariates of the state of the tissue or cell line, measured like the truths |
+| `eof_marker` | `present` unless the input lacked its end-of-file block (the engine refuses such files unless told otherwise) |
+| `depth`, `ctrl_dup_frac`, `gc_rel_35`, `gc_rel_65`, `ctrl_region_sd`, `flagged_chromosomes` | library and sample QC; an aneuploid chromosome is reported and excluded from the denominator |
+| `*.profile_sd`, `*.profilePC*` | how far the sample's window profile departs from the cohort's |
+| `ctrlPC1…` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run |
+| `gc_curve_max_se` | how well the sample's GC curve is determined (large at very low depth) |
 
 ## Status
 
-Design only. `docs/DESIGN.md` is the specification: estimator, class table, the four
-confounders, the recipe, and the validation plan. A working reference implementation
-with a data-free self-test exists and can be brought in as a starting point.
-
-Not yet done: the k-mer backend is specified but unimplemented, and nothing has been run
-against real WGS. First result that would justify a release is the 5S negative control
-on 1000 Genomes 30×.
+Engine, estimator, cohort layer and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
+Rust unit tests, a simulated genome with known truth run end to end, a 2% subsample of real
+NA12878 reads, a mock trio cohort (that subsample sixty times over) through the whole cohort
+layer, bundle-integrity checks and regression tests on the pilot's counts, all in CI
+(the workflow itself has not run yet). Before the cohort run every assumption the counts files
+rest on was audited against data; seven were wrong and are fixed (DESIGN.md §15). Validated so far on a
+12-sample, 4-trio pilot in which every sample has an independent library replicate. An
+experimental satellite panel (HSat1A/1B/2/3, β-satellite, α-satellite HOR) ships under
+`resources/experimental/` for scan mode; it runs and gives plausible masses, and is unvalidated.
+Not yet done: the 602-trio run, comparison with HPRC assemblies, sinks for DRAGEN-aligned
+data, an orthogonal rDNA calibration. See DESIGN.md §12–13. No licence has been chosen yet.
 
 ## Provenance and credit
 
-The method design, statistics and reference implementation were developed by **Claude
-Opus 5 (Anthropic)** in a September 2026 working session with **@jlanej**, as an
-offshoot of a review of the acrocentric short arms. The naming, the scoping and the
-decision to build it are shared; the errors are worth attributing to the machine that
-made them until a human has checked each one.
+Method design, statistics and implementation were developed by **Claude (Anthropic)** in
+September 2026 working sessions with **@jlanej** — first as an offshoot of a review of the
+acrocentric short arms (Claude Opus 5), then as the ground-up rewrite in this repository
+(Claude Fable 5.1), in which the original specification was tested against real 1000 Genomes
+data and largely replaced. The naming, the scoping and the decision to build it are shared; the
+errors are worth attributing to the machine that made them until a human has checked each one.
 
-It builds directly on prior work that should be cited ahead of this repository:
-NGS-PCA for the denominator and the coverage components, mosdepth for depth extraction,
-the T2T-CHM13 CenSat annotation for the class definitions, and Rodríguez-Algarra,
-Evans & Rakyan (*Cell Genomics* 4:100562, 2024) for the demonstration that rDNA copy
-number carries real phenotypic signal.
+It builds on prior work that should be cited ahead of this repository: NGS-PCA for the exclusion
+set behind the controls and for the coverage components; htslib; the T2T-CHM13 assembly and
+CenSat annotation; the 1000 Genomes 30× resource (Byrska-Bishop et al., *Cell* 2022); Benjamini &
+Speed (*NAR* 2012) for the fragment-GC model; Hall, Turner & Queitsch (*Sci Rep* 2021), whose
+per-sample table for the same CRAMs is the external check used here; and Rodriguez-Algarra,
+Evans & Rakyan (*Cell Genomics* 2024) for the demonstration that rDNA copy number carries
+phenotypic signal. Unit sequences are GenBank KY962518.1 and X12811.1.
 
-Two honesty notes. The transmission-reliability framing is a rederivation of standard
-midparent regression, and no literature search has been done to confirm it is novel in
-this application. And an AI system is not an author under prevailing journal policy — if
-this becomes a paper, the appropriate form is a contributions or acknowledgements
-statement describing what was machine-generated, with human authors taking
-responsibility for verification.
+Two honesty notes. The transmission-reliability framing is standard midparent regression applied
+to a trait whose heritability is one by construction; no claim of novelty is made for it, and no
+systematic literature search backs the claims of novelty that *are* made in DESIGN.md §14. And an
+AI system is not an author under prevailing journal policy — if this becomes a paper, the
+appropriate form is a contributions or acknowledgements statement describing what was
+machine-generated, with human authors taking responsibility for verification.

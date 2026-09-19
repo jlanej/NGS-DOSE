@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # rust-htslib generates its htslib bindings with bindgen, which needs libclang at build time
+          sudo apt-get install -y --no-install-recommends samtools clang libclang-dev pkg-config cmake zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev libssl-dev
+
+      - name: System packages (macOS)
+        if: runner.os == 'macOS'
+        run: brew install samtools xz
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Engine - build
+        run: cargo build --release --locked
+
+      - name: Engine - unit tests
+        run: cargo test --release --locked
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python package
+        run: pip install -e ".[dev]"
+
+      # data-free simulation of the estimator, cohort calibration and trio statistics
+      - name: Model self-test
+        run: ngsdose selftest
+
+      # unit tests, the simulated-genome end-to-end test (engine + estimator against known
+      # truth) and the real-data regression tests on the 1000 Genomes pilot fixtures
+      - name: pytest
+        run: pytest -v
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t ngs-dose .
+      - name: Smoke test inside the image
+        run: |
+          docker run --rm ngs-dose ngs-dose --version
+          docker run --rm ngs-dose ngsdose selftest
+          docker run --rm -v "$PWD/tests/data:/data:ro" ngs-dose sh -c \
+            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz'

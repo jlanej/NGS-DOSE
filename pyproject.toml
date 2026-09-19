@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ngsdose"
+version = "0.1.0"
+description = "Sequence-class dosage (rDNA, satellites and other multi-copy classes) from short-read WGS: estimation and cohort modelling"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+plots = ["matplotlib>=3.7"]
+
+[project.scripts]
+ngsdose = "ngsdose.cli:main"
+
+[tool.setuptools]
+packages = ["ngsdose"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
