@@ -5,12 +5,13 @@ import argparse
 import csv
 import gzip
 import json
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
 
-from . import __version__, cohort, estimate, io, resources, sinks, trios
+from . import __version__, cohort, estimate, io, pcselect, resources, sinks, trios
 
 
 class _Enc(json.JSONEncoder):
@@ -167,14 +168,21 @@ def cmd_cohort(a):
                         anchor=cal.anchor.tolist(), a=[None if np.isnan(v) else round(float(v), 5) for v in cal.a],
                         window_sd=[None if np.isnan(v) else round(float(v), 5) for v in cal.window_sd],
                         n_samples=len(cal.samples))
-    ok = len(order) >= 5 * max(a.control_pcs, 1) and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
-    cp = cohort.control_pcs(np.array(ctrl, float), a.control_pcs) if ok else None
+    # control-region PCs: how many are structure is decided at the Marchenko-Pastur edge of the noise
+    # bulk ("mp"); the table carries more than that, so that `pcsweep` can look beyond the choice
+    want = None if str(a.control_pcs).lower() == "mp" else int(a.control_pcs)
+    ok = len(order) >= max(10, 5 * (want or 1)) and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
+    cp = cohort.control_pcs(np.array(ctrl, float), None) if ok and want != 0 else None
     if cp is not None:
-        scores, var = cp
+        scores, var, sv, shape = cp
+        sel = pcselect.mp_select(sv, *shape)
+        n_write = min(scores.shape[1], want if want is not None else min(max(2 * sel.n_pc, 20), len(order) // 5))
         for i, s in enumerate(order):
-            for k in range(scores.shape[1]):
+            rows[s]["ctrlPC_mp"] = sel.n_pc
+            for k in range(n_write):
                 rows[s][f"ctrlPC{k + 1}"] = round(float(scores[i, k]), 5)
-        print("[cohort] control-region PCs, variance explained: " + " ".join(f"{v:.3f}" for v in var), file=sys.stderr)
+        print(f"[cohort] control-region PCs: {sel.describe()}; {n_write} written (ctrlPC1..), variance explained: "
+              + " ".join(f"{v:.3f}" for v in var[:min(n_write, 12)]), file=sys.stderr)
     if a.save_efficiencies:
         Path(a.save_efficiencies).write_text(json.dumps(eff))
     write_table([rows[s] for s in order], a.table)
@@ -225,7 +233,7 @@ def cmd_trios(a):
         _dump(out, a.json)
 
 
-def load_pcs(path, n_pc, strip=(".by1000.", ".")):
+def load_pcs(path, n_pc=None, strip=(".by1000.", ".")):
     """NGS-PCA svd.pcs.txt -> {sample: PCs}. NGS-PCA names samples after the mosdepth file, which
     leaves a suffix such as `.by1000.`; it is removed so that ids match the alignment's SM tag."""
     pcs = {}
@@ -238,35 +246,132 @@ def load_pcs(path, n_pc, strip=(".by1000.", ".")):
                 if name.endswith(suf):
                     name = name[: -len(suf)]
                     break
-            pcs[name] = [float(x) for x in p[1:1 + n_pc]]
+            pcs[name] = [float(x) for x in (p[1:] if n_pc is None else p[1:1 + n_pc])]
     return pcs
+
+
+def _pcs_and_choice(a, rows):
+    """{sample: every available PC}, the number to use, and how it was chosen. `--n-pc mp` (the
+    default) counts the components above the Marchenko-Pastur edge of the noise bulk: for NGS-PCA's
+    PCs from the singular values and bin list it writes beside svd.pcs.txt, for the table's own
+    control-region PCs from the count `ngsdose cohort` recorded (ctrlPC_mp)."""
+    auto = str(a.n_pc).lower() == "mp"
+    if a.pcs:
+        pcs = load_pcs(a.pcs)
+        n_avail = min(len(v) for v in pcs.values())
+        if not auto:
+            return pcs, min(int(a.n_pc), n_avail), f"--n-pc {a.n_pc}"
+        d = Path(a.pcs).parent
+        sv_path = Path(a.singular_values) if a.singular_values else d / "svd.singularvalues.txt"
+        n_feat = a.n_features
+        if n_feat is None and (d / "svd.bins.txt").exists():
+            with open(d / "svd.bins.txt") as fh:
+                n_feat = sum(1 for line in fh if line.strip())
+        if not sv_path.exists() or not n_feat:
+            raise SystemExit(f"--n-pc mp needs the singular values ({sv_path}) and the number of bins (svd.bins.txt beside the PCs, or "
+                             "--n-features) of the SVD the PCs came from; or give a number: --n-pc 20")
+        sv = []
+        with open(sv_path) as fh:
+            for line in fh:
+                try:
+                    sv.append(float(line.split()[-1]))
+                except (ValueError, IndexError):
+                    continue
+        sel = pcselect.mp_select(sv, len(pcs), n_feat)
+        return pcs, min(sel.n_pc, n_avail), sel.describe()
+    cols = [c for c in rows[0] if re.fullmatch(r"ctrlPC\d+", c)]
+    cols.sort(key=lambda c: int(c[6:]))
+    if not cols:
+        raise SystemExit("no --pcs given and the table has no ctrlPC columns; run `ngsdose cohort` with --control-pcs")
+    pcs = {r["sample"]: [float(r[c]) for c in cols] for r in rows if all(r.get(c, "NA") not in ("NA", "") for c in cols)}
+    if not auto:
+        if int(a.n_pc) > len(cols):
+            raise SystemExit(f"--n-pc {a.n_pc}, but the table carries {len(cols)} control-region PCs; re-run `ngsdose cohort --control-pcs {a.n_pc}`")
+        return pcs, int(a.n_pc), f"--n-pc {a.n_pc}"
+    mp = next((r["ctrlPC_mp"] for r in rows if r.get("ctrlPC_mp", "NA") not in ("NA", "")), None)
+    if mp is None:
+        raise SystemExit("--n-pc mp: the table does not record a Marchenko-Pastur count (ctrlPC_mp); re-run `ngsdose cohort`, or give --n-pc N")
+    return pcs, min(int(float(mp)), len(cols)), "the Marchenko-Pastur count recorded by `ngsdose cohort` (ctrlPC_mp)"
 
 
 def cmd_adjust(a):
     with open(a.table) as fh:
         rows = list(csv.DictReader(fh, delimiter="\t"))
-    if a.pcs:
-        pcs = load_pcs(a.pcs, a.n_pc)
-    else:                                                  # the cohort table's own control-region PCs
-        cols = [f"ctrlPC{k + 1}" for k in range(a.n_pc)]
-        if not all(c in rows[0] for c in cols):
-            raise SystemExit(f"no --pcs given and the table lacks {cols[-1]}; run `ngsdose cohort --control-pcs {a.n_pc}`")
-        pcs = {r["sample"]: [float(r[c]) for c in cols] for r in rows if all(r[c] not in ("NA", "") for c in cols)}
+    pcs, k, how = _pcs_and_choice(a, rows)
     keep = [r for r in rows if r["sample"] in pcs]
-    if len(keep) < a.n_pc + 10:
-        raise SystemExit(f"only {len(keep)} samples have coverage PCs; need more than n_pc + 10")
-    X = np.array([pcs[r["sample"]] for r in keep])
+    if len(keep) < k + 10:
+        raise SystemExit(f"only {len(keep)} samples have coverage PCs; need more than n_pc + 10 = {k + 10}")
+    print(f"[adjust] regressing out {k} PCs ({how})", file=sys.stderr)
+    if k > len(keep) / 10:
+        print(f"[adjust] WARNING: {k} PCs for {len(keep)} samples is more than one regressor per ten samples - a count chosen on a larger "
+              "cohort's SVD does not carry over to a subset; consider --n-pc N (and see `ngsdose pcsweep`)", file=sys.stderr)
+    X = np.array([pcs[r["sample"]][:k] for r in keep]).reshape(len(keep), k)
     for col in a.columns:
         y = np.array([float(r[col]) if r.get(col, "NA") not in ("NA", "") else np.nan for r in keep])
-        adj, r2 = cohort.adjust_for_covariates(y, X, log=not a.no_log)
+        adj, r2 = cohort.adjust_for_covariates(y, X, log=not a.no_log) if k else (y.copy(), 0.0)
         for r, v in zip(keep, adj):
             r[f"{col}.adj"] = "NA" if not np.isfinite(v) else round(float(v), 4)
-        n, k = int(np.isfinite(adj).sum()), X.shape[1]
+        n = int(np.isfinite(adj).sum())
         # k regressors explain k/(n-1) of pure noise: report what is left after that
         r2_adj = 1 - (1 - r2) * (n - 1) / max(n - k - 1, 1)
         print(f"[adjust] {col}: {k} PCs explain {100 * r2:.1f}% of the variance of {'log ' if not a.no_log else ''}{col} "
               f"(n={n}; {100 * k / max(n - 1, 1):.1f}% expected by chance; adjusted R2 {100 * r2_adj:.1f}%)", file=sys.stderr)
     write_table(keep, a.out)
+
+
+def _sex_from(rows):
+    """'M' / 'F' per sample from the known-truth columns themselves: chrY if it was measured, else chrX."""
+    out = {}
+    for r in rows:
+        y, x = r.get("truth.chrY", "NA"), r.get("truth.chrX", "NA")
+        if y not in ("NA", ""):
+            out[r["sample"]] = "M" if float(y) > 0.5 else "F"
+        elif x not in ("NA", ""):
+            out[r["sample"]] = "M" if float(x) < 1.5 else "F"
+    return out
+
+
+def cmd_pcsweep(a):
+    with open(a.table) as fh:
+        rows = list(csv.DictReader(fh, delimiter="\t"))
+    pcs, k_mp, how = _pcs_and_choice(a, rows)
+    keep = [r for r in rows if r["sample"] in pcs]
+    n_avail = min(len(pcs[r["sample"]]) for r in keep)
+    max_pc = min(n_avail, a.max_pc if a.max_pc else max(2 * k_mp, 20), max(len(keep) // 5, 1))
+    P = np.array([pcs[r["sample"]][:max_pc] for r in keep]).reshape(len(keep), max_pc)
+    samples = [r["sample"] for r in keep]
+    num = lambda col: np.array([float(r[col]) if r.get(col, "NA") not in ("NA", "") else np.nan for r in keep])
+    sex = _sex_from(keep)
+    male = np.array([sex.get(s) == "M" for s in samples]); female = np.array([sex.get(s) == "F" for s in samples])
+    # the known truths the bundle builds in, where the table has them; --truth COLUMN=VALUE adds others
+    truths = {}
+    if "truth.auto" in keep[0]:
+        truths["truth.auto"] = np.full(len(keep), 2.0)
+    if "truth.chrX" in keep[0]:
+        truths["truth.chrX"] = np.where(male, 1.0, np.where(female, 2.0, np.nan))
+    if "truth.chrY" in keep[0]:
+        truths["truth.chrY"] = np.where(male, 1.0, np.nan)               # a female's truth is zero, which has no log
+    for cand in ("DJ.cn", "DJ.cn_single"):
+        if cand in keep[0]:
+            truths[cand] = np.full(len(keep), 10.0)
+            break
+    for spec in a.truth or []:
+        col, val = spec.rsplit("=", 1)
+        truths[col] = np.full(len(keep), float(val))
+    table = {c: num(c) for c in list(truths) + list(a.columns)}
+    trio_list = population = None
+    if a.pedigree:
+        trio_list, population = trios.load_pedigree(a.pedigree)
+    res = pcselect.sweep(table, P, max_pc, truths, list(a.columns), samples, trio_list, population, folds=a.folds, n_boot=a.boot)
+    write_table([{k: (round(v, 6) if isinstance(v, float) else v) for k, v in r.items()} for r in res], a.out)
+    print(f"[pcsweep] {len(keep)} samples, PCs 0..{max_pc}, {a.folds}-fold cross-validation; default choice: {k_mp} PCs ({how})", file=sys.stderr)
+    rec = pcselect.recommend(res)
+    print("column\tkind\tmeasure\tat_0_PCs\tat_default\tbest_n_pc\tat_best\tfewest_within_1se\tthere", file=sys.stderr)
+    for col, r in rec.items():
+        at_def = next((x for x in res if x["column"] == col and x["n_pc"] == min(k_mp, max_pc)), {})
+        key = "sd_log_robust" if r["kind"] == "truth" else "R_midparent"
+        print(f"{col}\t{r['kind']}\t{'robust SD of log(estimate/truth), cross-validated' if r['kind'] == 'truth' else 'transmission reliability'}"
+              f"\t{r['at_0']:.4f}\t{at_def.get(key, float('nan')):.4f}\t{r['best']}\t{r['at_best']:.4f}\t{r['pick']}\t{r['at_pick']:.4f}", file=sys.stderr)
 
 
 def cmd_sinks(a):
@@ -320,8 +425,10 @@ def main(argv=None):
     c.add_argument("--gc-rule-anchors", action="store_true")
     c.add_argument("--max-window-sd", type=float, default=None)
     c.add_argument("--profile-pcs", type=int, default=3)
-    c.add_argument("--control-pcs", type=int, default=10,
-                   help="components of the control regions' residual depth to report (needs >= 5 samples per component)")
+    c.add_argument("--control-pcs", default="mp",
+                   help="components of the control regions' residual depth to write as ctrlPC columns: a number, or 'mp' (default): "
+                        "count the components above the Marchenko-Pastur edge of the noise bulk, record the count (ctrlPC_mp) "
+                        "and write twice as many (at least 20) so that `pcsweep` can look beyond it")
     c.set_defaults(fn=cmd_cohort)
 
     t = sub.add_parser("trios", help="transmission reliability from a pedigree")
@@ -334,14 +441,37 @@ def main(argv=None):
     t.add_argument("--json")
     t.set_defaults(fn=cmd_trios)
 
-    j = sub.add_parser("adjust", help="residualise estimates on NGS-PCA coverage PCs")
+    def pc_source(sp):
+        sp.add_argument("--pcs", help="NGS-PCA svd.pcs.txt (default: the ctrlPC columns written by `ngsdose cohort`)")
+        sp.add_argument("--n-pc", default="mp",
+                        help="how many PCs to regress out: a number, or 'mp' (default): the components above the Marchenko-Pastur "
+                             "edge of the noise bulk")
+        sp.add_argument("--singular-values", help="singular values of the SVD behind --pcs (default: svd.singularvalues.txt beside it)")
+        sp.add_argument("--n-features", type=int, help="number of bins in that SVD (default: the lines of svd.bins.txt beside --pcs)")
+
+    j = sub.add_parser("adjust", help="residualise estimates on coverage PCs")
     j.add_argument("table")
-    j.add_argument("--pcs", help="NGS-PCA svd.pcs.txt (default: the ctrlPC columns written by `ngsdose cohort`)")
-    j.add_argument("--n-pc", type=int, default=20)
+    pc_source(j)
     j.add_argument("-c", "--columns", nargs="+", required=True)
     j.add_argument("--no-log", action="store_true")
     j.add_argument("-o", "--out", default="-")
     j.set_defaults(fn=cmd_adjust)
+
+    w = sub.add_parser("pcsweep", help="what each further PC does: cross-validated error of the known truths, transmission of the classes",
+                       description="Regress out 0, 1, 2, ... PCs and report, for every number: the cross-validated error of the "
+                                   "known-truth columns (held-out autosomal = 2, chrX and chrY by sex, DJ = 10; --truth adds others) "
+                                   "and, with a pedigree, the transmission reliability of the class columns and its paired "
+                                   "difference from no adjustment. The evidence on which the default number of PCs can be overruled.")
+    w.add_argument("table")
+    pc_source(w)
+    w.add_argument("-c", "--columns", nargs="+", default=[], help="class columns (estimates without a known truth)")
+    w.add_argument("--truth", nargs="+", metavar="COLUMN=VALUE", help="further columns with a known value")
+    w.add_argument("-p", "--pedigree")
+    w.add_argument("--max-pc", type=int, default=0, help="sweep up to this many PCs (default: twice the default choice, at least 20)")
+    w.add_argument("--folds", type=int, default=10)
+    w.add_argument("--boot", type=int, default=300)
+    w.add_argument("-o", "--out", default="-")
+    w.set_defaults(fn=cmd_pcsweep)
 
     k = sub.add_parser("sinks", help="learn fetch-mode sink intervals from scan-mode counts")
     k.add_argument("counts", nargs="+")

@@ -193,9 +193,42 @@ def check_callable_mask(rng, verbose):
     return ok
 
 
+def check_pc_selection(rng, verbose):
+    """The number of PCs to regress out: components planted in noise of unequal variance are counted
+    exactly at the fitted edge of the noise bulk, none are found in noise alone, and a sweep against a
+    known truth and against transmission stops where the PCs stop carrying technical error."""
+    from . import pcselect
+    from .trios import Trio
+    n, p, m = 500, 800, 6
+    noise = lambda: rng.normal(size=(n, p)) * rng.uniform(0.6, 1.4, (n, 1)) * rng.uniform(0.7, 1.3, (1, p))
+    X = noise()
+    for j in range(m):
+        X += (2.5 - 0.1 * j) * (np.sqrt(n) + np.sqrt(p)) * np.outer(rng.normal(size=n) / np.sqrt(n), rng.normal(size=p) / np.sqrt(p))
+    sv = np.linalg.svd(X - X.mean(0), compute_uv=False)
+    found, found_top, in_noise = (pcselect.mp_select(sv, n, p).n_pc, pcselect.mp_select(sv[:60], n, p).n_pc,
+                                  pcselect.mp_select(np.linalg.svd(noise(), compute_uv=False), n, p).n_pc)
+    # 150 trios; three of fifteen PCs carry technical error into a class and into a known truth
+    nt = 150
+    P = rng.normal(size=(3 * nt, 15))
+    tech = P[:, :3] @ np.array([0.12, 0.10, 0.08])
+    f, mo = rng.normal(400, 80, nt), rng.normal(400, 80, nt)
+    true = np.empty(3 * nt)
+    true[0::3], true[1::3], true[2::3] = (f + mo) / 2 + rng.normal(0, 80 / np.sqrt(2), nt), f, mo
+    names = [f"S{i}" for i in range(3 * nt)]
+    table = {"cls": true * np.exp(tech + rng.normal(0, 0.01, 3 * nt)), "truth": 2.0 * np.exp(0.3 * tech + rng.normal(0, 0.004, 3 * nt))}
+    rows = pcselect.sweep(table, P, 15, {"truth": np.full(3 * nt, 2.0)}, ["cls"], names,
+                          [Trio(names[3 * t], names[3 * t + 1], names[3 * t + 2], "P") for t in range(nt)], {s: "P" for s in names}, n_boot=100)
+    rec = pcselect.recommend(rows)
+    ok = found == m and found_top == m and in_noise <= 1 and rec["truth"]["pick"] == 3 and rec["cls"]["pick"] in (2, 3)
+    if verbose:
+        print(f"[5] number of PCs          : {m} planted in unequal noise -> {found} (whole spectrum), {found_top} (top 60), {in_noise} in noise alone; "
+              f"sweep picks {rec['truth']['pick']} by known truth, {rec['cls']['pick']} by transmission (3 PCs carry the error)  {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run(verbose=True, seed=11) -> bool:
     rng = np.random.default_rng(seed)
-    checks = (check_estimator, check_calibration, check_trios, check_callable_mask)
+    checks = (check_estimator, check_calibration, check_trios, check_callable_mask, check_pc_selection)
     ok = all([f(rng, verbose) for f in checks])
     if verbose:
         print("\nall checks passed" if ok else "\nFAILURES - see above")

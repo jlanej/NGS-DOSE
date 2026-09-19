@@ -156,7 +156,7 @@ def adjust_for_covariates(y: np.ndarray, X: np.ndarray, log: bool = True) -> tup
     return out, r2
 
 
-def control_pcs(results: list[dict], n_pc: int = 10) -> tuple[np.ndarray, np.ndarray] | None:
+def control_pcs(results: list[dict], n_pc: int | None = 10) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int]] | None:
     """Principal components of the control regions' log(observed/expected) across the cohort.
 
     The matrix is samples x control regions, each row centred (a sample's overall level is its
@@ -164,7 +164,10 @@ def control_pcs(results: list[dict], n_pc: int = 10) -> tuple[np.ndarray, np.nda
     single-copy sequence disjoint from every class, so - like NGS-PCA's coverage PCs, of which
     this is a small internal version - the scores can absorb library and sample structure
     (GC residue, replication timing in DNA from cycling cells, aneuploid chromosomes) but not
-    the dosage of a class. Needs far more samples than components to be meaningful."""
+    the dosage of a class. Needs far more samples than components to be meaningful.
+
+    Returns (scores, fraction of variance, all singular values, matrix shape); the last two are what
+    `pcselect.mp_select` chooses the number of components from. `n_pc=None` returns every component."""
     rows = [(r.get("control_qc") or {}).get("region_log_ratio") for r in results] if isinstance(results, list) else results
     if isinstance(rows, list):
         if any(x is None for x in rows) or len({len(x) for x in rows}) != 1:
@@ -173,5 +176,5 @@ def control_pcs(results: list[dict], n_pc: int = 10) -> tuple[np.ndarray, np.nda
     X = X - np.median(X, axis=1, keepdims=True)
     X = np.clip(X - np.median(X, axis=0, keepdims=True), -0.5, 0.5)       # a deleted region must not make a PC
     U, S, _ = np.linalg.svd(X, full_matrices=False)
-    k = min(n_pc, len(S))
-    return U[:, :k] * S[:k], (S ** 2 / max((S ** 2).sum(), 1e-30))[:k]
+    k = len(S) if n_pc is None else min(n_pc, len(S))
+    return U[:, :k] * S[:k], (S ** 2 / max((S ** 2).sum(), 1e-30))[:k], S, X.shape
