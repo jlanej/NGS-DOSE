@@ -1,5 +1,5 @@
 target/
 work/
 .git/
-example/
-docs/
+example/1000G/logs/
+**/__pycache__/

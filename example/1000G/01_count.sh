@@ -27,7 +27,7 @@ while IFS=$'\t' read -r sample cram _; do
   [ -s "$out" ] && continue
   args=(-i "$cram" -T "$REF_FASTA" -c "$BUNDLE/controls.fa.gz" -p "$BUNDLE/panel.k31.tsv.gz" -@ "$THREADS" -s "$sample" -o "$out.tmp.gz")
   if [ "$MODE" = scan ]; then
-    [ -s "$SATELLITES" ] && args+=(-p "$SATELLITES")
+    have_file "$SATELLITES" && args+=(-p "$SATELLITES")
     args+=(-m scan)
   else
     args+=(-m fetch --sinks "$BUNDLE/sinks.bed")

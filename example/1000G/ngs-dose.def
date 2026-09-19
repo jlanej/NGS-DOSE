@@ -33,11 +33,14 @@ Stage: final
     README.md /opt/ngs-dose/README.md
     ngsdose /opt/ngs-dose/ngsdose
     resources /opt/ngs-dose/resources
+    docs /opt/ngs-dose/docs
+    example /opt/ngs-dose/example
 
 %post
-    apt-get update && apt-get install -y --no-install-recommends ca-certificates libcurl4 libbz2-1.0 liblzma5 zlib1g
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates libcurl4 libbz2-1.0 liblzma5 zlib1g aria2 curl
     rm -rf /var/lib/apt/lists/*
     pip install --no-cache-dir /opt/ngs-dose
+    install -m 0755 /opt/ngs-dose/example/ngs-dose-example /usr/local/bin/ngs-dose-example
 
 %environment
     export NGSDOSE_RESOURCES=/opt/ngs-dose/resources/GRCh38

@@ -41,7 +41,7 @@ fi
 
 common=(-i "$CRAM" --index "$CRAI" -T "$REF_FASTA" -c "$BUNDLE/controls.fa.gz" -p "$BUNDLE/panel.k31.tsv.gz" -s "$SAMPLE" -@ "${SLURM_CPUS_PER_TASK:-$THREADS}")
 if ! valid "$SCAN_OUT"; then
-  scan=("${common[@]}" -m scan); [ -s "$SATELLITES" ] && scan+=(-p "$SATELLITES")
+  scan=("${common[@]}" -m scan); have_file "$SATELLITES" && scan+=(-p "$SATELLITES")
   ngsdose_engine count "${scan[@]}" -o "$SCAN_OUT"
 fi
 valid "$FETCH_OUT" || ngsdose_engine count "${common[@]}" -m fetch --sinks "$BUNDLE/sinks.bed" -o "$FETCH_OUT"

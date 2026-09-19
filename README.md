@@ -68,10 +68,12 @@ cargo build --release                     # the engine: target/release/ngs-dose
 pip install -e .                          # the modelling layer: ngsdose
 ```
 
-Without compiling: the container has the engine, the package and the GRCh38 bundle,
+Without compiling: the container has the engine, the package, the GRCh38 bundle, `aria2c` and
+the cohort scripts - a cluster needs nothing else but Apptainer and SLURM (`example/1000G`),
 
 ```bash
 apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
+apptainer exec ngs-dose.sif ngs-dose count --help
 ```
 
 and every [release](https://github.com/jlanej/NGS-DOSE/releases) carries the engine for Linux

@@ -7,23 +7,28 @@ WORK_DIR="${WORK_DIR:-/scratch/${USER}/ngs_dose_1000G}"
 LOG_DIR="${LOG_DIR:-$WORK_DIR/logs}"
 MANIFEST="${MANIFEST:-$WORK_DIR/manifest.tsv}"      # SAMPLE <TAB> CRAM (https:// URL or local path)
 
-# the engine and the python package: local installs (cargo build --release; pip install .), or
-# the container for both (`apptainer exec $SIF ...`) when SIF is set
-NGSDOSE_BIN="${NGSDOSE_BIN:-$REPO/target/release/ngs-dose}"
+# Two ways to run. With SIF set, everything - engine, python package, resource bundle, aria2c -
+# comes from the container image and nothing is installed on the host (these scripts themselves
+# can be copied out of the image: `apptainer exec $SIF ngs-dose-example DIR`). Without it: a
+# checkout with `cargo build --release` and `pip install .`.
 SIF="${SIF:-}"
+NGSDOSE_BIN="${NGSDOSE_BIN:-$REPO/target/release/ngs-dose}"
+if [ -n "$SIF" ]; then IMAGE_ROOT=/opt/ngs-dose; else IMAGE_ROOT="$REPO"; fi
+BUNDLE="${BUNDLE:-$IMAGE_ROOT/resources/GRCh38}"
+# panels to load; the satellite panel is experimental and only meaningful in scan mode
+SATELLITES="${SATELLITES:-$IMAGE_ROOT/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz}"
 # staged CRAMs for the full-accuracy path (01b_dose_sample.sh): $CRAM_DIR/<sample>.cram(.crai)
 CRAM_DIR="${CRAM_DIR:-$WORK_DIR/crams}"
-BUNDLE="${BUNDLE:-$REPO/resources/GRCh38}"
-# panels to load; the satellite panel is experimental and only meaningful in scan mode
-SATELLITES="${SATELLITES:-$REPO/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz}"
 
 # CRAM decoding needs the reference: a local FASTA (recommended) or htslib's REF_PATH/REF_CACHE
 REF_FASTA="${REF_FASTA:-$WORK_DIR/reference/GRCh38_full_analysis_set_plus_decoy_hla.fa}"
 
 # what the container has to see (bind sources must exist: 00_setup.sh creates them)
-APPTAINER_BINDS="${APPTAINER_BINDS:-$WORK_DIR,$REPO,$(dirname "$REF_FASTA"),$CRAM_DIR}"
+APPTAINER_BINDS="${APPTAINER_BINDS:-$WORK_DIR,$EX_DIR,$(dirname "$REF_FASTA"),$CRAM_DIR}"
 ngsdose_engine() { if [ -n "$SIF" ]; then apptainer exec --bind "$APPTAINER_BINDS" "$SIF" ngs-dose "$@"; else "$NGSDOSE_BIN" "$@"; fi; }
+# any other command of the image (ngsdose, python3, aria2c, test): run where the bundle paths are valid
 ngsdose_py() { if [ -n "$SIF" ]; then apptainer exec --bind "$APPTAINER_BINDS" "$SIF" "$@"; else "$@"; fi; }
+have_file() { ngsdose_py test -s "$1"; }
 
 # scan  = read every record: the full-accuracy mode. Placement-independent, measures the
 #         (experimental) satellite classes too, records where every class read was aligned and
