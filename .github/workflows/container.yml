@@ -10,7 +10,7 @@ name: Container
 #  that pull to need no login.)
 on:
   push:
-    branches: [main, claude/ci-publishing]   # TEMPORARY: exercise the workflows before the PR exists
+    branches: [main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -75,6 +75,7 @@ jobs:
           exec > >(tee "$RUNNER_TEMP/flow.log") 2>&1
           apptainer build "$RUNNER_TEMP/ngs-dose.sif" docker-daemon://ngs-dose:test
           export SIF="$RUNNER_TEMP/ngs-dose.sif" WORK_DIR="$RUNNER_TEMP/work"
+          apptainer exec "$SIF" aria2c --version | head -1      # the stager must find its downloader in the image
           apptainer exec "$SIF" ngs-dose-example "$RUNNER_TEMP/cohort"
           mkdir -p "$RUNNER_TEMP/bucket" "$WORK_DIR/reference" "$WORK_DIR/crams"
           cp tests/data/NA12878.subsample.bam "$RUNNER_TEMP/bucket/MINI.final.cram"

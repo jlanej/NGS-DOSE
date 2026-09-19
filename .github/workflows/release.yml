@@ -9,7 +9,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [claude/ci-publishing]   # TEMPORARY: exercise the workflows before the PR exists
   pull_request:
     paths: [".github/workflows/release.yml"]
   workflow_dispatch:
