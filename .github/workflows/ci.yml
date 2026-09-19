@@ -53,6 +53,7 @@ jobs:
       - name: Engine - format and lints
         if: matrix.lint && github.event_name != 'schedule'
         run: |
+          set -o pipefail               # the status of the pipeline below is clippy's, not the annotator's
           cargo fmt --check
           # findings become annotations on the lines they are about
           cargo clippy --release --all-targets --locked --message-format=json -- -D warnings | python3 .github/scripts/cargo_annotate.py

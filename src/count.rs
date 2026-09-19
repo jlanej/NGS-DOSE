@@ -437,8 +437,9 @@ fn record_assignment(
     ca.reads += 1;
     ca.bases += read_len as u64;
     ca.dup_flagged += dup as u64;
-    if read_len > 0 {
-        ca.gc_read[((gc as usize * 100) + read_len / 2) / read_len] += 1;
+    // percent GC of the read, rounded; a read of length zero has none
+    if let Some(pct) = ((gc as usize * 100) + read_len / 2).checked_div(read_len) {
+        ca.gc_read[pct] += 1;
     }
     ca.hit_frac[(a.hits * 10 / a.valid.max(1)).min(10)] += 1;
     if cdef.kind == Kind::Positional {
