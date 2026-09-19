@@ -208,8 +208,8 @@ def main():
                 v_rp.update(zip(c_rp.samples, np.exp(c_rp.c)))
             for s in test:
                 # the same anchors without any cohort: ratio of sums over the anchor windows of one sample
-                def single(r):
-                    w = [x for x in r["classes"]["rDNA45S"]["windows"] if x["cn"] and any(a0 <= x["start"] and x["end"] <= b0 for a0, b0 in iv_f)]
+                def single(r, iv=iv_f):
+                    w = [x for x in r["classes"]["rDNA45S"]["windows"] if x["cn"] and any(a0 <= x["start"] and x["end"] <= b0 for a0, b0 in iv)]
                     return 2 * sum(x["obs"] for x in w) / sum(x["exp"] for x in w)
                 held.append((s, f, int(c_ny.anchor.sum()), float(v_ny[s]), float(v_rp[s]), single(ny[s]), single(hg[s])))
         if held:

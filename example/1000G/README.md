@@ -112,7 +112,8 @@ Operational notes:
 - With `export SIF=/path/to/ngs-dose.sif` both the engine and the Python steps run through
   Apptainer. `00_setup.sh` pulls the image if the file is not there yet
   (`docker://ghcr.io/jlanej/ngs-dose:latest`, published by `.github/workflows/container.yml` on
-  version tags or on demand; a private package needs `apptainer remote login` first). Where
+  every push to `main`, and as `:X.Y.Z` on version tags; a package that has not been made public
+  needs `apptainer remote login` first). Where
   nothing has been published, `ngs-dose.def` builds the same image from a checkout
   (`apptainer build --fakeroot`, from the repository root). The scripts bind `$WORK_DIR`, the
   repository, the reference directory and `$CRAM_DIR` (`APPTAINER_BINDS` in `config.sh`).

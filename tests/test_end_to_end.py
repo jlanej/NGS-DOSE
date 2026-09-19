@@ -1,5 +1,4 @@
 """Engine + estimator on a simulated genome with known truth (needs the built binary and samtools)."""
-import json
 import os
 import shutil
 import subprocess

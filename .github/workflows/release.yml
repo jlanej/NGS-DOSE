@@ -1,0 +1,147 @@
+name: Release
+
+# A tag vX.Y.Z makes a GitHub Release carrying everything needed to run without cloning or
+# compiling: the engine for Linux (built against glibc 2.28, so it runs on RHEL/Rocky 8 and
+# anything newer; curl and TLS are linked in) and for macOS on Apple silicon, the Python
+# package, and the resource bundle. (The container image is the other workflow.)
+# A pull request that touches this file, and a manual run, build and test the same
+# artifacts and publish nothing.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  COUNT_ARGS: -m fetch -i tests/data/NA12878.subsample.bam -p resources/GRCh38/panel.k31.tsv.gz -c resources/GRCh38/controls.fa.gz --sinks resources/GRCh38/sinks.bed
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: One version everywhere
+        id: v
+        run: |
+          cargo_v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          py_v=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          [ "$cargo_v" = "$py_v" ] || { echo "::error::Cargo.toml says $cargo_v, pyproject.toml says $py_v"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$cargo_v" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but the sources say $cargo_v: bump Cargo.toml (and Cargo.lock) and pyproject.toml first"; exit 1
+          fi
+          echo "version=$cargo_v" >> "$GITHUB_OUTPUT"
+
+  engine-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64          # AlmaLinux 8: glibc 2.28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dependencies
+        # libclang for bindgen; perl for the vendored OpenSSL that curl is linked against
+        run: dnf install -y clang-devel perl-core zlib-devel bzip2-devel xz-devel
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+      - name: What the binary asks of the system
+        run: |
+          ldd target/release/ngs-dose
+          echo "newest glibc symbol: $(objdump -T target/release/ngs-dose | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+      - name: Count real reads
+        run: |
+          target/release/ngs-dose --version
+          target/release/ngs-dose count $COUNT_ARGS -o /tmp/counts.json.gz
+      - name: Package
+        run: |
+          d=ngs-dose-${{ needs.version.outputs.version }}-linux-x86_64
+          mkdir "$d" && cp target/release/ngs-dose README.md "$d"/ && tar czf "$d.tar.gz" "$d"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: ngs-dose-*.tar.gz
+          if-no-files-found: error
+
+  engine-macos:
+    needs: version
+    runs-on: macos-latest                                   # Apple silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+      - name: Count real reads
+        run: |
+          otool -L target/release/ngs-dose
+          target/release/ngs-dose --version
+          target/release/ngs-dose count $COUNT_ARGS -o /tmp/counts.json.gz
+      - name: Package
+        run: |
+          d=ngs-dose-${{ needs.version.outputs.version }}-macos-arm64
+          mkdir "$d" && cp target/release/ngs-dose README.md "$d"/ && tar czf "$d.tar.gz" "$d"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-macos
+          path: ngs-dose-*.tar.gz
+          if-no-files-found: error
+
+  python-and-resources:
+    needs: [version, engine-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the package and the resource bundle
+        run: |
+          pip install build
+          python -m build --outdir dist
+          tar czf dist/ngs-dose-resources-${{ needs.version.outputs.version }}.tar.gz resources/GRCh38 resources/experimental
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-linux
+          path: engine
+      # the release as a user meets it: unpacked engine, installed wheel, unpacked resources, nothing from the checkout
+      - name: Install from the artifacts alone and run them together
+        run: |
+          work=$(mktemp -d); cp tests/data/NA12878.subsample.bam* "$work"/
+          tar xzf engine/ngs-dose-*-linux-x86_64.tar.gz -C "$work" --strip-components 1
+          tar xzf dist/ngs-dose-resources-*.tar.gz -C "$work"
+          python -m venv "$work/venv" && "$work/venv/bin/pip" install -q dist/*.whl
+          cd "$work"
+          export NGSDOSE_RESOURCES=$work/resources/GRCh38 R=$work/resources/GRCh38
+          ./ngs-dose count -m fetch -i NA12878.subsample.bam -p $R/panel.k31.tsv.gz -c $R/controls.fa.gz --sinks $R/sinks.bed -o counts.json.gz
+          venv/bin/ngsdose selftest
+          venv/bin/ngsdose estimate counts.json.gz -t estimate.tsv
+          cut -f1-3 estimate.tsv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-and-resources
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [version, engine-linux, engine-macos, python-and-resources]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
+          body: |
+            **Install without compiling.** Unpack the engine for your platform (`ngs-dose-*-linux-x86_64.tar.gz` runs on glibc 2.28 and newer - RHEL/Rocky 8, Ubuntu 20.04 and later - with curl and TLS built in; `ngs-dose-*-macos-arm64.tar.gz` for Apple silicon), `pip install ngsdose-*.whl`, unpack `ngs-dose-resources-*.tar.gz` and point `NGSDOSE_RESOURCES` at its `resources/GRCh38`.
+            **Or use the container**, which has all three: `apptainer pull ngs-dose.sif docker://ghcr.io/${{ github.repository_owner }}/ngs-dose:${{ needs.version.outputs.version }}`.
