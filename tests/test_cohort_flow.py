@@ -1,0 +1,103 @@
+"""The cohort layer end to end, on a cohort that can be built anywhere: sixty seeded subsamples of
+the NA12878 fixture, named as twenty trios. Every "sample" is the same person, so there is no
+true variance at all - which makes the expected answers known: calibrated copy numbers agree to
+within sampling noise, coverage PCs explain nothing beyond chance, and no estimator is
+"transmitted". This is the path `example/1000G/02_cohort.sh` takes (estimate -> cohort with
+control PCs -> adjust on external and internal PCs -> trios with a paired comparison), which the
+twelve-sample pilot is too small to exercise."""
+import csv
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+BIN = Path(os.environ.get("NGSDOSE_BIN", ROOT / "target" / "release" / "ngs-dose"))
+BAM = ROOT / "tests" / "data" / "NA12878.subsample.bam"
+BUNDLE = ROOT / "resources" / "GRCh38"
+N_TRIOS = 20
+
+pytestmark = pytest.mark.skipif(not BIN.exists() or not shutil.which("samtools"), reason="needs the engine and samtools")
+
+
+def rows_of(path):
+    with open(path) as fh:
+        return list(csv.DictReader(fh, delimiter="\t"))
+
+
+@pytest.fixture(scope="module")
+def cohort(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("cohort")
+    names = [f"S{i:03d}" for i in range(3 * N_TRIOS)]
+    counts = []
+    for i, s in enumerate(names):
+        bam = tmp / f"{s}.bam"
+        subprocess.run(["samtools", "view", "-b", "-s", f"{i + 1}.6", "-o", str(bam), str(BAM)], check=True)
+        subprocess.run(["samtools", "index", "-c", str(bam)], check=True)
+        out = tmp / f"{s}.json.gz"
+        subprocess.run([str(BIN), "count", "-m", "fetch", "-i", str(bam), "-p", str(BUNDLE / "panel.k31.tsv.gz"), "-c", str(BUNDLE / "controls.fa.gz"),
+                        "--sinks", str(BUNDLE / "sinks.bed"), "-s", s, "-@", "2", "-o", str(out)], check=True, capture_output=True)
+        bam.unlink()
+        counts.append(str(out))
+    # 1000 Genomes style pedigree (child, father, mother in turn) and NGS-PCA style PCs (its sample-name suffix included)
+    ped = tmp / "pedigree.txt"
+    lines = ["FamilyID SampleID FatherID MotherID Sex Population Superpopulation"]
+    for t in range(N_TRIOS):
+        c, f, m = names[3 * t:3 * t + 3]
+        lines += [f"F{t} {c} {f} {m} 1 POP SUP", f"F{t} {f} 0 0 1 POP SUP", f"F{t} {m} 0 0 2 POP SUP"]
+    ped.write_text("\n".join(lines) + "\n")
+    rng = np.random.default_rng(5)
+    pcs = tmp / "svd.pcs.txt"
+    pcs.write_text("SAMPLE\t" + "\t".join(f"PC{k + 1}" for k in range(8)) + "\n"
+                   + "".join(f"{s}.by1000.\t" + "\t".join(f"{x:.5f}" for x in rng.normal(size=8)) + "\n" for s in names))
+    run = lambda *a: subprocess.run([sys.executable, "-m", "ngsdose", *a], check=True, cwd=ROOT, capture_output=True, text=True)
+    run("estimate", *counts, "-r", str(BUNDLE), "-o", str(tmp / "est"), "-t", str(tmp / "single.tsv"), "-j", "4")
+    run("cohort", *map(str, sorted((tmp / "est").glob("*.json.gz"))), "-r", str(BUNDLE), "-t", str(tmp / "cohort.tsv"), "--control-pcs", "5")
+    cols = ["rDNA45S.18S.flat", "rDNA45S.cn_single", "rDNA45S.cn", "rDNA5S.cn", "DJ.cn", "truth.auto", "chrEBV.copies", "chrM.copies"]
+    adj = {"ngspca": run("adjust", str(tmp / "cohort.tsv"), "--pcs", str(pcs), "--n-pc", "8", "-c", *cols, "-o", str(tmp / "adj_ngspca.tsv")).stderr,
+           "ctrlpc": run("adjust", str(tmp / "cohort.tsv"), "--n-pc", "5", "-c", *cols, "-o", str(tmp / "adj_ctrlpc.tsv")).stderr}
+    trios = run("trios", str(tmp / "adj_ngspca.tsv"), "-p", str(ped), "-c", *[c + ".adj" for c in cols], "--compare-to", "rDNA45S.18S.flat.adj",
+                "--json", str(tmp / "transmission.json")).stdout
+    return dict(tmp=tmp, cols=cols, adjust_log=adj, trios=trios)
+
+
+def test_the_same_person_sixty_times(cohort):
+    rows = rows_of(cohort["tmp"] / "cohort.tsv")
+    assert len(rows) == 3 * N_TRIOS
+    for col, tol in (("rDNA45S.cn", 0.08), ("DJ.cn", 0.12), ("truth.auto", 0.08), ("chrM.copies", 0.12)):
+        v = np.array([float(r[col]) for r in rows])
+        assert np.all(np.abs(v / np.median(v) - 1) < tol), (col, v.min(), v.max())
+    assert all(f"ctrlPC{k}" in rows[0] for k in range(1, 6))
+    assert {r["eof_marker"] for r in rows} == {"present"} and all(float(r["truth.chrY"]) < 0.05 for r in rows)
+
+
+def test_adjustment_explains_no_more_than_chance(cohort):
+    for which, log in cohort["adjust_log"].items():
+        lines = [l for l in log.splitlines() if l.startswith("[adjust]")]
+        assert len(lines) == len(cohort["cols"]), which
+        for l in lines:
+            r2_adj = float(l.split("adjusted R2 ")[1].split("%")[0])
+            assert "expected by chance" in l and r2_adj < 25, l
+    adj = rows_of(cohort["tmp"] / "adj_ngspca.tsv")
+    assert len(adj) == 3 * N_TRIOS and all(f"{c}.adj" in adj[0] for c in cohort["cols"])
+
+
+def test_nothing_is_transmitted_when_there_is_nothing_to_transmit(cohort):
+    import json
+    res = json.loads((cohort["tmp"] / "transmission.json").read_text())
+    table = [l.split("\t") for l in cohort["trios"].splitlines() if l and not l.startswith("#")]
+    assert sum(1 for t in table if t[0].endswith(".adj")) >= 2 * len(cohort["cols"]) - 1          # reliabilities + paired differences
+    per = res["columns"] if "columns" in res else res
+    n_checked = 0
+    for col, r in per.items():
+        if not isinstance(r, dict) or "reliability_midparent" not in r:
+            continue
+        n_checked += 1
+        assert r["n_trios"] == N_TRIOS
+        lo, hi = r["reliability_midparent_ci95"]
+        assert lo < hi and lo < 0.6, (col, lo, hi)             # an interval far above zero would be a bug: there is no signal
+    assert n_checked == len(cohort["cols"])

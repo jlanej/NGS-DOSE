@@ -1,0 +1,29 @@
+[package]
+name = "ngs-dose"
+version = "0.1.0"
+edition = "2021"
+description = "Sequence-class dosage (rDNA, satellite and other multi-copy classes) from short-read WGS"
+repository = "https://github.com/jlanej/NGS-DOSE"
+rust-version = "1.75"
+
+[[bin]]
+name = "ngs-dose"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rust-htslib = { version = "1", default-features = false, features = ["bzip2", "lzma", "curl"] }
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = "1"
+crossbeam-channel = "0.5"
+url = "2"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 1

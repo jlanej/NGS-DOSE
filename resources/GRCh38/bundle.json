@@ -1,0 +1,59 @@
+{
+  "name": "GRCh38-v1",
+  "reference": "GRCh38, chr-prefixed contig names (1000 Genomes analysis set GRCh38_full_analysis_set_plus_decoy_hla, or any build sharing its primary and unplaced contigs)",
+  "k": 31,
+  "panel": "panel.k31.tsv.gz",
+  "controls": "controls.fa.gz",
+  "controls_bed": "controls.bed",
+  "sinks": "sinks.bed",
+  "features": "features.tsv",
+  "units": {
+    "rDNA45S": "units/rDNA45S.KY962518.1.fa",
+    "rDNA5S": "units/rDNA5S.X12811.1.fa",
+    "DJ": "units/DJ.CHM13v2_chr21_2708299_3108298.fa"
+  },
+  "sinks_learned_from": {
+    "aligner": "bwa mem 0.7.15 -Y, ALT-aware (NYGC 1000 Genomes 30x pipeline)",
+    "samples": [
+      "NA12878 (CEU, female)",
+      "HG02258 (ACB, male)"
+    ],
+    "capture_min": {
+      "rDNA45S": 0.99939,
+      "rDNA5S": 0.9998,
+      "DJ": 0.99774
+    },
+    "rule": "10-kb placement bins holding >= 1e-5 of a class's reads and >= 25 reads in any scan, padded by 1 kb"
+  },
+  "expected_copies": {
+    "DJ": 10
+  },
+  "anchors": "anchors.json",
+  "contig_lengths": {
+    "chr1": 248956422,
+    "chr2": 242193529,
+    "chr3": 198295559,
+    "chr4": 190214555,
+    "chr5": 181538259,
+    "chr6": 170805979,
+    "chr7": 159345973,
+    "chr8": 145138636,
+    "chr9": 138394717,
+    "chr10": 133797422,
+    "chr11": 135086622,
+    "chr12": 133275309,
+    "chr13": 114364328,
+    "chr14": 107043718,
+    "chr15": 101991189,
+    "chr16": 90338345,
+    "chr17": 83257441,
+    "chr18": 80373285,
+    "chr19": 58617616,
+    "chr20": 64444167,
+    "chr21": 46709983,
+    "chr22": 50818468,
+    "chrX": 156040895,
+    "chrY": 57227415,
+    "chrM": 16569
+  }
+}

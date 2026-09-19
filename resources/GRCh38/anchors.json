@@ -1,0 +1,37 @@
+{
+ "rDNA45S": {
+  "intervals": [
+   [
+    4750,
+    5000
+   ],
+   [
+    22250,
+    22500
+   ],
+   [
+    26750,
+    27000
+   ],
+   [
+    31000,
+    31500
+   ],
+   [
+    35250,
+    35750
+   ],
+   [
+    36000,
+    36250
+   ],
+   [
+    36500,
+    37750
+   ]
+  ],
+  "window": 250,
+  "rule": "fragment GC 40-60%, |median d| < 0.06 and 10-90% spread < 0.15, d = log(C_replicate/C_NYGC) per window",
+  "derived_from": "12 sample pairs: NYGC NovaSeq 2x150 vs HGSVC HiSeq 2500 2x126 / Platinum HiSeq 2000 2x100 (example/1000G/pilot/evaluate_pilot.py --write-anchors)"
+ }
+}
