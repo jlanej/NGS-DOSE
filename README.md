@@ -96,7 +96,8 @@ ngsdose estimate NA12878.json.gz -o estimates/ -t single_sample.tsv
 ```bash
 # cohort: window calibration, coverage-PC adjustment, transmission reliability
 ngsdose cohort estimates/*.estimate.json.gz -t cohort.tsv --save-efficiencies efficiencies.json
-ngsdose adjust cohort.tsv --pcs ngspca/svd.pcs.txt --n-pc 20 -c rDNA45S.cn -o cohort.adjusted.tsv
+ngsdose adjust cohort.tsv --pcs ngspca/svd.pcs.txt -c rDNA45S.cn -o cohort.adjusted.tsv   # PCs above the Marchenko-Pastur edge; --n-pc N overrides
+ngsdose pcsweep cohort.tsv --pcs ngspca/svd.pcs.txt -c rDNA45S.cn -p pedigree.txt -o sweep.tsv   # known-truth error and transmission for every number of PCs
 ngsdose trios cohort.adjusted.tsv -p pedigree.txt -c rDNA45S.cn rDNA45S.cn_single rDNA45S.18S.flat \
     --compare-to rDNA45S.18S.flat       # reliabilities with bootstrap CIs, and paired differences
 ```
@@ -136,7 +137,7 @@ pilot; `resources/build/` rebuilds the GRCh38 bundle from public inputs.
 | `eof_marker` | `present` unless the input lacked its end-of-file block (the engine refuses such files unless told otherwise) |
 | `depth`, `ctrl_dup_frac`, `gc_rel_35`, `gc_rel_65`, `ctrl_region_sd`, `flagged_chromosomes` | library and sample QC; an aneuploid chromosome is reported and excluded from the denominator |
 | `*.profile_sd`, `*.profilePC*` | how far the sample's window profile departs from the cohort's |
-| `ctrlPC1…` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run |
+| `ctrlPC1…`, `ctrlPC_mp` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run; `ctrlPC_mp` is how many of them stand above the noise edge (what `adjust` uses by default) |
 | `gc_curve_max_se` | how well the sample's GC curve is determined (large at very low depth) |
 
 ## Status
@@ -148,7 +149,7 @@ layer, bundle-integrity checks and regression tests on the pilot's counts, all i
 (Linux and macOS, Python 3.10 to 3.13). Every push to `main` publishes the container image, and
 a version tag makes a release with prebuilt engines, the Python package and the resource bundle
 (`.github/workflows/`). Before the cohort run every assumption the counts files
-rest on was audited against data; seven were wrong and are fixed (DESIGN.md §15). Validated so far on a
+rest on was audited against data; eight were wrong and are fixed (DESIGN.md §15). Validated so far on a
 12-sample, 4-trio pilot in which every sample has an independent library replicate. An
 experimental satellite panel (HSat1A/1B/2/3, β-satellite, α-satellite HOR) ships under
 `resources/experimental/` for scan mode; it runs and gives plausible masses, and is unvalidated.
