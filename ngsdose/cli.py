@@ -171,12 +171,16 @@ def cmd_cohort(a):
     # control-region PCs: how many are structure is decided at the Marchenko-Pastur edge of the noise
     # bulk ("mp"); the table carries more than that, so that `pcsweep` can look beyond the choice
     want = None if str(a.control_pcs).lower() == "mp" else int(a.control_pcs)
-    ok = len(order) >= max(10, 5 * (want or 1)) and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
+    ok = len(order) >= 10 and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
     cp = cohort.control_pcs(np.array(ctrl, float), None) if ok and want != 0 else None
     if cp is not None:
         scores, var, sv, shape = cp
-        sel = pcselect.mp_select(sv, *shape)
-        n_write = min(scores.shape[1], want if want is not None else min(max(2 * sel.n_pc, 20), len(order) // 5))
+        sel = pcselect.mp_select(sv, *shape, margin=a.mp_margin)
+        most = max(len(order) // 5, 1)                     # at least five samples per component
+        n_write = min(scores.shape[1], most, want if want is not None else max(2 * sel.n_pc, 20))
+        if want is not None and n_write < want:
+            print(f"[cohort] WARNING: --control-pcs {want}, but {len(order)} samples support {n_write} (five samples per component): {n_write} written",
+                  file=sys.stderr)
         for i, s in enumerate(order):
             rows[s]["ctrlPC_mp"] = sel.n_pc
             for k in range(n_write):
@@ -250,6 +254,15 @@ def load_pcs(path, n_pc=None, strip=(".by1000.", ".")):
     return pcs
 
 
+def _clamp(asked: int, available: int, what: str):
+    """A number of PCs asked for outright is used as far as it can be: a pipeline should not die at its
+    last step because one of two PC sets is smaller than the other, but it has to say so."""
+    if asked > available:
+        print(f"WARNING: --n-pc {asked}, but there are {available} {what}: using {available}", file=sys.stderr)
+        return available, f"--n-pc {asked}, clamped to the {available} available"
+    return asked, f"--n-pc {asked}"
+
+
 def _pcs_and_choice(a, rows):
     """{sample: every available PC}, the number to use, and how it was chosen. `--n-pc mp` (the
     default) counts the components above the Marchenko-Pastur edge of the noise bulk: for NGS-PCA's
@@ -260,7 +273,7 @@ def _pcs_and_choice(a, rows):
         pcs = load_pcs(a.pcs)
         n_avail = min(len(v) for v in pcs.values())
         if not auto:
-            return pcs, min(int(a.n_pc), n_avail), f"--n-pc {a.n_pc}"
+            return pcs, *_clamp(int(a.n_pc), n_avail, "PCs in " + str(a.pcs))
         d = Path(a.pcs).parent
         sv_path = Path(a.singular_values) if a.singular_values else d / "svd.singularvalues.txt"
         n_feat = a.n_features
@@ -277,7 +290,7 @@ def _pcs_and_choice(a, rows):
                     sv.append(float(line.split()[-1]))
                 except (ValueError, IndexError):
                     continue
-        sel = pcselect.mp_select(sv, len(pcs), n_feat)
+        sel = pcselect.mp_select(sv, len(pcs), n_feat, margin=a.mp_margin)
         return pcs, min(sel.n_pc, n_avail), sel.describe()
     cols = [c for c in rows[0] if re.fullmatch(r"ctrlPC\d+", c)]
     cols.sort(key=lambda c: int(c[6:]))
@@ -285,9 +298,7 @@ def _pcs_and_choice(a, rows):
         raise SystemExit("no --pcs given and the table has no ctrlPC columns; run `ngsdose cohort` with --control-pcs")
     pcs = {r["sample"]: [float(r[c]) for c in cols] for r in rows if all(r.get(c, "NA") not in ("NA", "") for c in cols)}
     if not auto:
-        if int(a.n_pc) > len(cols):
-            raise SystemExit(f"--n-pc {a.n_pc}, but the table carries {len(cols)} control-region PCs; re-run `ngsdose cohort --control-pcs {a.n_pc}`")
-        return pcs, int(a.n_pc), f"--n-pc {a.n_pc}"
+        return pcs, *_clamp(int(a.n_pc), len(cols), "control-region PCs the table carries (`ngsdose cohort --control-pcs N` writes more)")
     mp = next((r["ctrlPC_mp"] for r in rows if r.get("ctrlPC_mp", "NA") not in ("NA", "")), None)
     if mp is None:
         raise SystemExit("--n-pc mp: the table does not record a Marchenko-Pastur count (ctrlPC_mp); re-run `ngsdose cohort`, or give --n-pc N")
@@ -425,6 +436,8 @@ def main(argv=None):
     c.add_argument("--gc-rule-anchors", action="store_true")
     c.add_argument("--max-window-sd", type=float, default=None)
     c.add_argument("--profile-pcs", type=int, default=3)
+    c.add_argument("--mp-margin", type=float, default=0.01,
+                   help="how far (relative) a component has to clear the fitted noise edge to count towards ctrlPC_mp (default 0.01)")
     c.add_argument("--control-pcs", default="mp",
                    help="components of the control regions' residual depth to write as ctrlPC columns: a number, or 'mp' (default): "
                         "count the components above the Marchenko-Pastur edge of the noise bulk, record the count (ctrlPC_mp) "
@@ -446,6 +459,8 @@ def main(argv=None):
         sp.add_argument("--n-pc", default="mp",
                         help="how many PCs to regress out: a number, or 'mp' (default): the components above the Marchenko-Pastur "
                              "edge of the noise bulk")
+        sp.add_argument("--mp-margin", type=float, default=0.01,
+                        help="for --n-pc mp: how far (relative) a component has to clear the fitted noise edge to count (default 0.01)")
         sp.add_argument("--singular-values", help="singular values of the SVD behind --pcs (default: svd.singularvalues.txt beside it)")
         sp.add_argument("--n-features", type=int, help="number of bins in that SVD (default: the lines of svd.bins.txt beside --pcs)")
 

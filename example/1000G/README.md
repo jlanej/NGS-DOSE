@@ -150,8 +150,8 @@ share batches and every other reliability in the table is inflated by as much), 
 adjusted on the internal control PCs, each with a family-bootstrap confidence interval, the
 spousal correlation, a permuted-family null, and the *paired* bootstrap of every estimator
 against the 18S depth ratio (separate intervals are about ±0.09 at 602 trios; the paired
-difference is much sharper). The number of PCs is the Marchenko–Pastur default (`N_PC=20 sbatch
-02_cohort.sh` overrides it), and `pcsweep.*.tsv` with its `.summary.txt` is the evidence for or
+difference is much sharper). The number of PCs is the Marchenko–Pastur default, separately for the two PC
+sets (`N_PC=20 N_CTRL_PC=5 sbatch 02_cohort.sh` overrides them), and `pcsweep.*.tsv` with its `.summary.txt` is the evidence for or
 against that default: for every number of PCs, the cross-validated error of the known truths
 and the reliability of the classes. Further checks that need the cohort and are not scripted yet:
 

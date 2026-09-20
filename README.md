@@ -149,7 +149,7 @@ layer, bundle-integrity checks and regression tests on the pilot's counts, all i
 (Linux and macOS, Python 3.10 to 3.13). Every push to `main` publishes the container image, and
 a version tag makes a release with prebuilt engines, the Python package and the resource bundle
 (`.github/workflows/`). Before the cohort run every assumption the counts files
-rest on was audited against data; eight were wrong and are fixed (DESIGN.md §15). Validated so far on a
+rest on was audited against data; nine were wrong and are fixed (DESIGN.md §15). Validated so far on a
 12-sample, 4-trio pilot in which every sample has an independent library replicate. An
 experimental satellite panel (HSat1A/1B/2/3, β-satellite, α-satellite HOR) ships under
 `resources/experimental/` for scan mode; it runs and gives plausible masses, and is unvalidated.

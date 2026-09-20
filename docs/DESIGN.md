@@ -406,24 +406,41 @@ states (section 13).
   log(observed/expected) after the GC model — a small internal version of the same idea, for
   cohorts on which NGS-PCA has not been run; `ngsdose adjust` uses them when no `--pcs` file
   is given. Like the coverage PCs they are computed on sequence disjoint from every class.
-- **How many PCs.** By default, those that stand above the edge of the noise bulk of the SVD
-  they came from (`--n-pc mp`; any number overrides it). The textbook way to find that edge —
-  fit the Marchenko–Pastur law to the spectrum, for instance by matching its median — assumes
-  every entry of the matrix has the same noise variance, and coverage does not: noise falls
-  with a sample's depth and varies with a bin's mappability. On simulated noise whose rows
-  differ in SD by ±40% the textbook fit called 34 components where 7 were planted and 148
-  where 5 were, and on NGS-PCA's spectrum of this cohort (the top 200 singular values of a
-  3,200 × 142,070 matrix) it gives 59, 66 or 80 depending on whether 100, 150 or 200 values are
-  kept. What does survive unequal variances is the *shape* of the edge: the density of any such
-  bulk vanishes like a square root at its top, so the j-th largest noise value lies at
-  E − a·j^(2/3). The edge E is therefore fitted, with a, to the lower half of the leading
-  singular values, iterated on the number of components set aside as signal; a component is
-  kept if it clears E by four residual SDs of the fit (plus the Tracy–Widom scale, which
-  matters for dozens of samples and not for thousands). That recovers 7 of 7 and 5 of 5,
-  selects nothing in pure noise in 95% of runs, and gives 45–49 components on the 1000 Genomes
-  spectrum however much of it is kept (its edge is 1.5 times as broad as equal-variance noise
-  would make it, which is the unequal variances showing). `ngsdose cohort` makes the same
-  choice for its control PCs, records it (`ctrlPC_mp`), and writes twice as many.
+- **How many PCs.** By default, those that clear the edge of the noise bulk of the SVD they came
+  from (`--n-pc mp`; any number overrides it). The textbook way to find that edge — fit the
+  Marchenko–Pastur law to the spectrum, for instance by matching its median — assumes every
+  entry of the matrix has the same noise variance, and coverage does not: noise falls with a
+  sample's depth and varies with a bin's mappability. On simulated noise whose rows differ in SD
+  by ±40% the textbook fit called 34 components where 7 were planted and 148 where 5 were, and
+  on NGS-PCA's spectrum of this cohort (the top 200 singular values of a 3,200 × 142,070
+  matrix) it gives 59, 66 or 80 depending on whether 100, 150 or 200 values are kept. What does
+  survive unequal variances is the *shape* of the edge: the density of any such bulk vanishes
+  like a square root at its top, so the j-th largest noise value lies at E − a·j^(2/3). The edge
+  E is therefore fitted, with a, to the lower half of the leading singular values, iterated on
+  the number of components set aside as signal; a component counts if it clears E by a margin
+  of 1% (plus four residual SDs of the fit and the Tracy–Widom scale, which matters for dozens
+  of samples and not for thousands). With noise that differs between rows by ±40% and between
+  columns by ±30% that recovers planted components exactly and finds nothing in noise alone;
+  on the 1000 Genomes spectrum it gives 38–40 components however much of the spectrum is kept
+  (45–49 without the margin; the fitted edge is 1.5 times as broad as equal-variance noise
+  would make it). `ngsdose cohort` makes the same choice for its control PCs, records it
+  (`ctrlPC_mp`), and writes twice as many. Two limits, both measured:
+  - *Bins with heavy-tailed noise variance make the count lean high.* A bin whose variance is
+    several times the typical one is a component of its own — real structure in the matrix, of
+    no interest. With log-normal bin SDs (σ = 0.3; 1,500 × 12,000) noise alone yields 2.8
+    components per run without the margin and 1.1 with it; at σ = 0.5, 24 and 19. The margin is
+    a palliative that costs nothing that was measured (components planted 3–15% above the
+    largest noise value are all found at margins up to 2%), not a cure; fitting nearer the edge
+    collapses when many components sit at the threshold, and a curvature term is unstable.
+  - *The count is a property of the matrix; whether components that deep are usable is a
+    property of the solver and the sample set.* Two NGS-PCA runs of this cohort (3,200 and
+    3,202 samples) share their leading 20 PCs exactly (largest principal angle 1°) and then
+    part ways: 6° at 25, 18° at 30, 40° at 46; PC 40 of one run lies 86% inside the other's
+    leading subspace, PC 46 80% (NGS-PCA's own seed control shows the same). Within one run
+    such components are a legitimate variance sink at n = 3,200; they are not portable between
+    runs, and an analysis that has to be reproduced from a fresh SVD should not lean on them.
+  So the default is principled and on the high side, and what gets reported should rest on the
+  sweep.
 - **Whether that number is right** is an empirical question, and the cohort carries what it
   takes to answer it: sequence of known copy number in every sample, and trios.
   `ngsdose pcsweep` regresses out 0, 1, 2, … PCs and reports, for each number, the error of the
@@ -629,7 +646,8 @@ held.
 | Counts survive a bundle revision | pilot counts made before the chrY and dosage regions existed, estimated with the new bundle | refused: regions were matched to the bundle row for row | matched by name: the control set must be identical, other regions may be missing (section 4); asserted in CI |
 | The manifest is right | every URL of `00_setup.sh`'s manifest requested (HEAD) | three sample names in the 1000 Genomes sequence index end in a space, which put a space into three URLs and file names | names trimmed, file names taken from the index's path column, the manifest validated; all 6,404 CRAM and index URLs answer 200 |
 | The cohort run keeps what a cheaper method would be judged on | what a depth proxy needs: the scan estimate, the cohort's kept mosdepth bins, and the composition of those bins | placements were on a 10-kb grid and held class reads only: enough to learn sinks, not to say how much of a mosdepth bin is rDNA | placements on mosdepth's 1-kb grid with a census of every read in the bin (all, duplicate-flagged); against an independent duplicate-excluded depth over chr21's rDNA bins the census is within 3%; scan and fetch agree bin for bin inside the sinks, asserted in CI |
-| The Marchenko–Pastur law can be fitted to a coverage spectrum to choose the number of PCs | simulated noise with unequal variances (rows ±40%, columns ±30%) and planted components; NGS-PCA's 1000 Genomes spectrum truncated at 100, 150, 200 values | **false**: the median- or quantile-matched fit called 34 components for 7 planted and 148 for 5, and 59 / 66 / 80 on the real spectrum depending on the truncation | the edge is fitted from its universal square-root shape instead (section 9): exact on the simulations, none in pure noise, 45–49 on the real spectrum at every truncation; and `ngsdose pcsweep` lets known truths and transmission overrule it; all asserted in CI |
+| The Marchenko–Pastur law can be fitted to a coverage spectrum to choose the number of PCs | simulated noise with unequal variances (rows ±40%, columns ±30%) and planted components; NGS-PCA's 1000 Genomes spectrum truncated at 100, 150, 200 values | **false**: the median- or quantile-matched fit called 34 components for 7 planted and 148 for 5, and 59 / 66 / 80 on the real spectrum depending on the truncation | the edge is fitted from its universal square-root shape instead, with a 1% margin (section 9): exact on those simulations, none in that noise, 38–40 on the real spectrum at every truncation. It still leans high when bins have heavy-tailed variances (a few components in noise alone), and components beyond the leading 20–25 are not reproducible between SVD runs - so `ngsdose pcsweep` lets known truths and transmission decide; all asserted in CI |
+| A known truth's error under adjustment can be read off a regression of the estimate | review of `pcsweep`: a two-valued truth (chrX: 1 or 2), PCs unrelated to it, n = 3,200 | **false**: the estimate carries the variance of the truth itself (SD of log truth 0.35), every regressor adds 0.35·√(k/n) of estimation noise out of fold, and the reported error rose 0.010 → 0.040 at 46 PCs - adjustment would always have looked harmful for chrX | the error, log(estimate / truth), is what is regressed; asserted in CI, including a PC that follows sex. (Same review: one `N_PC` knob for two PC sets of different size killed `02_cohort.sh` at its last step - now `N_PC` and `N_CTRL_PC`, and a number beyond what a table holds is clamped with a warning; the one-standard-error band used 1.25 instead of 1.65 for a MAD-based SD.) |
 | The experimental satellite panel measures array mass | whole-file scans of 1000 Genomes samples that have HPRC release-2 assemblies | two samples so far (HG02258, ACB male; HG01884, ACB female), estimate / assembly: HSat3 0.97, 0.98; HSat1A 0.93, 0.97; HSat1B 0.90, 0.83 (11.8 and 2.2 Mb: the family is mostly on Yq, and the female reads accordingly); α-satellite HOR 0.97, 1.03; **HSat2 1.52, 1.73; β-satellite 0.69, 0.76** | HSat2 and β-satellite are not usable as they stand (k-mer sharing with HSat2-like sequence outside the annotated arrays, and β-satellite diversity beyond CHM13's, are the candidates); 200 samples of the cohort have assemblies: `04_hprc_satellites.sh` |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;

@@ -15,10 +15,34 @@ vanishes like a square root at its top, so the j-th largest noise value sits at 
 lower half of the leading singular values - the only part of the spectrum NGS-PCA's randomized
 SVD keeps in any case - and the fit is iterated, because j counts from the first noise value
 and that depends on how many components are signal. A component is selected if it clears E by
-four residual SDs of the fit (plus the Tracy-Widom scale, which matters for dozens of samples
-and not for thousands). On the simulations above this recovers 7 of 7 and 5 of 5, selects
-nothing in pure noise in 95% of runs, and on the 1000 Genomes spectrum gives 46-51 components
-whether 100, 150 or all 200 kept values are used (the textbook fit: 59, 66, 80).
+a margin of 1% (plus four residual SDs of the fit and the Tracy-Widom scale, which matters for
+dozens of samples and not for thousands).
+
+What this does and does not deliver, as measured:
+
+  * noise whose SD differs between rows by +-40% and between columns by +-30%: planted
+    components are counted exactly (7 of 7, 12 of 12, 5 of 5; whole spectrum or its top 60),
+    and nothing is found in noise alone;
+  * **bins with heavy-tailed noise variance make the count lean high.** A bin whose variance is
+    several times the typical one is a component of its own - real structure in the matrix, of
+    no interest to anyone. With log-normal bin SDs (sigma 0.3; n = 1,500 x p = 12,000) noise
+    alone yields 2.8 components on average without the margin and 1.1 with it; at sigma 0.5,
+    24 without and 19 with. The margin is a palliative, chosen because it costs nothing
+    that was measured (components planted 3-15% above the largest noise value are all found
+    at margins up to 2%), not a cure; fitting nearer the edge or adding a curvature term made
+    things worse (the first collapses when many components sit at the threshold, the second is
+    unstable);
+  * on the 1000 Genomes spectrum: 38-40 components for the top 100, 150 or 200 values (45-49
+    without the margin, 37 then if only 80 are kept; the textbook fit: 59, 66, 80). Its fitted
+    edge is 1.5 times as broad as equal-variance noise would make it;
+  * the count is a property of the matrix; whether components that deep are *usable* is a
+    property of the solver and the sample set. Two NGS-PCA runs of this cohort (3,200 and 3,202
+    samples) share their leading 20 PCs exactly (largest principal angle 1 degree) and then part
+    ways: 18 degrees at 30 PCs, 40 at 46; PC 40 of one run lies 86% inside the other's leading
+    subspace, PC 46 80%. Within one run they are a legitimate variance sink; they are not
+    portable between runs.
+
+So the count is a principled default and an upper-ish one, and what is reported should rest on:
 
 **The evidence: a sweep against known truth** (`sweep`). Every sample carries sequence of known
 copy number (held-out autosomal: 2; chrX and chrY by sex; the distal junction: 10), and trios say
@@ -64,15 +88,17 @@ class MPSelection:
     def describe(self) -> str:
         if not np.isfinite(self.edge):
             return "Marchenko-Pastur edge: " + "; ".join(self.notes)
-        return (f"Marchenko-Pastur edge: {self.n_pc} components above the noise bulk (n = {self.n:,} x p = {self.p:,}; edge {self.edge:.4g} "
+        return (f"Marchenko-Pastur edge: {self.n_pc} components clear the noise bulk (n = {self.n:,} x p = {self.p:,}; edge {self.edge:.4g} "
                 f"fitted on the leading {self.n_fitted} of {self.n_values} singular values; noise SD ~{self.sigma:.3g}; edge {self.slope_ratio:.2f}x as "
                 f"broad as equal-variance noise would make it)" + "".join(f"; {x}" for x in self.notes))
 
 
 def mp_select(singular_values, n_rows: int, n_cols: int, min_samples: int = 30, top_frac: float = 0.15, min_top: int = 40,
-              z: float = 4.0) -> MPSelection:
+              z: float = 4.0, margin: float = 0.01) -> MPSelection:
     """Number of components above the edge of the noise bulk. `singular_values` are those of the
-    (centred) n_rows x n_cols matrix, in any order: all of them, or only the largest."""
+    (centred) n_rows x n_cols matrix, in any order: all of them, or only the largest. A component
+    counts if it clears the fitted edge by `margin` (relative), `z` residual SDs of the fit and the
+    Tracy-Widom scale; see the module docstring for what the margin is for."""
     s = np.sort(np.asarray(singular_values, float))[::-1]
     s = s[np.isfinite(s) & (s > 0)]
     n, p = min(n_rows, n_cols), max(n_rows, n_cols)
@@ -93,7 +119,7 @@ def mp_select(singular_values, n_rows: int, n_cols: int, min_samples: int = 30, 
         A = np.column_stack([np.ones_like(x), -x])
         (E, a), *_ = np.linalg.lstsq(A, s[r - 1], rcond=None)
         sd = float((s[r - 1] - A @ [E, a]).std(ddof=2))
-        m_new = int((s[:k] > E * (1 + tw) + z * sd).sum())
+        m_new = int((s[:k] > E * (1 + tw + margin) + z * sd).sum())
         if m_new <= m:                                                 # the count only grows as signal is set aside
             break
         m = m_new
@@ -156,7 +182,13 @@ def sweep(table: dict[str, np.ndarray], pcs: np.ndarray, max_pc: int, truths: di
         truth = truths.get(col)
         logy = np.where(y > 0, np.log(np.where(y > 0, y, 1.0)), np.nan)
         if truth is not None:
-            logy = np.where(np.isfinite(truth) & (truth > 0), logy, np.nan)
+            # What is regressed on the PCs is the *error*, log(estimate / truth), not the estimate. Where
+            # the truth differs between samples (chrX: 1 or 2) the estimate carries the variance of the
+            # truth itself, every regressor then adds estimation noise of SD(log truth) * sqrt(k / n) to
+            # the out-of-fold residuals, and adjustment appears to make things worse with every PC - or,
+            # if a PC happens to follow sex, to "explain" the truth.
+            t = np.asarray(truth, float)
+            logy = np.where(np.isfinite(t) & (t > 0), logy - np.log(np.where(t > 0, t, 1.0)), np.nan)
         adj = cv_adjusted(logy, pcs, max_pc, folds, seed)
         base = None
         for k in range(max_pc + 1):
@@ -167,7 +199,7 @@ def sweep(table: dict[str, np.ndarray], pcs: np.ndarray, max_pc: int, truths: di
                 rows.append(row)
                 continue
             if truth is not None:
-                d = v[fin] - np.log(truth[fin])
+                d = v[fin]                                     # already log(adjusted / truth); its mean is the bias, which adjustment keeps
                 row.update(rmse_log=float(np.sqrt(np.mean(d ** 2))), sd_log_robust=mad_sd(d), bias_log=float(np.mean(d)))
             else:
                 row.update(sd_log=float(np.std(v[fin], ddof=1)), sd_log_robust=mad_sd(v[fin]))
@@ -201,7 +233,8 @@ def recommend(rows: list[dict]) -> dict[str, dict]:
         if rs[0]["kind"] == "truth" and all("sd_log_robust" in r for r in rs):
             e = np.array([r["sd_log_robust"] for r in rs])
             best = int(np.nanargmin(e))
-            se = e[best] * 1.25 / np.sqrt(2 * max(rs[best]["n"], 2))          # SE of a MAD-based SD
+            # SE of a MAD-based SD: the MAD is 37% efficient, so 1/sqrt(0.3675) = 1.65 times the sample SD's sd/sqrt(2n)
+            se = e[best] * 1.65 / np.sqrt(2 * max(rs[best]["n"], 2))
             pick = int(np.where(e <= e[best] + se)[0][0])
             out[col] = dict(kind="truth", best=best, pick=pick, at_0=float(e[0]), at_pick=float(e[pick]), at_best=float(e[best]), se=float(se))
         elif all("R_midparent" in r for r in rs):
