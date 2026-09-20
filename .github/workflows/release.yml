@@ -18,6 +18,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  NGSDOSE_BUILD: ${{ github.sha }}          # recorded in every counts file the released engines write
   COUNT_ARGS: -m fetch -i tests/data/NA12878.subsample.bam -p resources/GRCh38/panel.k31.tsv.gz -c resources/GRCh38/controls.fa.gz --sinks resources/GRCh38/sinks.bed
 
 jobs:

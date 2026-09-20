@@ -180,7 +180,8 @@ a 0.75× test fixture read 3% low.)
 
 ## 4. The counting engine
 
-`ngs-dose count` (Rust, htslib) turns one BAM/CRAM into a ~50 kB counts file; nothing downstream
+`ngs-dose count` (Rust, htslib) turns one BAM/CRAM into a counts file of 70 kB (fetch) to 240 kB (scan
+with the experimental panels); nothing downstream
 touches the alignment again, so models can be revised without re-reading a biobank.
 
 - **Rules**, identical for controls and classes: primary records only; duplicate flag ignored;
@@ -264,21 +265,42 @@ from elsewhere. One locus *is* exempted: chr21:8,986,604–8,988,749 is a 99.6%-
 piece of genuine rDNA that GRCh38 happens to place outside the annotated copies; without the
 exemption the 18S keeps a third of its k-mers.
 
-Satellite families are compositional classes. An **experimental** panel ships under
-`resources/experimental/` (HSat1A, HSat1B, HSat2, HSat3, β-satellite, α-satellite HOR; 1.1 M
-k-mers that recur at least ten times in a class's CHM13 arrays and occur in no other class and
-nowhere outside CenSat-annotated satellite). On NA12878 in scan mode it returns diploid masses
-of 19.7, 1.9, 49.7, 53.4, 11.3 and 150.1 Mb — each within a factor of two of twice CHM13's
-haploid content, and the 1.9 Mb of HSat1B is right for a family that lives mostly on Yq in a
-female sample. That is a sanity check, not a validation: the k-mers are one genome's arrays,
-and recall on other people's arrays has to be measured against assemblies of the same people.
-A first look at two samples with HPRC release-2 assemblies (both haplotypes' CenSat
-annotation, summed; section 15) says the classes are not equally ready: HSat3, HSat1A and
-α-satellite HOR come out within 7% of the assembly, HSat1B within 10% in the male and 17% in the
-female (who has 2 Mb of it), HSat2 50–75% above the assembly and β-satellite 25–30% below. Two hundred samples of the cohort have such assemblies
-(`example/1000G/04_hprc_satellites.sh`). Satellite reads are also scattered across an alignment
-(3–54% of a class on decoy and unplaced contigs), so there are no satellite sinks and no fetch
-mode yet.
+Dispersed sequence — satellite families, the telomeric repeat — is compositional, and it is the
+one kind of class that only a whole-file scan can measure: its reads are scattered across an
+alignment (3–54% of a satellite family on decoy and unplaced contigs), so there are no sinks to
+fetch. A positional class can always be added later and fetched from the few places its reads
+land; a dispersed one cannot, which is why a cohort that is scanned once is scanned with the
+**experimental** panels under `resources/experimental/` loaded:
+
+- *Ten satellite families* from the CHM13 CenSat annotation (HSat1A, HSat1B, HSat2, HSat3,
+  β-satellite, α-satellite HORs, and four smaller families of the acrocentric short arms and
+  pericentromeres: ACRO1 composites, SST1, CER, SATR; 1.13 M k-mers that recur at least ten times
+  in a family's CHM13 arrays and occur in no other family and nowhere outside annotated
+  satellite). What a panel can see is measured by its *recall*: the share of 150-bp reads from the
+  family's own CHM13 arrays that carry the four k-mers a read needs. HSat1A/1B/2/3 and the HORs:
+  97–99.9%. ACRO 90%, β-satellite 69%, SST1 61%, SATR 50%, CER 42% — relative measures, under-read
+  by about their recall. Left out: gamma satellite (13%), divergent HORs (10%), HSat4 (four k-mers
+  survive), and monomeric α, which as a class of its own takes 17% of the HORs' k-mers with it,
+  because a k-mer shared between classes is dropped from both.
+- *Against assemblies of the same people* (HPRC release 2, CenSat annotation of both haplotypes
+  summed; two samples so far, section 15): HSat3 0.97 and 0.98 of the assembly, HSat1A 0.93 and
+  0.97, HORs 0.97 and 1.03, HSat1B 0.90 in the male and 0.83 in the female (who has 2 Mb of it:
+  the family is mostly on Yq); β-satellite 0.69 and 0.76, which is its recall; ACRO 0.79 in both,
+  CER 0.42 and 0.43 (its recall again): under-read, but by a stable factor. **HSat2 cannot be judged in either**: both assemblies have gaps inside
+  their HSat2 arrays (17 and 9 Mb of gap-containing arrays beside 44 and 30 Mb of spanned ones),
+  and the estimates — 1.52 and 1.73 of the spanned arrays, 1.09 and 1.33 with the gapped ones
+  counted at their annotated size — sit where a truth that is a lower bound leaves them. An
+  assembly is a truth only for the arrays it spans; `example/1000G/hprc_satellites.py` keeps the
+  two apart and leaves a sample out of a class's comparison when gap-containing arrays are more
+  than 2% of what is annotated. SST1 and SATR are annotated
+  several times more generously in the HPRC assemblies than in CHM13, so their absolute ratios
+  mean nothing. Two hundred samples of the cohort have such assemblies, and whether the estimates
+  *track* them across people is the question that matters (`04_hprc_satellites.sh`).
+- *The telomeric repeat* (`TEL`: the six canonical 31-mers of (TTAGGG)n, unfiltered). A relative
+  measure, not a telomere length: a read is assigned with 34 bp of perfect repeat, which
+  interstitial telomeric sequence also has, and an exact 31-mer is lost to one sequencing error
+  where TelSeq's hexamer count is not. The per-read share of k-mers that hit is recorded for every
+  class (`hit_frac`), so the threshold can be chosen, and calibrated against TelSeq, afterwards.
 
 ## 6. Controls and the fragment-GC model
 
@@ -506,16 +528,16 @@ Apple M1 Max, NA12878 (15.8 GB CRAM, 758 M primary reads), bundle GRCh38-v1:
 | mode | input | wall | CPU | data read |
 | --- | --- | --- | --- | --- |
 | scan, 10 threads | local CRAM | 1 min 40 s | 13.5 min | 15.8 GB |
-| scan, 10 threads, with the 1.1 M k-mer satellite panel | local CRAM | 1 min 50 s | 14 min | 15.8 GB |
-| scan, 10 threads, 9 classes | the same CRAM over HTTPS, home connection (~17 MB/s) | 15 min | 14 min | 15.8 GB, network-bound |
+| scan, 8 threads, with the experimental panels (1.1 M k-mers, 14 classes in all) | local CRAM | 1 min 40 s | 13.5 min | 15.8 GB |
+| scan, the same | the same CRAM over HTTPS, home connection (~15 MB/s) | 15–18 min | 14 min | 15.8 GB, network-bound |
 | fetch, 8 threads | local CRAM | 2–3 s | ~15 s | 0.48 GB (1,973 of 79,637 slices; chrM and chrEBV are 14 MB of it, chrY 5 MB) |
 | fetch, 16 threads | `https://1000genomes.s3.amazonaws.com/…` from a home connection | 60–100 s | ~20 s | 0.48 GB |
-| estimate | counts JSON | 0.7 s | | 50 kB |
+| estimate | counts JSON | ~1 s | | 70–240 kB |
 
-The 3,202-sample cohort is therefore about 55 hours of single-stream fetch time and never needs a
-CRAM on disk; for comparison, a mosdepth pass is tens of CPU-minutes per sample after a 16 GB
-download. Scan mode is what sinks are learned from and what a cohort aligned by a different
-pipeline should be spot-checked with.
+In fetch mode the 3,202-sample cohort is therefore about 55 hours of single-stream time and never
+needs a CRAM on disk; scanned whole from staged CRAMs it is about 750 CPU-hours and 48 TB of
+transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak memory is 0.6 GB
+(fetch) and 1.3 GB (scan) at 8 threads.
 
 ## 12. What it does not do, and known limits
 
@@ -538,9 +560,14 @@ pipeline should be spot-checked with.
   different decoy set, needs `scan` on a handful of samples and `ngsdose sinks`.
 - **GRCh38 only**, chr-prefixed names. A CHM13 or GRCh37 bundle is a rebuild of the controls and
   sinks; panels are reference-independent.
-- **Satellites are experimental** (section 5); there is no telomere or mtDNA class.
-- **Low depth**: below ~1× the GC curve's supported range narrows and GC-rich windows are masked;
-  a 0.75× subsample of NA12878 still returns 495 against 508 from the full data.
+- **Dispersed families are experimental** (section 5): six satellite families with a first
+  comparison against assemblies, four smaller ones without, and a telomeric-repeat class that is a
+  relative measure only (exact 31-mers are less tolerant of sequencing error than TelSeq's
+  hexamer count; the per-read hit fractions are kept so that a threshold can be chosen later).
+- **Low depth** costs precision, not accuracy: the anchor estimate is unbiased down to 0.4×
+  (1.004 ± 0.007 of the full-depth value over 20 subsamples; section 15), and a 0.75× subsample
+  of NA12878 returns 499 against 504 from the full data. The GC curve itself gets noisy
+  (`gc_curve_max_se`), which the GC-extreme features feel first.
 - **Four trios** are the only pedigree data analysed so far; section 10 is specification and
   simulation until the cohort run.
 
@@ -648,7 +675,7 @@ held.
 | The cohort run keeps what a cheaper method would be judged on | what a depth proxy needs: the scan estimate, the cohort's kept mosdepth bins, and the composition of those bins | placements were on a 10-kb grid and held class reads only: enough to learn sinks, not to say how much of a mosdepth bin is rDNA | placements on mosdepth's 1-kb grid with a census of every read in the bin (all, duplicate-flagged); against an independent duplicate-excluded depth over chr21's rDNA bins the census is within 3%; scan and fetch agree bin for bin inside the sinks, asserted in CI |
 | The Marchenko–Pastur law can be fitted to a coverage spectrum to choose the number of PCs | simulated noise with unequal variances (rows ±40%, columns ±30%) and planted components; NGS-PCA's 1000 Genomes spectrum truncated at 100, 150, 200 values | **false**: the median- or quantile-matched fit called 34 components for 7 planted and 148 for 5, and 59 / 66 / 80 on the real spectrum depending on the truncation | the edge is fitted from its universal square-root shape instead, with a 1% margin (section 9): exact on those simulations, none in that noise, 38–40 on the real spectrum at every truncation. It still leans high when bins have heavy-tailed variances (a few components in noise alone), and components beyond the leading 20–25 are not reproducible between SVD runs - so `ngsdose pcsweep` lets known truths and transmission decide; all asserted in CI |
 | A known truth's error under adjustment can be read off a regression of the estimate | review of `pcsweep`: a two-valued truth (chrX: 1 or 2), PCs unrelated to it, n = 3,200 | **false**: the estimate carries the variance of the truth itself (SD of log truth 0.35), every regressor adds 0.35·√(k/n) of estimation noise out of fold, and the reported error rose 0.010 → 0.040 at 46 PCs - adjustment would always have looked harmful for chrX | the error, log(estimate / truth), is what is regressed; asserted in CI, including a PC that follows sex. (Same review: one `N_PC` knob for two PC sets of different size killed `02_cohort.sh` at its last step - now `N_PC` and `N_CTRL_PC`, and a number beyond what a table holds is clamped with a warning; the one-standard-error band used 1.25 instead of 1.65 for a MAD-based SD.) |
-| The experimental satellite panel measures array mass | whole-file scans of 1000 Genomes samples that have HPRC release-2 assemblies | two samples so far (HG02258, ACB male; HG01884, ACB female), estimate / assembly: HSat3 0.97, 0.98; HSat1A 0.93, 0.97; HSat1B 0.90, 0.83 (11.8 and 2.2 Mb: the family is mostly on Yq, and the female reads accordingly); α-satellite HOR 0.97, 1.03; **HSat2 1.52, 1.73; β-satellite 0.69, 0.76** | HSat2 and β-satellite are not usable as they stand (k-mer sharing with HSat2-like sequence outside the annotated arrays, and β-satellite diversity beyond CHM13's, are the candidates); 200 samples of the cohort have assemblies: `04_hprc_satellites.sh` |
+| The experimental satellite panel measures array mass | whole-file scans of two 1000 Genomes samples that have HPRC release-2 assemblies (HG02258, ACB male; HG01884, ACB female) | HSat3 0.97, 0.98 of the assembly; HSat1A 0.93, 0.97; α-satellite HORs 0.97, 1.03; HSat1B 0.90, 0.83; β-satellite 0.69, 0.76 - and its k-mer recall on CHM13 itself is 0.69. **My first reading of HSat2 (1.52, 1.73: "not usable") was wrong**: the comparison script dropped arrays annotated together with an assembly gap ("GAP,HSat2": 17 and 9 Mb), and an array with a gap in it is no truth | the script tallies gap-containing arrays separately and compares a class only where it has none; HSat2 is undecided until gap-free samples are compared; each class's recall is measured and documented (`resources/build/panel_recall.py`); 200 samples of the cohort have assemblies: `04_hprc_satellites.sh` |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
 DRAGEN alignments; an orthogonal assay for the absolute rDNA scale.

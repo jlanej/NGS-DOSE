@@ -86,8 +86,12 @@ MODE=fetch sbatch --array=0-$(( (N - 1) / 10 ))%25 01_count.sh
 ```
 
 **What the full scan buys, and why this cohort should have it.** A scan is placement-independent;
-it is the only mode that measures the satellite families (200 samples of the cohort have HPRC
-assemblies to hold them against); and it records, on the 1-kb grid of `mosdepth --by 1000`,
+it is the only mode that measures dispersed sequence - ten satellite families, three of them
+particular to the acrocentric short arms and pericentromeres, and the telomeric repeat
+(`EXTRA_PANELS` in `config.sh`; 200 samples of the cohort have HPRC assemblies to hold the
+satellites against) - and that is the one thing that cannot be added afterwards without staging
+48 TB again: a new *positional* class can always be fetched later from the few places its reads
+land, once a handful of scans has said where those are. And it records, on the 1-kb grid of `mosdepth --by 1000`,
 where every class read was aligned *and every other read in those bins* - which is the data
 that decides how far the measurement can be simplified for a biobank:
 

@@ -6,7 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --locked
+# the commit this image is built from goes into every counts file it writes (engine_build)
+ARG NGSDOSE_BUILD=dev
+RUN NGSDOSE_BUILD="$NGSDOSE_BUILD" cargo build --release --locked
 
 # Everything a cluster run needs, so that the host needs nothing but Apptainer and SLURM: the
 # engine, the ngsdose package, the GRCh38 bundle, aria2c for staging CRAMs, and the cohort
@@ -24,5 +26,6 @@ COPY docs ./docs
 COPY example ./example
 RUN install -m 0755 example/ngs-dose-example /usr/local/bin/ngs-dose-example
 ENV NGSDOSE_RESOURCES=/opt/ngs-dose/resources/GRCh38 \
-    NGSDOSE_SATELLITES=/opt/ngs-dose/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz
+    NGSDOSE_SATELLITES=/opt/ngs-dose/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz \
+    NGSDOSE_TELOMERE=/opt/ngs-dose/resources/experimental/telomere.k31.panel.tsv.gz
 CMD ["ngs-dose", "--help"]

@@ -27,7 +27,7 @@ while IFS=$'\t' read -r sample cram _; do
   [ -s "$out" ] && continue
   args=(-i "$cram" -T "$REF_FASTA" -c "$BUNDLE/controls.fa.gz" -p "$BUNDLE/panel.k31.tsv.gz" -@ "$THREADS" -s "$sample" -o "$out.tmp.gz")
   if [ "$MODE" = scan ]; then
-    have_file "$SATELLITES" && args+=(-p "$SATELLITES")
+    for x in $EXTRA_PANELS; do have_file "$x" || { echo "ERROR: extra panel $x not found" >&2; exit 1; }; args+=(-p "$x"); done
     args+=(-m scan)
   else
     args+=(-m fetch --sinks "$BUNDLE/sinks.bed")
