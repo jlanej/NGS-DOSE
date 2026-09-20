@@ -63,10 +63,12 @@ def cohort(tmp_path_factory):
            "ctrlpc": run("adjust", str(tmp / "cohort.tsv"), "--n-pc", "5", "-c", *cols, "-o", str(tmp / "adj_ctrlpc.tsv")).stderr}
     # ... and the default: as many as stand above the Marchenko-Pastur edge of the control-region spectrum
     default = run("adjust", str(tmp / "cohort.tsv"), "-c", *cols, "-o", str(tmp / "adj_default.tsv")).stderr
+    # a number larger than one of the PC sets holds (one knob for two PC sets is how a pipeline dies at its last step)
+    clamped = run("adjust", str(tmp / "cohort.tsv"), "--n-pc", "46", "-c", "rDNA45S.cn", "-o", str(tmp / "adj_clamped.tsv")).stderr
     sweep = run("pcsweep", str(tmp / "cohort.tsv"), "-c", "rDNA45S.cn", "DJ.cn_single", "-p", str(ped), "--boot", "100", "-o", str(tmp / "sweep.tsv")).stderr
     trios = run("trios", str(tmp / "adj_ngspca.tsv"), "-p", str(ped), "-c", *[c + ".adj" for c in cols], "--compare-to", "rDNA45S.18S.flat.adj",
                 "--json", str(tmp / "transmission.json")).stdout
-    return dict(tmp=tmp, cols=cols, adjust_log=adj, trios=trios, cohort_log=cohort_log, default_log=default, sweep_log=sweep)
+    return dict(tmp=tmp, cols=cols, adjust_log=adj, trios=trios, cohort_log=cohort_log, default_log=default, sweep_log=sweep, clamped_log=clamped)
 
 
 def test_the_same_person_sixty_times(cohort):
@@ -124,3 +126,9 @@ def test_nothing_is_regressed_out_when_there_is_nothing_but_noise(cohort):
     assert auto[0][0] == 0 and auto[-1][0] >= 5 and auto[-1][1] > 0.9 * auto[0][1]      # more PCs buy nothing here
     picks = {l.split("\t")[0]: int(l.split("\t")[7]) for l in cohort["sweep_log"].splitlines() if l.startswith(("truth.auto", "DJ.cn"))}
     assert picks and all(v <= 2 for v in picks.values()), picks
+
+
+def test_a_number_of_pcs_beyond_what_the_table_holds_is_clamped_with_a_warning(cohort):
+    n_ctrl = sum(1 for c in rows_of(cohort["tmp"] / "cohort.tsv")[0] if c.startswith("ctrlPC") and c != "ctrlPC_mp")
+    assert n_ctrl < 46 and f"using {n_ctrl}" in cohort["clamped_log"] and "clamped" in cohort["clamped_log"]
+    assert len(rows_of(cohort["tmp"] / "adj_clamped.tsv")) == 3 * N_TRIOS
