@@ -885,6 +885,8 @@ pub struct ContigOut {
 pub struct Output {
     pub format: &'static str,
     pub engine_version: &'static str,
+    /// the commit the engine was built from (NGSDOSE_BUILD at compile time; "dev" for a local build)
+    pub engine_build: &'static str,
     pub sample: String,
     pub input: String,
     pub mode: String,
@@ -1051,6 +1053,7 @@ pub fn make_output(
     Output {
         format: "ngs-dose-counts/1",
         engine_version: env!("CARGO_PKG_VERSION"),
+        engine_build: option_env!("NGSDOSE_BUILD").unwrap_or("dev"),
         sample,
         input: input.path.clone(),
         mode: mode.to_string(),

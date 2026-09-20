@@ -15,8 +15,11 @@ SIF="${SIF:-}"
 NGSDOSE_BIN="${NGSDOSE_BIN:-$REPO/target/release/ngs-dose}"
 if [ -n "$SIF" ]; then IMAGE_ROOT=/opt/ngs-dose; else IMAGE_ROOT="$REPO"; fi
 BUNDLE="${BUNDLE:-$IMAGE_ROOT/resources/GRCh38}"
-# panels to load; the satellite panel is experimental and only meaningful in scan mode
-SATELLITES="${SATELLITES:-$IMAGE_ROOT/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz}"
+# Further panels for whole-file scans (space-separated): dispersed sequence, which no targeted fetch
+# can reach and which a cohort that is scanned once should therefore carry - the experimental
+# satellite families and the telomeric repeat (resources/experimental/README.md). EXTRA_PANELS=""
+# scans with the bundle's classes only.
+EXTRA_PANELS="${EXTRA_PANELS-$IMAGE_ROOT/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz $IMAGE_ROOT/resources/experimental/telomere.k31.panel.tsv.gz}"
 # staged CRAMs for the full-accuracy path (01b_dose_sample.sh): $CRAM_DIR/<sample>.cram(.crai)
 CRAM_DIR="${CRAM_DIR:-$WORK_DIR/crams}"
 

@@ -237,7 +237,8 @@ def estimate_compositional(cls: dict, curve_read: gcmodel.GCCurve) -> dict:
     lam = curve_read.rate * curve_read.rescale
     ok = ~np.isnan(lam) & (T > 0)
     covered = T[ok].sum() / max(T.sum(), 1.0)
-    mass = float(np.sum(T[ok] / lam[ok]) / max(covered, 1e-9)) if ok.any() else float("nan")
+    # no reads at all is a mass of zero; reads, none of them at a GC the curve supports, is no estimate
+    mass = float(np.sum(T[ok] / lam[ok]) / max(covered, 1e-9)) if ok.any() else (0.0 if T.sum() == 0 else float("nan"))
     return dict(kind="compositional", reads=cls["reads"], mass_bp=mass, mass_Mb=mass / 1e6,
                 gc_supported_fraction=round(float(covered), 4),
                 mean_read_gc=float(np.sum(T * np.arange(101)) / max(T.sum(), 1.0) / 100.0))
@@ -294,7 +295,7 @@ def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features:
         curve_r.rescale = qc.rescale
     ctrl = max(counts["ctrl_reads"], 1)
     res = dict(
-        sample=counts["sample"], mode=counts["mode"], engine_version=counts["engine_version"],
+        sample=counts["sample"], mode=counts["mode"], engine_version=counts["engine_version"], engine_build=counts.get("engine_build"),
         read_length=R, insert_median=counts["insert_median"], gc_L=curve.L,
         ctrl_reads=counts["ctrl_reads"], ctrl_rate=curve.scale * curve.rescale,
         # single-copy depth implied by the 5'-end rate: ends per position-strand x 2 strands x read length

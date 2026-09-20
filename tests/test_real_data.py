@@ -95,7 +95,17 @@ def test_counts_do_not_depend_on_threads_or_on_co_loaded_panels(tmp_path):
     with_sat = {c["name"]: c for c in out["sat"]["classes"]}
     for c in out["t4"]["classes"]:
         assert (c["fwd"], c["rev"], c["reads"]) == (with_sat[c["name"]]["fwd"], with_sat[c["name"]]["rev"], with_sat[c["name"]]["reads"])
-    assert len(with_sat) == 9 and len(out["sat"]["panel_sha256"]) == 2
+    assert len(with_sat) == 13 and len(out["sat"]["panel_sha256"]) == 2
+    # and a whole-file scan with every panel loaded - classes, placements with their census, contig tallies -
+    # is the same file whatever the number of threads
+    exp = ROOT / "resources" / "experimental"
+    scans = []
+    for threads in ("1", "4"):
+        path = tmp_path / f"scan{threads}.json"
+        subprocess.run([str(BIN), "count", "-i", str(BAM), "-c", str(BUNDLE.controls), "-m", "scan", "-p", str(BUNDLE.panel), "-p", str(sat),
+                        "-p", str(exp / "telomere.k31.panel.tsv.gz"), "-@", threads, "-o", str(path)], check=True, capture_output=True)
+        scans.append(strip(io.load_counts(path)))
+    assert scans[0] == scans[1] and len(scans[0]["classes"]) == 14
 
 
 def test_counts_record_what_they_were_made_with(counts):
@@ -105,6 +115,7 @@ def test_counts_record_what_they_were_made_with(counts):
     assert c["controls_sha256"] == hashlib.sha256(BUNDLE.controls.read_bytes()).hexdigest()
     assert c["sinks_sha256"] == hashlib.sha256(BUNDLE.sinks.read_bytes()).hexdigest()
     assert counts["scan"]["sinks_sha256"] is None
+    assert c["engine_version"] and c["engine_build"]          # the commit the engine was built from ("dev" outside CI's image build)
 
 
 def test_sex_chromosome_truth_and_episome_dosage(result):
@@ -176,15 +187,22 @@ def test_a_reference_without_a_contig(tmp_path):
 
 
 def test_classes_of_a_co_loaded_panel_reach_the_estimate(tmp_path):
-    """A compositional class needs nothing from the bundle, so a scan made with an extra panel
-    (the satellites) is estimated in full by the ordinary `ngsdose estimate`."""
-    sat = ROOT / "resources" / "experimental" / "satellites.CHM13v2.k31.panel.tsv.gz"
+    """A compositional class needs nothing from the bundle, so a scan made with extra panels (the
+    satellite families, the telomeric repeat) is estimated in full by the ordinary `ngsdose estimate`."""
+    exp = ROOT / "resources" / "experimental"
     out = tmp_path / "merged.json.gz"
-    subprocess.run([str(BIN), "count", "-i", str(BAM), "-c", str(BUNDLE.controls), "-m", "scan", "-p", str(BUNDLE.panel), "-p", str(sat),
+    subprocess.run([str(BIN), "count", "-i", str(BAM), "-c", str(BUNDLE.controls), "-m", "scan", "-p", str(BUNDLE.panel),
+                    "-p", str(exp / "satellites.CHM13v2.k31.panel.tsv.gz"), "-p", str(exp / "telomere.k31.panel.tsv.gz"),
                     "-o", str(out)], check=True, capture_output=True)
-    res = estimate.estimate_sample(io.load_counts(out), io.load_panel(BUNDLE.panel), BUNDLE.units())
-    assert {"rDNA45S", "rDNA5S", "DJ", "HSat1A", "HSat1B", "HSat2", "HSat3", "bSat", "aSatHOR"} == set(res["classes"])
-    assert all(res["classes"][c]["kind"] == "compositional" and res["classes"][c]["mass_Mb"] >= 0 for c in ("HSat2", "HSat3", "aSatHOR"))
+    c = io.load_counts(out)
+    res = estimate.estimate_sample(c, io.load_panel(BUNDLE.panel), BUNDLE.units())
+    satellites = {"HSat1A", "HSat1B", "HSat2", "HSat3", "bSat", "aSatHOR", "ACRO", "SST1", "CER", "SATR"}
+    assert {"rDNA45S", "rDNA5S", "DJ", "TEL"} | satellites == set(res["classes"]) and len(c["panel_sha256"]) == 3
+    assert all(res["classes"][x]["kind"] == "compositional" and res["classes"][x]["mass_Mb"] >= 0 for x in satellites | {"TEL"})
+    # the telomere panel is the six canonical 31-mers of (TTAGGG)n; every class carries the histogram of the
+    # share of each read's k-mers that hit, which is what a TelSeq-style threshold is applied to afterwards
+    tel = next(x for x in c["classes"] if x["name"] == "TEL")
+    assert tel["panel_kmers"] == 6 and len(tel["hit_frac"]) == 11 and sum(tel["hit_frac"]) == tel["reads"]
 
 
 def test_a_stalled_input_ends_with_status_75(tmp_path):

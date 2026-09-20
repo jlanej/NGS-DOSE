@@ -45,6 +45,7 @@ Stage: final
 %environment
     export NGSDOSE_RESOURCES=/opt/ngs-dose/resources/GRCh38
     export NGSDOSE_SATELLITES=/opt/ngs-dose/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz
+    export NGSDOSE_TELOMERE=/opt/ngs-dose/resources/experimental/telomere.k31.panel.tsv.gz
 
 %test
     ngs-dose --version

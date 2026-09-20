@@ -40,7 +40,8 @@ def _load_result(path) -> dict:
 
 
 def summary_row(r: dict) -> dict:
-    row = dict(sample=r["sample"], mode=r["mode"], depth=round(r["depth_equiv"], 3), read_length=r["read_length"],
+    row = dict(sample=r["sample"], mode=r["mode"], engine=f"{r.get('engine_version', '?')}+{(r.get('engine_build') or 'unknown')[:7]}",
+               depth=round(r["depth_equiv"], 3), read_length=r["read_length"],
                insert_median=r["insert_median"], gc_L=r["gc_L"], ctrl_dup_frac=round(r["ctrl_dup_frac"], 4),
                gc_rel_35=r["gc_rel"].get("35"), gc_rel_65=r["gc_rel"].get("65"), gc_curve_max_se=round(r["gc_curve_max_se"], 4),
                ctrl_region_sd=None if not r["control_qc"] else round(r["control_qc"]["region_log_mad_sd"], 4),

@@ -41,7 +41,9 @@ fi
 
 common=(-i "$CRAM" --index "$CRAI" -T "$REF_FASTA" -c "$BUNDLE/controls.fa.gz" -p "$BUNDLE/panel.k31.tsv.gz" -s "$SAMPLE" -@ "${SLURM_CPUS_PER_TASK:-$THREADS}")
 if ! valid "$SCAN_OUT"; then
-  scan=("${common[@]}" -m scan); have_file "$SATELLITES" && scan+=(-p "$SATELLITES")
+  scan=("${common[@]}" -m scan)
+  # a scan without a panel that was asked for is a scan to be done again: stop rather than skip it
+  for x in $EXTRA_PANELS; do have_file "$x" || { echo "ERROR: extra panel $x not found" >&2; exit 1; }; scan+=(-p "$x"); done
   ngsdose_engine count "${scan[@]}" -o "$SCAN_OUT"
 fi
 valid "$FETCH_OUT" || ngsdose_engine count "${common[@]}" -m fetch --sinks "$BUNDLE/sinks.bed" -o "$FETCH_OUT"
