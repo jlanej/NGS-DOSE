@@ -7,3 +7,5 @@ __pycache__/
 .DS_Store
 example/1000G/logs/
 .claude/
+example/1000G/counts_scan/
+example/1000G/counts_fetch/

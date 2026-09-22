@@ -173,9 +173,11 @@ def load_pedigree(path):
 
 
 def inferred_sex(row) -> str:
+    """A Y is a Y even when most of a culture has lost it (men read as low as 0.3 here); a woman
+    has none (the female maximum in this cohort is 0.004)."""
     y, x = num(row, "truth.chrY"), num(row, "truth.chrX")
     if np.isfinite(y):
-        return "M" if y > 0.5 else "F"
+        return "M" if y > 0.1 else "F"
     if np.isfinite(x):
         return "M" if x < 1.5 else "F"
     return ""
@@ -195,12 +197,16 @@ def flags_for(row: dict, majority_engine: str | None) -> list[str]:
     sx, si = row.get("sex", ""), row.get("sex_inferred", "")
     if sx and si and sx != si:
         f.append(f"sex: pedigree {sx}, reads {si}")
-    x = num(row, "truth.chrX")
+    x, y = num(row, "truth.chrX"), num(row, "truth.chrY")
     if si == "F" and np.isfinite(x) and x < 1.85:
-        f.append(f"chrX {x:.2f} (mosaic loss?)")
-    dj = num(row, "DJ.cn") if np.isfinite(num(row, "DJ.cn")) else num(row, "DJ.cn_single")
-    if np.isfinite(dj) and abs(dj - 10) > 0.9:
-        f.append(f"DJ {dj:.2f}")
+        f.append(f"chrX {x:.2f} (mosaic X loss?)")
+    if si == "M" and np.isfinite(y) and y < 0.85:
+        f.append(f"chrY {y:.2f} (mosaic Y loss?)")
+    if si == "M" and np.isfinite(x) and x > 1.5:
+        f.append(f"chrX {x:.2f} with a Y")
+    step = row.get("DJ.step")
+    if step is not None and abs(step) >= 0.75:
+        f.append(f"DJ {step:+.2f} copies")
     if majority_engine and row.get("engine") and row["engine"] != majority_engine:
         f.append(f"engine {row['engine']}")
     if num(row, "gc_curve_max_se") > 0.5:
@@ -222,6 +228,66 @@ def known_truth(rows) -> dict:
     out["sex"] = dict(n_pedigree=sum(1 for r in rows if r.get("sex")), n_inferred=sum(1 for r in rows if r.get("sex_inferred")),
                       mismatch=[r["sample"] for r in rows if r.get("sex") and r.get("sex_inferred") and r["sex"] != r["sex_inferred"]])
     return out
+
+
+def dj_steps(rows, ped) -> dict:
+    """The distal junction has ten copies, one per acrocentric short arm, in nearly everyone; a
+    person with a rearranged short arm has nine or eight (a Robertsonian translocation loses two).
+    Copy number relative to the cohort's median is therefore near an integer, and a step, being a
+    structural variant, should be transmitted to half of a carrier's children and appear de novo
+    in none - which the trios can check."""
+    col = "DJ.cn" if any(np.isfinite(num(r, "DJ.cn")) for r in rows) else "DJ.cn_single"
+    v = np.array([num(r, col) for r in rows])
+    if not np.isfinite(v).any():
+        return {}
+    med = float(np.nanmedian(v))
+    by = {}
+    for r, x in zip(rows, v):
+        r["DJ.step"] = None if not np.isfinite(x) else round(float(x - med), 3)
+        by[r["sample"]] = r
+    steps = v - med
+    near = {k: int(np.sum(np.abs(steps - k) < 0.3)) for k in (-2, -1, 0, 1, 2)}
+    between = int(np.sum(np.isfinite(steps) & (np.abs(steps - np.round(steps)) > 0.35)))
+    main = steps[np.abs(steps) < 0.5]
+    spread = float(1.4826 * np.median(np.abs(main - np.median(main)))) if len(main) > 2 else float("nan")
+    carriers = []
+    for r in rows:
+        st = r.get("DJ.step")
+        if st is None or abs(st) < 0.75:
+            continue
+        p = ped.get(r["sample"], {})
+        rel = []
+        for who in ("father", "mother"):
+            o = p.get(who, "0")
+            if o in by and by[o].get("DJ.step") is not None:
+                rel.append(dict(who=who, sample=o, step=by[o]["DJ.step"]))
+        for o, q in ped.items():
+            if o in by and (q.get("father") == r["sample"] or q.get("mother") == r["sample"]) and by[o].get("DJ.step") is not None:
+                rel.append(dict(who="child", sample=o, step=by[o]["DJ.step"]))
+        carriers.append(dict(sample=r["sample"], pop=r.get("pop"), sex=r.get("sex_inferred"), step=st, relatives=rel))
+    # transmission: a carrier parent and a counted child (the other parent need not be counted); a child's
+    # step within half a copy of the parent's is the step transmitted, a child near zero is the step not
+    # transmitted. De novo: a child with a step when both counted parents have none.
+    transmitted = not_transmitted = 0
+    for c in carriers:
+        for rel in c["relatives"]:
+            if rel["who"] != "child":
+                continue
+            if abs(rel["step"] - c["step"]) < 0.5:
+                transmitted += 1
+            elif abs(rel["step"]) < 0.5:
+                not_transmitted += 1
+    de_novo = []
+    for r in rows:
+        st = r.get("DJ.step")
+        p = ped.get(r["sample"], {})
+        f, m = by.get(p.get("father", "0")), by.get(p.get("mother", "0"))
+        if st is None or f is None or m is None or f.get("DJ.step") is None or m.get("DJ.step") is None:
+            continue
+        if abs(st) >= 0.75 and abs(f["DJ.step"]) < 0.5 and abs(m["DJ.step"]) < 0.5:
+            de_novo.append(r["sample"])
+    return dict(column=col, median=med, near=near, between=between, spread=spread, carriers=sorted(carriers, key=lambda c: c["step"]),
+                transmitted=transmitted, not_transmitted=not_transmitted, de_novo=de_novo)
 
 
 def mode_agreement(S: dict) -> dict:
@@ -267,6 +333,9 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
         if "reliability_midparent_ci95" in t:
             row["R_lo"], row["R_hi"] = t["reliability_midparent_ci95"]
             row["spousal_lo"], row["spousal_hi"] = t["spousal_r_ci95"]
+            # the error the interval allows: from its lower bound (a slope above 1 is noise around 1)
+            row["error_cv_max"] = float(np.sqrt(max(0.0, 1 - row["R_lo"]) * t["parent_sd"] ** 2) / t["parent_mean"])
+        row["parent_sd"], row["child_minus_midparent_sd"], row["parent_mean"] = t["parent_sd"], t["child_minus_midparent_sd"], t["parent_mean"]
         out["table"].append(row)
         if n >= 20 and col != base and base in vals:
             try:
@@ -274,7 +343,9 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
                 out["compare"].append(dict(column=col, label=label, delta=c["delta"], lo=c["ci95"][0], hi=c["ci95"][1], p_better=c["p_a_better"]))
             except ValueError:
                 pass
-    col = "rDNA45S.cn" if "rDNA45S.cn" in vals and len(vals["rDNA45S.cn"]) >= len(vals.get("rDNA45S.cn_single", {})) else "rDNA45S.cn_single"
+    # the scatter shows the calibrated 45S estimate (or its adjusted form) when it is among the columns
+    pref = [c for c, _ in columns if c.split(".adj")[0] == "rDNA45S.cn" and c in vals] or [c for c, _ in columns if c in vals]
+    col = pref[0]
     v = vals[col]
     for t in complete:
         if all(s in v for s in (t.child, t.father, t.mother)):
@@ -392,9 +463,12 @@ def biology(rows) -> dict:
     out["cn45_vs_chrM"] = corr(cn45, g("chrM.copies"))
     out["cn45_vs_EBV"] = corr(cn45, g("chrEBV.copies"))
     out["log_cn45_vs_log_chrM"] = corr(np.log(cn45), np.log(g("chrM.copies")))
-    female = np.array([r.get("sex_inferred") == "F" for r in rows])
+    # women whose culture has not lost an X: a mosaic loss is not an S-phase effect
+    female = np.array([r.get("sex_inferred") == "F" for r in rows]) & (g("truth.chrX") >= 1.85) & (g("truth.chrX") <= 2.15)
     dj = g("DJ.cn") if any(np.isfinite(g("DJ.cn"))) else g("DJ.cn_single")
     out["DJ_vs_chrX_female"] = corr(np.where(female, dj, np.nan), np.where(female, g("truth.chrX"), np.nan))
+    out["cn45_vs_chrX_female"] = corr(np.where(female, cn45, np.nan), np.where(female, g("truth.chrX"), np.nan))
+    out["cn45_cv"] = float(np.nanstd(cn45, ddof=1) / np.nanmean(cn45))
     out["DJ_vs_chrM"] = corr(dj, g("chrM.copies"))
     out["dup"] = dict(control=describe(g("ctrl_dup_frac")), rDNA=describe(g("rDNA45S.dup_flag_frac")),
                       ratio=describe(g("rDNA45S.dup_flag_frac") / g("ctrl_dup_frac")))
@@ -450,6 +524,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
             for cls in POSITIONAL:
                 sv, fv = num(r, f"{cls}.cn_single"), num(f, f"{cls}.cn_single")
                 r[f"fetch_ratio.{cls}"] = round(fv / sv, 6) if sv > 0 and np.isfinite(fv) else None
+    dj = dj_steps(rows, ped)
     engines = {}
     for r in rows:
         engines[r.get("engine")] = engines.get(r.get("engine"), 0) + 1
@@ -479,6 +554,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
                       flagged_chromosomes=[(r["sample"], r["flagged_chromosomes"]) for r in rows if r.get("flagged_chromosomes")],
                       placement_bins=sorted({str(r.get("placement_bin")) for r in rows}))
     data["known_truth"] = known_truth(rows)
+    data["known_truth"]["DJ_steps"] = dj
     data["modes"] = mode_agreement(S)
     data["rdna"] = {c: describe([num(r, c) for r in rows]) for c in ("rDNA45S.cn", "rDNA45S.cn_single", "rDNA45S.18S.flat", "rDNA5S.cn", "DJ.cn")}
     data["rdna"]["by_superpop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "superpop")
@@ -523,7 +599,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
 SAMPLE_COLUMNS = ["sample", "sex", "sex_inferred", "pop", "superpop", "mode_used", "engine", "depth", "insert_median", "ctrl_dup_frac", "rDNA45S.dup_flag_frac",
                   "gc_curve_max_se", "truth.auto", "truth.chrX", "truth.chrY", "chrM.copies", "chrEBV.copies", "rDNA45S.cn", "rDNA45S.cn_single",
                   "rDNA45S.18S.flat", "rDNA5S.cn", "rDNA5S.cn_single", "DJ.cn", "DJ.cn_single", "rDNA45S.cn.adj", "rDNA45S.cn.adj_ngspca",
-                  "elapsed_sec", "flags"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
+                  "elapsed_sec", "flags", "DJ.step"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
 
 
 def sample_record(r: dict) -> dict:

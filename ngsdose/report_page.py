@@ -145,10 +145,11 @@ cohort accumulates. The method and its own audit are described in
     P.h(f'''<p class="lede">If the method is right, held-out autosomal sequence reads 2, the X reads 1 in men and 2 in women, the
 Y reads 1 and 0, and the distal junction reads 10 — in every sample, by the same code that measures the rDNA.</p>
 <p>Across {a.get("n", 0):,} samples the held-out autosomal regions read <strong>{pm(a)}</strong> copies (expected 2).
-chrX: <strong>{pm(X["M"])}</strong> in {X["M"].get("n", 0):,} men and <strong>{pm(X["F"])}</strong> in {X["F"].get("n", 0):,} women;
-chrY: <strong>{pm(Y["M"])}</strong> and <strong>{pm(Y["F"], 4)}</strong>. The distal junction — ten copies, on five different chromosomes, measured
+chrX: <strong>{pm(X["M"])}</strong> in {X["M"].get("n", 0):,} men and a median of <strong>{fmt(X["F"].get("median"), 3)}</strong> in {X["F"].get("n", 0):,} women
+(mean {pm(X["F"])}: the spread is a handful of cultures that have lost an X in part of their cells, listed below);
+chrY: <strong>{pm(Y["M"])}</strong> in men (a few cultures have lost the Y in part of their cells too) and <strong>{pm(Y["F"], 4)}</strong> in women. The distal junction — ten copies, on five different chromosomes, measured
 by the k-mer path that the rDNA uses — reads <strong>{pm(DJ)}</strong>{" (cohort-calibrated)" if kt["DJ_col"] == "DJ.cn" else ""}.
-{"Women read the X a little below 2 and every sample reads the distal junction a little below 10: both are late-replicating sequence, and DNA from a growing cell culture under-represents it (see the cell-line section)." if X["F"].get("mean", 2) < 1.98 else ""}</p>''')
+{"Women read the X a little below 2 and every sample reads the distal junction a little below 10: both are late-replicating sequence, and DNA from a growing cell culture under-represents it (see the cell-line section)." if X["F"].get("median", 2) < 1.98 else ""}</p>''')
     P.h('<div class="grid2">')
     P.chart("auto", dict(type="hist", col="truth.auto", xlabel="copies", ref=[dict(x=2, label="truth: 2")], xfmt=3), "Held-out autosomal regions (80 regions, 0.8 Mb)")
     P.chart("chrX", dict(type="hist", col="truth.chrX", group=dict(col="sex_inferred", levels=sex_levels), xlabel="copies", ref=[dict(x=1, label="1"), dict(x=2, label="2")], xfmt=2), "chrX (60 regions), by sex")
@@ -159,11 +160,33 @@ by the k-mer path that the rDNA uses — reads <strong>{pm(DJ)}</strong>{" (coho
     if sx["n_pedigree"]:
         P.h(f'<p>Sex read from the X and Y agrees with the pedigree in {sx["n_inferred"] - len(sx["mismatch"]):,} of {sx["n_inferred"]:,} samples'
             + (f'; it does not in <strong>{", ".join(esc(s) for s in sx["mismatch"][:20])}{" and " + str(len(sx["mismatch"]) - 20) + " more" if len(sx["mismatch"]) > 20 else ""}</strong> — worth a look at those files (a swapped sample, or a line that has lost its Y).' if sx["mismatch"] else ".") + "</p>")
-    outl = [(s, f) for s, f in data["flags"] if "chrX" in f or "DJ " in f or "autosomal" in f]
+    outl = [(s, f) for s, f in data["flags"] if "chrX" in f or "chrY" in f or "autosomal" in f]
     if outl:
         P.h(f'<details><summary>{len(outl)} sample(s) off the expected value</summary>')
         P.table([[s, f] for s, f in outl], ["sample", "what"])
-        P.h("<p class=\"small\">A woman whose X reads well below 2 has lost an X in part of her cell culture — the known behaviour of lymphoblastoid lines, and a reason the controls are measured in every sample. A distal junction near 8 or 12 would be a candidate acrocentric rearrangement.</p></details>")
+        P.h("<p class=\"small\">A woman whose X reads well below 2, or a man whose Y does, has lost that chromosome in part of the cell culture — the known behaviour of lymphoblastoid lines, and a reason the controls are measured in every sample.</p></details>")
+    dj = kt.get("DJ_steps") or {}
+    if dj.get("carriers") is not None:
+        near = dj["near"]
+        P.h(f'''<h3>Steps of one copy in the distal junction</h3>
+<p>Everyone has ten distal junctions, one per acrocentric short arm; a person with a rearranged short arm has nine, and a
+Robertsonian translocation — the commonest structural rearrangement in humans, about one person in a thousand — fuses two
+acrocentrics and loses both their short arms: eight. Relative to the cohort's level ({fmt(dj["median"], 2)}), the copy number of
+each sample should therefore sit near a whole number, and a step, being a structural variant, should pass to half of a
+carrier's children and arise de novo in almost none. Within ±0.3 of a step: <strong>{near.get(-2, 0)}</strong> samples at −2,
+<strong>{near.get(-1, 0)}</strong> at −1, {near.get(0, 0):,} at 0, <strong>{near.get(1, 0)}</strong> at +1; the main mode has a robust SD of
+{fmt(dj["spread"], 2)} copies, and {dj["between"]} samples sit between steps.</p>''')
+        if dj["carriers"]:
+            rows_c = []
+            for c in dj["carriers"]:
+                rel = "; ".join(f"{r['who']} {esc(r['sample'])} {r['step']:+.2f}" for r in c["relatives"]) or "none counted"
+                rows_c.append([c["sample"], c.get("pop") or "", c.get("sex") or "", f"{c['step']:+.2f}", rel])
+            P.table(rows_c, ["sample", "population", "sex", "step (copies)", "relatives counted, and their step"], numeric={3})
+            tot = dj["transmitted"] + dj["not_transmitted"]
+            P.h(f'''<p>Where a carrier parent and a child were both counted: the step was transmitted in <strong>{dj["transmitted"]} of {tot}</strong>
+(half is the expectation for a heterozygous variant){"; " + ", ".join(esc(x) for x in dj["de_novo"]) + " carr" + ("ies" if len(dj["de_novo"]) == 1 else "y") + " a step that neither counted parent has" if dj["de_novo"] else "; no child carries a step that neither parent has"}.
+This is the sharpest test the known truths offer: not that the average is right, but that a single-copy change in a
+ten-copy paralogous sequence is seen in one person and then again in their child.</p>''')
     P.end()
 
     # ---------------------------------------------------------------- 4. modes
@@ -204,10 +227,27 @@ variance, none of it in the nuclear genome).</p>''')
         rows_t = []
         for t in tr["table"]:
             r_ci = f" ({fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)})" if "R_lo" in t else ""
-            rows_t.append([t["label"], t["n_trios"], fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(t["R"], 3) + r_ci,
-                           fmt(t["R_single"], 3), fmt(t["R_mendel"], 3), fmt(t["error_cv"], 3, pct=True)])
-        P.table(rows_t, ["estimator", "trios", "midparent slope", "spousal r", "reliability (95% CI)", "single-parent R", "Mendelian R", "implied error CV"], numeric={1, 2, 3, 4, 5, 6, 7})
-        P.h('<p class="small">Reliability = slope − ρ(1 − slope), with ρ the spousal correlation after centring within population; the three estimators agree when error is independent between family members. A spousal correlation far from zero means members of a family share something other than DNA (a batch), and every reliability in the table is inflated by about as much. The negative-control rows should read near zero.</p>')
+            err = ("≤ " + fmt(t["error_cv_max"], 1, pct=True)) if "error_cv_max" in t else fmt(t["error_cv"], 1, pct=True)
+            rows_t.append([t["label"], t["n_trios"], fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
+                           fmt(min(t["R_single"], 1.0), 3), fmt(min(t["R_mendel"], 1.0), 3), err])
+        P.table(rows_t, ["estimator", "trios", "midparent slope", "spousal r", "reliability (95% CI)", "single-parent R", "Mendelian R", "error CV the interval allows"], numeric={1, 2, 3, 4, 5, 6, 7})
+        P.h('<p class="small">Reliability = slope − ρ(1 − slope), with ρ the spousal correlation after centring within population, capped at 1 (a slope above 1 is noise around 1; the interval says how much). The three estimators agree when error is independent between family members. A spousal correlation far from zero means members of a family share something other than DNA (a batch), and every reliability in the table is inflated by about as much. The negative-control rows should read near zero.</p>')
+        t45 = next((t for t in tr["table"] if t["column"] == "rDNA45S.cn"), None) or next((t for t in tr["table"] if t["column"].startswith("rDNA45S")), None)
+        t5 = next((t for t in tr["table"] if t["column"] == "rDNA5S.cn"), None)
+        if t45 and ci:
+            cv = bio.get("cn45_cv")
+            P.h(f'''<p><strong>What this says.</strong> The 45S copy number differs between people by a CV of {fmt(cv, 2, pct=True) if cv else "about 20%"} — far more
+than the few percent by which two libraries of the same person disagree — so any competent estimator has a reliability near 1 within one
+cohort and one pipeline, and the trios cannot rank estimators whose errors are all small next to that spread: the paired differences below
+are the test, and they are small. What the trios establish is that the variation being measured is inherited: the 45S reliability is
+{fmt(min(t45["R"], 1.0), 2)} ({fmt(t45["R_lo"], 2)} to {fmt(t45["R_hi"], 2)}), and the interval allows a measurement error of at most
+{fmt(t45.get("error_cv_max"), 1, pct=True)} of a person's value. The case for the calibrated estimator over the 18S depth ratio is not
+made here; it was made across library chemistries, where the ratio moved by 27% and the calibrated estimate by 2% (the pilot).</p>''')
+        if t5 and ci:
+            P.h(f'''<p>The 5S array reads {fmt(min(t5["R"], 1.0), 2)} ({fmt(t5["R_lo"], 2)} to {fmt(t5["R_hi"], 2)}) at {t5["n_trios"]} trios: an interval too wide to say
+whether its copy number is transmitted like the 45S's or not, which is worth watching — its spread between people is as large as the 45S's,
+its estimate is as precise, and it reproduced across libraries in the pilot. A tandem array whose copy number did not pass from parent to
+child would be remarkable; the full cohort decides.</p>''')
         if tr["compare"]:
             P.h("<p>Paired family bootstrap of the reliability difference against the estimator used in the literature (the 18S read-depth ratio, no GC model, no calibration):</p>")
             P.table([[c["label"], fmt(c["delta"], 3), f"{fmt(c['lo'], 3)} to {fmt(c['hi'], 3)}", fmt(c["p_better"], 3)] for c in tr["compare"]],
@@ -264,10 +304,10 @@ Both vary far more between people than the rDNA does, and neither is inherited t
     P.h('<div class="grid2">')
     if cm.get("n", 0) >= 3:
         P.chart("c45vM", dict(type="scatter", x="chrM.copies", y=col45, xlabel="mitochondrial genomes per cell", ylabel="45S copies", log="xy", fit=True),
-                "45S copy number against mitochondrial content", f"On log scales, n = {cm['n']:,}: r = {fmt(cm.get('r'), 2)} ({fmt(cm.get('r_lo'), 2)} to {fmt(cm.get('r_hi'), 2)}). Gibbons et al. (2014) reported an inverse relation between rDNA and mtDNA abundance in these lines.")
+                "45S copy number against mitochondrial content", f"On log scales, n = {cm['n']:,}: r = {fmt(cm.get('r'), 2)} ({fmt(cm.get('r_lo'), 2)} to {fmt(cm.get('r_hi'), 2)}). Gibbons et al. (2014) reported rDNA copy number to be coupled with mitochondrial DNA abundance in lymphoblastoid lines; here the two are measured from the same reads, with the rDNA under a GC model and the mitochondrial genome as copies per cell.")
     if sph.get("n", 0) >= 3:
-        P.chart("sphase", dict(type="scatter", x="truth.chrX", y=kt["DJ_col"], where=dict(sex_inferred="F"), xlabel="chrX copies (women)", ylabel="distal junction copies", fit=True, xref=2, yref=10),
-                "Two late-replicating controls, in women", f"n = {sph['n']:,}: r = {fmt(sph.get('r'), 2)} ({fmt(sph.get('r_lo'), 2)} to {fmt(sph.get('r_hi'), 2)}). The inactive X and the acrocentric short arms both replicate late; DNA from a culture with more cells in S phase should under-represent both together. If they move together across people, that is the S-phase fraction of the culture showing — and a covariate that rDNA, also late-replicating, needs.")
+        P.chart("sphase", dict(type="scatter", x="truth.chrX", y=kt["DJ_col"], where=dict(sex_inferred="F"), xlabel="chrX copies (women)", ylabel="distal junction copies", fit=False, xref=2, yref=10),
+                "Two late-replicating controls, in women", f"Women whose culture has not lost an X (chrX between 1.85 and 2.15), n = {sph['n']:,}: r = {fmt(sph.get('r'), 2)} ({fmt(sph.get('r_lo'), 2)} to {fmt(sph.get('r_hi'), 2)}). The inactive X and the acrocentric short arms both replicate late; DNA from a culture with more cells in S phase should under-represent both together. If they moved together across people, that would be the S-phase fraction of the culture showing — and a covariate that rDNA, also late-replicating, would need. An r near zero says the two deficits are not one thing.")
     P.h("</div>")
     du = bio["dup"]
     P.chart("dup", dict(type="scatter", x="ctrl_dup_frac", y="rDNA45S.dup_flag_frac", xlabel="duplicate-flagged, control reads", ylabel="duplicate-flagged, 45S reads", identity=True, xfmt=3),
@@ -311,7 +351,10 @@ built from; here is what it sees in people.</p>''')
             P.table([[cls, s["n"], s.get("n_gapped", 0), fmt(s.get("ratio_median"), 2), fmt(s.get("sd_log"), 3), fmt(s.get("pearson"), 2), fmt(s.get("spearman"), 2)] for cls, s in st.items() if s.get("n")],
                     ["class", "samples", "left out (gaps)", "median estimate / assembly", "SD of log ratio", "Pearson r", "Spearman"], numeric={1, 2, 3, 4, 5, 6})
             pts = [dict(x=r["assembly_Mb"], y=r["ngsdose_Mb"], label=r["sample"], extra=[r["cls"]]) for r in hp["rows"] if r["assembly_gapped_Mb"] <= 0.02 * (r["assembly_Mb"] + r["assembly_gapped_Mb"]) and r["assembly_Mb"] > 0 and r["ngsdose_Mb"] > 0]
-            P.chart("hprc", dict(type="scatter", points=pts, xlabel="assembly, Mb (both haplotypes)", ylabel="NGS-DOSE, Mb", identity=True, log="xy"), "Every class, every sample with an assembly", "Log scales; the diagonal is agreement. The relative measures (β-satellite, CER) sit below it by a constant factor, their k-mer recall.")
+            good = [cls for cls, st_ in st.items() if st_.get("n", 0) >= 4 and st_.get("pearson", 0) >= 0.95]
+            P.chart("hprc", dict(type="scatter", points=pts, xlabel="assembly, Mb (both haplotypes)", ylabel="NGS-DOSE, Mb", identity=True, log="xy"), "Every class, every sample with an assembly",
+                    "Log scales; the diagonal is agreement. The relative measures (β-satellite, CER, ACRO) sit below it by a constant factor, their k-mer recall."
+                    + (f" What matters for association work is whether the estimates track the assemblies across people: {', '.join(good)} do (r ≥ 0.95)." if good else ""))
         else:
             P.h('<p class="small">The comparison with HPRC assemblies appears when their CenSat annotations are given (<code>--censat</code>); 200 samples of the cohort have one.</p>')
     else:
@@ -385,7 +428,8 @@ absolute scale of the rDNA specifically.</li>
 <li><strong>Cell-line DNA.</strong> Every sample here is a lymphoblastoid line, and its culture's replication state, EBV load and
 mitochondrial content are measured but not removed. Blood-derived biobank genomes will not carry the first of these.</li>
 <li><strong>Trios bound reliability from above</strong> where members of a family were prepared together; the spousal correlation
-is the check, and the negative-control rows are the calibration of the table itself.</li>
+is the check, and the negative-control rows are the calibration of the table itself. And because the rDNA varies so much more between
+people than any estimator errs, trios say <em>that</em> the measured variation is real, not which estimator measures it best.</li>
 <li><strong>The satellite panels</strong> were built from one genome (CHM13). Four of the ten families are relative measures, under-read
 by a known factor; HSat2 is unjudged until assemblies without gaps in it have been compared.</li>
 <li><strong>The telomere class</strong> is a relative measure of (TTAGGG)n content, not a telomere length.</li>
