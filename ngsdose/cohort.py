@@ -178,3 +178,75 @@ def control_pcs(results: list[dict], n_pc: int | None = 10) -> tuple[np.ndarray,
     U, S, _ = np.linalg.svd(X, full_matrices=False)
     k = len(S) if n_pc is None else min(n_pc, len(S))
     return U[:, :k] * S[:k], (S ** 2 / max((S ** 2).sum(), 1e-30))[:k], S, X.shape
+
+
+def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_profile_pcs: int = 3, n_control_pcs="mp",
+                 mp_margin: float = 0.01, efficiencies: dict | None = None, log=None) -> tuple[list[dict], dict, dict]:
+    """The cohort layer over per-sample estimates: window calibration of every positional class,
+    profile PCs, and the control-region PCs with their Marchenko-Pastur count.
+
+    `results` is an iterable of estimate results (dicts), read one at a time: only each sample's
+    summary row, window vectors and control residuals are kept, so thousands of samples fit in
+    a few hundred MB. Returns (rows in input order, efficiency tables per class, information
+    about the control PCs). `n_control_pcs` is "mp" or a number of components to write."""
+    from . import pcselect
+    from .tables import summary_row
+    say = log or (lambda *a, **k: None)
+    rows, order, win, layout, ctrl = {}, [], {}, {}, []
+    for r in results:
+        rows[r["sample"]] = summary_row(r)
+        order.append(r["sample"])
+        for cls, v in r["classes"].items():
+            if v["kind"] != "positional":
+                continue
+            y, gc, starts, ends = sample_windows(r, cls)
+            if cls in layout and len(layout[cls][0]) != len(starts):
+                raise ValueError(f"{r['sample']}: {cls} was estimated with a different window layout")
+            layout.setdefault(cls, (starts, ends))
+            win.setdefault(cls, []).append((y, gc))
+        ctrl.append((r.get("control_qc") or {}).get("region_log_ratio"))
+    eff, info = {}, {}
+    for cls, per in win.items():
+        if len(per) != len(order):
+            continue
+        a_fixed = None
+        if efficiencies and cls in efficiencies:
+            a_fixed = np.array([np.nan if v is None else v for v in efficiencies[cls]["a"]], float)
+        Y = np.array([p[0] for p in per])
+        gc = _nanmedian(np.array([p[1] for p in per]), axis=0)
+        cal = calibrate_matrix(order, Y, layout[cls][0], layout[cls][1], gc, a_fixed=a_fixed, max_window_sd=max_window_sd,
+                               anchors=(anchors or {}).get(cls))
+        scores, var = profile_pcs(cal, n_profile_pcs) if len(order) > n_profile_pcs + 2 else (None, None)
+        for i, s in enumerate(cal.samples):
+            rows[s][f"{cls}.cn"] = round(float(np.exp(cal.c[i])), 2)
+            rows[s][f"{cls}.cn_se_rel"] = round(float(cal.c_se[i]), 5)
+            rows[s][f"{cls}.profile_sd"] = round(float(cal.resid_sd[i]), 4)
+            if scores is not None:
+                for k in range(scores.shape[1]):
+                    rows[s][f"{cls}.profilePC{k + 1}"] = round(float(scores[i, k]), 5)
+        eff[cls] = dict(start=cal.window_start.tolist(), gc=[round(float(g), 4) for g in cal.window_gc],
+                        anchor=cal.anchor.tolist(), a=[None if np.isnan(v) else round(float(v), 5) for v in cal.a],
+                        window_sd=[None if np.isnan(v) else round(float(v), 5) for v in cal.window_sd],
+                        n_samples=len(cal.samples))
+    # control-region PCs: how many are structure is decided at the Marchenko-Pastur edge of the noise
+    # bulk ("mp"); the table carries more than that, so that `pcsweep` can look beyond the choice
+    want = None if str(n_control_pcs).lower() == "mp" else int(n_control_pcs)
+    ok = len(order) >= 10 and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
+    cp = control_pcs(np.array(ctrl, float), None) if ok and want != 0 else None
+    if cp is not None:
+        scores, var, sv, shape = cp
+        sel = pcselect.mp_select(sv, *shape, margin=mp_margin)
+        most = max(len(order) // 5, 1)                     # at least five samples per component
+        n_write = min(scores.shape[1], most, want if want is not None else max(2 * sel.n_pc, 20))
+        if want is not None and n_write < want:
+            say(f"[cohort] WARNING: --control-pcs {want}, but {len(order)} samples support {n_write} (five samples per component): {n_write} written")
+        for i, s in enumerate(order):
+            rows[s]["ctrlPC_mp"] = sel.n_pc
+            for k in range(n_write):
+                rows[s][f"ctrlPC{k + 1}"] = round(float(scores[i, k]), 5)
+        info = dict(mp=sel.n_pc, describe=sel.describe(), n_written=n_write, variance=[round(float(v), 5) for v in var[:n_write]],
+                    singular_values=[round(float(v), 5) for v in sv], shape=list(shape))
+        say(f"[cohort] control-region PCs: {sel.describe()}; {n_write} written (ctrlPC1..), variance explained: "
+            + " ".join(f"{v:.3f}" for v in var[:min(n_write, 12)]))
+    return [rows[s] for s in order], eff, info
+

@@ -68,6 +68,8 @@ def cohort(tmp_path_factory):
     sweep = run("pcsweep", str(tmp / "cohort.tsv"), "-c", "rDNA45S.cn", "DJ.cn_single", "-p", str(ped), "--boot", "100", "-o", str(tmp / "sweep.tsv")).stderr
     trios = run("trios", str(tmp / "adj_ngspca.tsv"), "-p", str(ped), "-c", *[c + ".adj" for c in cols], "--compare-to", "rDNA45S.18S.flat.adj",
                 "--json", str(tmp / "transmission.json")).stdout
+    # ... and the report, on the same counts: sixty samples is enough for its sweep and its paired comparisons
+    run("report", "--fetch", str(tmp), "-p", str(ped), "--pcs", str(pcs), "-o", str(tmp / "report"), "-j", "2", "--total", "60", "--as-of", "2026-09-22")
     return dict(tmp=tmp, cols=cols, adjust_log=adj, trios=trios, cohort_log=cohort_log, default_log=default, sweep_log=sweep, clamped_log=clamped)
 
 
@@ -132,3 +134,17 @@ def test_a_number_of_pcs_beyond_what_the_table_holds_is_clamped_with_a_warning(c
     n_ctrl = sum(1 for c in rows_of(cohort["tmp"] / "cohort.tsv")[0] if c.startswith("ctrlPC") and c != "ctrlPC_mp")
     assert n_ctrl < 46 and f"using {n_ctrl}" in cohort["clamped_log"] and "clamped" in cohort["clamped_log"]
     assert len(rows_of(cohort["tmp"] / "adj_clamped.tsv")) == 3 * N_TRIOS
+
+
+def test_the_report_runs_every_section_on_a_full_sized_mock(cohort):
+    import json
+    d = json.loads((cohort["tmp"] / "report" / "report.json").read_text())
+    assert d["meta"]["n"] == 3 * N_TRIOS and d["trios"]["n_complete"] == N_TRIOS and len(d["trios"]["compare"]) >= 4
+    assert all("R_lo" in t for t in d["trios"]["table"])                        # bootstrap intervals at >= 20 trios
+    assert "sweep" in d["pcs"] and d["pcs"]["sweep"]["n_trios"] == N_TRIOS and d["pcs"]["control"]["mp"] in (0, 1)
+    # one person sixty times over: nothing is transmitted, and the negative controls say so too
+    R = {t["column"]: t for t in d["trios"]["table"]}
+    for col in ("rDNA45S.cn", "truth.auto", "chrM.copies"):
+        assert R[col]["R_lo"] < 0.5, (col, R[col])
+    html = (cohort["tmp"] / "report" / "index.html").read_text().split('<script id="report-data"')[0]        # the page, not the code
+    assert 'id="chart-sweep_R"' in html and 'id="chart-scree"' in html and "chart failed" not in html

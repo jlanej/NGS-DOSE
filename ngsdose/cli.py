@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import gzip
 import json
 import re
 import sys
@@ -14,70 +13,7 @@ import numpy as np
 from . import __version__, cohort, estimate, io, pcselect, resources, sinks, trios
 
 
-class _Enc(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, (np.floating, np.integer)):
-            return o.item()
-        if isinstance(o, np.ndarray):
-            return o.tolist()
-        return super().default(o)
-
-
-def _dump(obj, path):
-    data = json.dumps(obj, cls=_Enc, allow_nan=True)
-    if str(path) == "-":
-        sys.stdout.write(data + "\n")
-    elif str(path).endswith(".gz"):
-        with gzip.open(path, "wt") as fh:
-            fh.write(data)
-    else:
-        Path(path).write_text(data)
-
-
-def _load_result(path) -> dict:
-    with (gzip.open(path, "rt") if str(path).endswith(".gz") else open(path)) as fh:
-        return json.load(fh)
-
-
-def summary_row(r: dict) -> dict:
-    row = dict(sample=r["sample"], mode=r["mode"], engine=f"{r.get('engine_version', '?')}+{(r.get('engine_build') or 'unknown')[:7]}",
-               depth=round(r["depth_equiv"], 3), read_length=r["read_length"],
-               insert_median=r["insert_median"], gc_L=r["gc_L"], ctrl_dup_frac=round(r["ctrl_dup_frac"], 4),
-               gc_rel_35=r["gc_rel"].get("35"), gc_rel_65=r["gc_rel"].get("65"), gc_curve_max_se=round(r["gc_curve_max_se"], 4),
-               ctrl_region_sd=None if not r["control_qc"] else round(r["control_qc"]["region_log_mad_sd"], 4),
-               flagged_chromosomes=None if not r["control_qc"] else ",".join(r["control_qc"]["flagged_chromosomes"]))
-    for label, t in r.get("truth_regions", {}).items():
-        # known-truth sets are scored against their answer; dosage sets (chrM, chrEBV) are copies per cell
-        row[f"{label}.copies" if t.get("role") == "dosage" else f"truth.{label}"] = round(t["cn"], 4)
-    if r.get("eof_marker"):
-        row["eof_marker"] = r["eof_marker"]
-    for name, c in r["classes"].items():
-        if c["kind"] == "positional":
-            row[f"{name}.cn_single"] = round(c["cn"], 3)
-            row[f"{name}.cn_anchor"] = round(c["cn_anchor"], 2)
-            row[f"{name}.cn_all"] = round(c["cn_all"], 2)
-            row[f"{name}.cn_median"] = round(c["cn_median"], 2)
-            row[f"{name}.window_log_sd"] = round(c["window_log_sd"], 4)
-            row[f"{name}.cn_all_flat"] = round(c["cn_all_flat"], 2)
-            for fn, fv in c["features"].items():
-                row[f"{name}.{fn}"] = round(fv["cn"], 2)
-                row[f"{name}.{fn}.flat"] = round(fv["cn_flat"], 2)
-        else:
-            row[f"{name}.mass_Mb"] = round(c["mass_Mb"], 4)
-    return row
-
-
-def write_table(rows: list[dict], path):
-    cols: list[str] = []
-    for r in rows:
-        cols += [k for k in r if k not in cols]
-    fh = sys.stdout if str(path) == "-" else open(path, "w", newline="")
-    w = csv.DictWriter(fh, fieldnames=cols, delimiter="\t", lineterminator="\n", restval="NA")
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: ("NA" if v is None or (isinstance(v, float) and not np.isfinite(v)) else v) for k, v in r.items()})
-    if fh is not sys.stdout:
-        fh.close()
+from .tables import Encoder as _Enc, dump as _dump, load_result as _load_result, summary_row, write_table  # noqa: E402,F401
 
 
 _EST: dict = {}
@@ -131,66 +67,13 @@ def cmd_cohort(a):
     # one estimate file at a time: only the window vectors, the control residuals and the summary
     # row of each sample are kept, so a cohort of thousands fits in a few hundred MB
     anchors = {} if a.gc_rule_anchors else resources.Bundle(a.resources).anchors()
-    rows, order, win, layout, ctrl = {}, [], {}, {}, []
-    for path in a.estimates:
-        r = _load_result(path)
-        rows[r["sample"]] = summary_row(r)
-        order.append(r["sample"])
-        for cls, v in r["classes"].items():
-            if v["kind"] != "positional":
-                continue
-            y, gc, starts, ends = cohort.sample_windows(r, cls)
-            if cls in layout and len(layout[cls][0]) != len(starts):
-                raise SystemExit(f"{path}: {cls} was estimated with a different window layout")
-            layout.setdefault(cls, (starts, ends))
-            win.setdefault(cls, []).append((y, gc))
-        ctrl.append((r.get("control_qc") or {}).get("region_log_ratio"))
-    eff = {}
-    for cls, per in win.items():
-        if len(per) != len(order):
-            continue
-        a_fixed = None
-        if a.efficiencies:
-            tab = json.loads(Path(a.efficiencies).read_text())
-            a_fixed = np.array([np.nan if v is None else v for v in tab[cls]["a"]], float)
-        Y = np.array([p[0] for p in per])
-        gc = np.nanmedian(np.array([p[1] for p in per]), axis=0)
-        cal = cohort.calibrate_matrix(order, Y, layout[cls][0], layout[cls][1], gc, a_fixed=a_fixed,
-                                      max_window_sd=a.max_window_sd, anchors=anchors.get(cls))
-        scores, var = cohort.profile_pcs(cal, a.profile_pcs) if len(order) > a.profile_pcs + 2 else (None, None)
-        for i, s in enumerate(cal.samples):
-            rows[s][f"{cls}.cn"] = round(float(np.exp(cal.c[i])), 2)
-            rows[s][f"{cls}.cn_se_rel"] = round(float(cal.c_se[i]), 5)
-            rows[s][f"{cls}.profile_sd"] = round(float(cal.resid_sd[i]), 4)
-            if scores is not None:
-                for k in range(scores.shape[1]):
-                    rows[s][f"{cls}.profilePC{k + 1}"] = round(float(scores[i, k]), 5)
-        eff[cls] = dict(start=cal.window_start.tolist(), gc=[round(float(g), 4) for g in cal.window_gc],
-                        anchor=cal.anchor.tolist(), a=[None if np.isnan(v) else round(float(v), 5) for v in cal.a],
-                        window_sd=[None if np.isnan(v) else round(float(v), 5) for v in cal.window_sd],
-                        n_samples=len(cal.samples))
-    # control-region PCs: how many are structure is decided at the Marchenko-Pastur edge of the noise
-    # bulk ("mp"); the table carries more than that, so that `pcsweep` can look beyond the choice
-    want = None if str(a.control_pcs).lower() == "mp" else int(a.control_pcs)
-    ok = len(order) >= 10 and all(x is not None for x in ctrl) and len({len(x) for x in ctrl}) == 1
-    cp = cohort.control_pcs(np.array(ctrl, float), None) if ok and want != 0 else None
-    if cp is not None:
-        scores, var, sv, shape = cp
-        sel = pcselect.mp_select(sv, *shape, margin=a.mp_margin)
-        most = max(len(order) // 5, 1)                     # at least five samples per component
-        n_write = min(scores.shape[1], most, want if want is not None else max(2 * sel.n_pc, 20))
-        if want is not None and n_write < want:
-            print(f"[cohort] WARNING: --control-pcs {want}, but {len(order)} samples support {n_write} (five samples per component): {n_write} written",
-                  file=sys.stderr)
-        for i, s in enumerate(order):
-            rows[s]["ctrlPC_mp"] = sel.n_pc
-            for k in range(n_write):
-                rows[s][f"ctrlPC{k + 1}"] = round(float(scores[i, k]), 5)
-        print(f"[cohort] control-region PCs: {sel.describe()}; {n_write} written (ctrlPC1..), variance explained: "
-              + " ".join(f"{v:.3f}" for v in var[:min(n_write, 12)]), file=sys.stderr)
+    eff_in = json.loads(Path(a.efficiencies).read_text()) if a.efficiencies else None
+    rows, eff, _ = cohort.cohort_table((_load_result(p) for p in a.estimates), anchors, max_window_sd=a.max_window_sd,
+                                       n_profile_pcs=a.profile_pcs, n_control_pcs=a.control_pcs, mp_margin=a.mp_margin,
+                                       efficiencies=eff_in, log=lambda m: print(m, file=sys.stderr))
     if a.save_efficiencies:
         Path(a.save_efficiencies).write_text(json.dumps(eff))
-    write_table([rows[s] for s in order], a.table)
+    write_table(rows, a.table)
 
 
 def _read_values(path, column):
@@ -488,6 +371,12 @@ def main(argv=None):
     w.add_argument("--boot", type=int, default=300)
     w.add_argument("-o", "--out", default="-")
     w.set_defaults(fn=cmd_pcsweep)
+
+    from . import report
+    rp = sub.add_parser("report", help="one static page from whatever counts files exist: the evidence that the measurement works, as the run proceeds",
+                        description=report.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    report.add_arguments(rp)
+    rp.set_defaults(fn=report.build)
 
     k = sub.add_parser("sinks", help="learn fetch-mode sink intervals from scan-mode counts")
     k.add_argument("counts", nargs="+")
