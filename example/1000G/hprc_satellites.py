@@ -16,60 +16,14 @@ reads carry the four k-mers a read needs, is under-recovered in proportion (the 
 class on CHM13 itself is in resources/experimental/README.md).
 """
 import argparse
-import collections
 import csv
-import glob
-import os
+import sys
+from pathlib import Path
 
-import numpy as np
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# CenSat annotation label -> panel class. A label is the category before "(" or "_" ("HSat3",
-# "active_hor(...)" -> "active"); inside the catch-all "cenSat(...)" category it is the family named
-# first in the parentheses ("cenSat(SST1,SST1v)" -> SST1, "cenSat(ACRO1,COMP-...)" -> ACRO1).
-CLASS_OF = {"HSat1A": "HSat1A", "HSat1B": "HSat1B", "HSat2": "HSat2", "HSat3": "HSat3", "bSat": "bSat", "hor": "aSatHOR", "active": "aSatHOR",
-            "ACRO1": "ACRO", "SST1": "SST1", "CER": "CER", "SATR1": "SATR", "SATR2": "SATR"}
-CLASSES = ("HSat1A", "HSat1B", "HSat2", "HSat3", "bSat", "aSatHOR", "ACRO", "SST1", "CER", "SATR")
-MAX_GAPPED = 0.02
-
-
-def labels_of(name: str) -> list[str]:
-    """The labels of one annotation record. An array that the assembly did not span is labelled
-    together with its gap ("GAP,HSat3"): the record is that class, of unknown true size."""
-    out = []
-    depth, part = 0, ""
-    for ch in name + ",":                                   # split on commas outside parentheses
-        if ch == "," and depth == 0:
-            out.append(part)
-            part = ""
-        else:
-            depth += ch == "("
-            depth -= ch == ")"
-            part += ch
-    labels = []
-    for part in out:
-        cat = part.split("(")[0].split("_")[0]
-        if cat == "cenSat" and "(" in part:
-            cat = part.split("(", 1)[1].split(",")[0].rstrip(")")
-        labels.append(cat)
-    return labels
-
-
-def assembly_mass(sample: str, censat_dir: str):
-    """Per class: bp in arrays the assembly spans, and bp in arrays annotated with a gap (a lower
-    bound on something larger), over all haplotype annotations of one sample; and the number of files."""
-    files = sorted(glob.glob(os.path.join(censat_dir, f"{sample}_*cenSat.bed")))
-    mass, gapped = collections.Counter(), collections.Counter()
-    for path in files:
-        with open(path) as fh:
-            for line in fh:
-                if line.startswith(("track", "#")) or not line.strip():
-                    continue
-                p = line.rstrip("\n").split("\t")
-                labels = labels_of(p[3])
-                cls = next((CLASS_OF[x] for x in labels if x in CLASS_OF), None)
-                if cls:
-                    (gapped if "GAP" in labels else mass)[cls] += int(p[2]) - int(p[1])
-    return mass, gapped, len(files)
+# the parser and the comparison live in the package; this script is their command line
+from ngsdose.hprc import CLASS_OF, CLASSES, MAX_GAPPED, assembly_mass, compare, labels_of  # noqa: E402,F401
 
 
 def main():
@@ -78,17 +32,8 @@ def main():
     ap.add_argument("--censat", required=True, help="directory of <sample>_<hap>_hprc_r2_v1*.cenSat.bed files")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    rows = []
     with open(a.estimates) as fh:
-        for r in csv.DictReader(fh, delimiter="\t"):
-            mass, gapped, n_files = assembly_mass(r["sample"], a.censat)
-            if n_files != 2:
-                continue
-            for cls in CLASSES:
-                v = r.get(f"{cls}.mass_Mb", "NA")
-                if v not in ("NA", "", None):
-                    rows.append(dict(sample=r["sample"], cls=cls, assembly_Mb=round(mass[cls] / 1e6, 3),
-                                     assembly_gapped_Mb=round(gapped[cls] / 1e6, 3), ngsdose_Mb=float(v)))
+        rows, stats = compare(list(csv.DictReader(fh, delimiter="\t")), a.censat)
     with open(a.out, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["sample", "cls", "assembly_Mb", "assembly_gapped_Mb", "ngsdose_Mb"], delimiter="\t", lineterminator="\n")
         w.writeheader()
@@ -99,19 +44,13 @@ def main():
           "gap-containing arrays is left out of that class's comparison (column 'gapped' counts them).")
     print(f"{'class':8s} {'n':>4s} {'gapped':>7s} {'assembly Mb (median, range)':>30s} {'est/assembly (median)':>22s} {'SD of log ratio':>16s} {'Pearson r':>10s} {'Spearman':>9s}")
     for cls in CLASSES:
-        sub = [r for r in rows if r["cls"] == cls]
-        # a gap matters when it could hide a material part of the class: more than 2% of what is annotated
-        clean = [r for r in sub if r["assembly_Mb"] > 0 and r["ngsdose_Mb"] > 0
-                 and r["assembly_gapped_Mb"] <= MAX_GAPPED * (r["assembly_Mb"] + r["assembly_gapped_Mb"])]
-        x = np.array([r["assembly_Mb"] for r in clean])
-        y = np.array([r["ngsdose_Mb"] for r in clean])
-        if len(x) < 2:
-            print(f"{cls:8s} {len(x):4d} {len(sub) - len(clean):7d}   too few samples without gaps")
+        st = stats[cls]
+        if st["n"] < 2:
+            print(f"{cls:8s} {st['n']:4d} {st['n_gapped']:7d}   too few samples without gaps")
             continue
-        rank = lambda v: np.argsort(np.argsort(v))
-        lr = np.log(y / x)
-        corr = (f"{np.corrcoef(x, y)[0, 1]:10.3f} {np.corrcoef(rank(x), rank(y))[0, 1]:9.3f}" if len(x) >= 3 else f"{'':>10s} {'':>9s}")
-        print(f"{cls:8s} {len(x):4d} {len(sub) - len(clean):7d} {np.median(x):12.1f} ({x.min():.1f}-{x.max():.1f}){'':6s} {np.exp(np.median(lr)):22.2f} {lr.std(ddof=1):16.3f} {corr}")
+        corr = f"{st['pearson']:10.3f} {st['spearman']:9.3f}" if "pearson" in st else f"{'':>10s} {'':>9s}"
+        print(f"{cls:8s} {st['n']:4d} {st['n_gapped']:7d} {st['assembly_median']:12.1f} ({st['assembly_min']:.1f}-{st['assembly_max']:.1f}){'':6s} "
+              f"{st['ratio_median']:22.2f} {st['sd_log']:16.3f} {corr}")
 
 
 if __name__ == "__main__":

@@ -609,6 +609,13 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
    - *The S-phase hypothesis.* If late-replicating sequence is under-represented in DNA from
      cycling cultures, DJ, female X and the leading control PC should move together across the
      cohort, and adjustment should tighten DJ around 10.
+   - *The running record.* `ngsdose report` turns whatever counts exist into one page — what is
+     measured and why, and the evidence that it works: the known truths in every sample, fetch
+     against scan, the trios, the cell-line covariates, the satellites against assemblies, the
+     coverage PCs and their sweep — with every number recomputed from the counts files and
+     every table beside it. It is published as the run proceeds (`example/1000G/05_report.sh`;
+     the results repository's GitHub Pages), partial results and flags included, so that what
+     the cohort shows is on record at every stage and not only at the end.
    - *Culture or error?* Whether a child's departure from the midparent tracks the EBV load,
      the mitochondrial content or the leading control PCs of the culture it was sequenced from;
      and, with the same columns, the published relations between rDNA dosage, 5S dosage and

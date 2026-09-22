@@ -110,6 +110,12 @@ ngsdose selftest        # simulation checks of the statistics; needs no data
 ```
 
 ```bash
+# the cohort page: what is measured and why, and the evidence that it works - known truths in every
+# sample, fetch against scan, trios, the cell line - recomputed from whatever counts exist, at any stage
+ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt -o docs/     # -> docs/index.html, report.json, data/*.tsv
+```
+
+```bash
 # whole-file scan, the full-accuracy mode: placement-independent, the only mode for dispersed sequence (the
 # experimental satellite families, the telomeric repeat), and a record of where class reads were aligned and
 # what else is in those 1-kb bins
@@ -127,7 +133,9 @@ ngsdose sinks scan*.json.gz -o sinks.bed                 # or re-learn them
 ```
 
 `example/1000G/` runs the whole 1000 Genomes 30× cohort (SLURM or a plain loop) and holds the
-pilot; `resources/build/` rebuilds the GRCh38 bundle from public inputs.
+pilot; its results - the counts files and the page built from them - accumulate in a repository
+of their own, [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G), published as the run
+proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.
 
 ## Output columns (per sample)
 
