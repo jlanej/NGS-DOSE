@@ -51,6 +51,7 @@ section p { max-width: 760px; }
 .tile .label { font-size: 13px; color: var(--ink-2); }
 .tile .value { font-size: 24px; font-weight: 600; margin: 2px 0; }
 .tile .note { font-size: 12px; color: var(--muted); }
+.tiles.case { margin: 22px 0 6px; } .tiles.case .tile { text-decoration: none; color: inherit; border-left: 3px solid var(--s1); } .tiles.case .tile:hover { background: var(--s1-wash); }
 figure { margin: 18px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px 8px; }
 figure figcaption { font-size: 14px; color: var(--ink-2); margin-top: 6px; max-width: 900px; }
 figure .title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }

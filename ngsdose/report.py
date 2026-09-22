@@ -227,6 +227,14 @@ def known_truth(rows) -> dict:
     out["DJ_col"] = dj_col
     out["sex"] = dict(n_pedigree=sum(1 for r in rows if r.get("sex")), n_inferred=sum(1 for r in rows if r.get("sex_inferred")),
                       mismatch=[r["sample"] for r in rows if r.get("sex") and r.get("sex_inferred") and r["sex"] != r["sex_inferred"]])
+    xm = fin([num(r, "truth.chrX") for r in rows if r.get("sex_inferred") == "M"])
+    xf = fin([num(r, "truth.chrX") for r in rows if r.get("sex_inferred") == "F"])
+    if len(xm) and len(xf):
+        out["sex"]["chrX_men_max"], out["sex"]["chrX_women_min"] = float(xm.max()), float(xf.min())
+        out["sex"]["women_intact"] = describe(xf[xf >= 1.85])
+        ym = fin([num(r, "truth.chrY") for r in rows if r.get("sex_inferred") == "M"])
+        out["sex"]["men_intact_Y"] = describe(ym[ym >= 0.85])
+        out["sex"]["n_mosaic_X"], out["sex"]["n_mosaic_Y"] = int((xf < 1.85).sum()), int((ym < 0.85).sum())
     return out
 
 
@@ -286,8 +294,20 @@ def dj_steps(rows, ped) -> dict:
             continue
         if abs(st) >= 0.75 and abs(f["DJ.step"]) < 0.5 and abs(m["DJ.step"]) < 0.5:
             de_novo.append(r["sample"])
+    # the satellite families of the acrocentric short arms, in the carriers, relative to the cohort: a
+    # lost arm takes its satellites with it, and the pan-centromeric alpha satellite stays
+    arm = ("ACRO", "SST1", "bSat", "HSat3", "CER", "HSat1A", "aSatHOR")
+    ok = [r for r in rows if r.get("DJ.step") is not None and abs(r["DJ.step"]) < 0.3]
+    arm_ref = {}
+    for cls in arm:
+        v = np.array([num(r, f"{cls}.mass_Mb") for r in ok])
+        if np.isfinite(v).sum() >= 10:
+            arm_ref[cls] = dict(median=float(np.nanmedian(v)), sd_rel=float(np.nanstd(v / np.nanmedian(v), ddof=1)))
+    for c in carriers:
+        r = by[c["sample"]]
+        c["arm_content"] = {cls: round(float(num(r, f"{cls}.mass_Mb") / arm_ref[cls]["median"]), 3) for cls in arm_ref if np.isfinite(num(r, f"{cls}.mass_Mb"))}
     return dict(column=col, median=med, near=near, between=between, spread=spread, carriers=sorted(carriers, key=lambda c: c["step"]),
-                transmitted=transmitted, not_transmitted=not_transmitted, de_novo=de_novo)
+                transmitted=transmitted, not_transmitted=not_transmitted, de_novo=de_novo, arm_ref=arm_ref)
 
 
 def mode_agreement(S: dict) -> dict:
@@ -470,6 +490,15 @@ def biology(rows) -> dict:
     out["cn45_vs_chrX_female"] = corr(np.where(female, cn45, np.nan), np.where(female, g("truth.chrX"), np.nan))
     out["cn45_cv"] = float(np.nanstd(cn45, ddof=1) / np.nanmean(cn45))
     out["DJ_vs_chrM"] = corr(dj, g("chrM.copies"))
+    # what the fragment-GC model removes: the uncorrected 18S ratio follows each library's GC bias
+    flat, s18, gc65 = g("rDNA45S.18S.flat"), g("rDNA45S.18S"), g("gc_rel_65")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for r, a, b in zip(rows, flat / cn45, s18 / cn45):
+            r["rDNA45S.18S.flat_over_cn"] = None if not np.isfinite(a) else round(float(a), 4)
+            r["rDNA45S.18S_over_cn"] = None if not np.isfinite(b) else round(float(b), 4)
+        out["gc_bias"] = dict(flat_vs_gc=corr(np.log(flat / cn45), gc65), modelled_vs_gc=corr(np.log(s18 / cn45), gc65),
+                              flat_sd_log=float(np.nanstd(np.log(flat / cn45), ddof=1)), modelled_sd_log=float(np.nanstd(np.log(s18 / cn45), ddof=1)),
+                              gc65=describe(gc65), flat_vs_cn=corr(cn45, flat))
     out["dup"] = dict(control=describe(g("ctrl_dup_frac")), rDNA=describe(g("rDNA45S.dup_flag_frac")),
                       ratio=describe(g("rDNA45S.dup_flag_frac") / g("ctrl_dup_frac")))
     out["chrM"] = describe(g("chrM.copies"))
@@ -599,7 +628,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
 SAMPLE_COLUMNS = ["sample", "sex", "sex_inferred", "pop", "superpop", "mode_used", "engine", "depth", "insert_median", "ctrl_dup_frac", "rDNA45S.dup_flag_frac",
                   "gc_curve_max_se", "truth.auto", "truth.chrX", "truth.chrY", "chrM.copies", "chrEBV.copies", "rDNA45S.cn", "rDNA45S.cn_single",
                   "rDNA45S.18S.flat", "rDNA5S.cn", "rDNA5S.cn_single", "DJ.cn", "DJ.cn_single", "rDNA45S.cn.adj", "rDNA45S.cn.adj_ngspca",
-                  "elapsed_sec", "flags", "DJ.step"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
+                  "elapsed_sec", "flags", "DJ.step", "gc_rel_65", "rDNA45S.18S.flat_over_cn", "rDNA45S.18S_over_cn"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
 
 
 def sample_record(r: dict) -> dict:
