@@ -517,6 +517,52 @@ def replicate_analysis(pilot_dir) -> dict | None:
     return out
 
 
+def ngspca_qc_comparison(rows, qc_path) -> dict | None:
+    """NGS-PCA's per-sample QC for the same CRAMs (mosdepth, 1-kb bins, duplicate-flagged reads
+    excluded by mosdepth's default filter): mitochondrial copies per cell as 2 x chrM mean
+    coverage / high-quality median autosomal coverage, the chrX and chrY coverage ratios, the
+    autosomal depth and the sex inferred from them - a coverage route to four quantities measured
+    here by fragment-end counting under the GC model."""
+    if not qc_path or not Path(qc_path).exists():
+        return None
+    import csv
+    Q = {r["SAMPLE_ID"]: r for r in csv.DictReader(open(qc_path), delimiter="\t")}
+    shared = [r for r in rows if r["sample"] in Q]
+    if len(shared) < 3:
+        return dict(n=len(shared), n_qc=len(Q))
+    g = lambda r, c: float(Q[r["sample"]][c]) if Q[r["sample"]].get(c) not in (None, "", "NA") else float("nan")
+    for r in shared:
+        r["ngspca.MTDNA_CN"], r["ngspca.chrX"], r["ngspca.chrY"] = g(r, "MTDNA_CN"), 2 * g(r, "X_COV_RATIO"), 2 * g(r, "Y_COV_RATIO")
+        r["ngspca.depth"], r["ngspca.sex"], r["ngspca.batch"] = g(r, "MEAN_AUTOSOMAL_COV"), Q[r["sample"]].get("INFERRED_SEX", ""), Q[r["sample"]].get("RELEASE_BATCH", "")
+
+    def against(ours, theirs):
+        x, y = np.asarray(ours, float), np.asarray(theirs, float)
+        ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+        d = corr(x, y)
+        if ok.sum() >= 2:
+            q = y[ok] / x[ok]
+            d["ratio"] = dict(median=float(np.median(q)), q10=float(np.percentile(q, 10)), q90=float(np.percentile(q, 90)), sd_log=float(np.log(q).std(ddof=1)))
+        return d
+
+    out = dict(n=len(shared), n_qc=len(Q))
+    ours_m, theirs_m = [num(r, "chrM.copies") for r in shared], [r["ngspca.MTDNA_CN"] for r in shared]
+    out["mtdna"] = against(ours_m, theirs_m)
+    if any(np.isfinite(num(r, "flat.chrM")) for r in shared):
+        out["mtdna_flat"] = against([num(r, "flat.chrM") for r in shared], theirs_m)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out["mtdna_ratio_vs_depth"] = corr([num(r, "depth") for r in shared], np.log(np.asarray(theirs_m, float) / np.asarray(ours_m, float)))
+    out["chrX"] = against([num(r, "truth.chrX") for r in shared], [r["ngspca.chrX"] for r in shared])
+    men = [r for r in shared if r.get("sex_inferred") == "M"]
+    out["chrY_men"] = against([num(r, "truth.chrY") for r in men], [r["ngspca.chrY"] for r in men])
+    out["chrY_intact_men"] = describe([r["ngspca.chrY"] for r in men if num(r, "truth.chrY") >= 0.85])
+    out["depth"] = against([num(r, "depth") for r in shared], [r["ngspca.depth"] for r in shared])
+    both = [r for r in shared if r["ngspca.sex"] and r.get("sex_inferred")]
+    out["sex_n"], out["sex_agree"] = len(both), sum(1 for r in both if r["ngspca.sex"] == r["sex_inferred"])
+    out["mosaic_X"] = [dict(sample=r["sample"], ours=num(r, "truth.chrX"), theirs=r["ngspca.chrX"]) for r in shared if r.get("sex_inferred") == "F" and num(r, "truth.chrX") < 1.85]
+    out["mosaic_Y"] = [dict(sample=r["sample"], ours=num(r, "truth.chrY"), theirs=r["ngspca.chrY"]) for r in men if num(r, "truth.chrY") < 0.85]
+    return out
+
+
 def biology(rows) -> dict:
     """The relations the cohort can test: 45S with 5S, 45S with the culture's mitochondrial content and
     EBV load, the late-replicating controls with each other (the S-phase hypothesis), and the
@@ -642,6 +688,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     data["satellites"] = satellite_analysis(rows, a.censat)
     data["hall"] = hall_comparison(rows, a.hall)
     data["replicates"] = replicate_analysis(a.pilot)
+    data["ngspca_qc"] = ngspca_qc_comparison(rows, a.qc)
     for r in rows:
         r["flags"] = "; ".join(flags_for(r, majority_engine))
     data["flags"] = [(r["sample"], r["flags"]) for r in rows if r["flags"]]
@@ -674,7 +721,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
 SAMPLE_COLUMNS = ["sample", "sex", "sex_inferred", "pop", "superpop", "mode_used", "engine", "depth", "insert_median", "ctrl_dup_frac", "rDNA45S.dup_flag_frac",
                   "gc_curve_max_se", "truth.auto", "truth.chrX", "truth.chrY", "chrM.copies", "chrEBV.copies", "rDNA45S.cn", "rDNA45S.cn_single",
                   "rDNA45S.18S.flat", "rDNA5S.cn", "rDNA5S.cn_single", "DJ.cn", "DJ.cn_single", "rDNA45S.cn.adj", "rDNA45S.cn.adj_ngspca",
-                  "elapsed_sec", "flags", "DJ.step", "gc_rel_65", "rDNA45S.18S.flat_over_cn", "rDNA45S.18S_over_cn"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
+                  "elapsed_sec", "flags", "DJ.step", "gc_rel_65", "rDNA45S.18S.flat_over_cn", "rDNA45S.18S_over_cn", "flat.chrM",
+                  "ngspca.MTDNA_CN", "ngspca.chrX", "ngspca.chrY", "ngspca.depth", "ngspca.batch"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
 
 
 def sample_record(r: dict) -> dict:
@@ -716,6 +764,7 @@ def add_arguments(ap):
     ap.add_argument("--pcs", help="NGS-PCA svd.pcs.txt (with svd.singularvalues.txt and svd.bins.txt beside it)")
     ap.add_argument("--censat", help="directory of HPRC CenSat annotations (<sample>_<hap>_...cenSat.bed)")
     ap.add_argument("--hall", help="Hall, Turner & Queitsch 2021 Supplementary Data 1 (per-sample table for the same CRAMs)")
+    ap.add_argument("--qc", help="NGS-PCA sample_qc.tsv for the same cohort (mosdepth-based mitochondrial copy number, X/Y coverage ratios, depth, inferred sex)")
     ap.add_argument("--pilot", help="the pilot directory (pilot_heldout.tsv, pilot_replicates.tsv): the same twelve people on two sequencing technologies")
     ap.add_argument("--total", type=int, default=3202, help="samples the run will have when complete")
     ap.add_argument("--title", default="NGS-DOSE · 1000 Genomes 30× cohort")

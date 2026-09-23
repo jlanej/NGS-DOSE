@@ -16,5 +16,6 @@ args=(-p "$PEDIGREE" --hall "$EX_DIR/pilot/hall2021_MOESM1.txt" --pilot "$EX_DIR
 [ -d "$WORK_DIR/counts_scan" ] && [ -n "$(ls "$WORK_DIR"/counts_scan/*.json.gz 2>/dev/null)" ] && args+=(--scan "$WORK_DIR/counts_scan")
 [ -d "$WORK_DIR/counts_fetch" ] && [ -n "$(ls "$WORK_DIR"/counts_fetch/*.json.gz 2>/dev/null)" ] && args+=(--fetch "$WORK_DIR/counts_fetch")
 [ -d "$WORK_DIR/hprc_censat" ] && args+=(--censat "$WORK_DIR/hprc_censat")     # from 04_hprc_satellites.sh, if it has run
+[ -s "${NGSPCA_QC:-}" ] && args+=(--qc "$NGSPCA_QC")                          # NGS-PCA's sample_qc.tsv for the cohort, if at hand
 ngsdose_py ngsdose report "${args[@]}"
 echo "report: $OUT/index.html"
