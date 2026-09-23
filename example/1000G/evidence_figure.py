@@ -152,7 +152,7 @@ def main():
         G.set_xscale("log")
         G.set_yscale("log")
         good = [c for c, st in hp["stats"].items() if st.get("n", 0) >= 4 and st.get("pearson", 0) >= 0.95]
-        G.text(0.97, 0.04, f"{hp['n_samples']} people, {len(hp['stats'])} satellite families\n{len(good)} families track the assembly with r ≥ 0.95", transform=G.transAxes, fontsize=8, va="bottom", ha="right")
+        G.text(0.97, 0.04, f"{hp['n_samples']} people with an HPRC assembly\n{len(good)} of {len(hp['stats'])} families: r ≥ 0.95", transform=G.transAxes, fontsize=8, va="bottom", ha="right")
     G.set_xlabel("HPRC assembly, Mb (both haplotypes)")
     G.set_ylabel("NGS-DOSE, Mb")
     G.set_title("g  Against long-read assemblies")

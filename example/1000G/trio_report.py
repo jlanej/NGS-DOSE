@@ -105,7 +105,8 @@ def summary_blocks(d, tr, fc):
     by = {r["column"]: r for r in tr}
     g = lambda col, k: num(by[col][k]) if col in by else float("nan")
     ok = lambda col: col in by and np.isfinite(g(col, "R_lo"))
-    sat_R = [min(num(r["R"]), 1) for r in tr if r["group"] == "satellites" and not r["column"].startswith("HSat1B") and np.isfinite(num(r["R"]))]
+    sat_R = [min(num(r["R"]), 1) for r in tr if r["group"] == "satellites" and not r["column"].startswith(("HSat1B", "TEL")) and np.isfinite(num(r["R"]))]
+    tel_R = next((num(r["R"]) for r in tr if r["column"] == "TEL.mass_Mb" and np.isfinite(num(r["R"]))), None)
     cul_R = [num(r["R"]) for r in tr if r["group"] == "culture" and np.isfinite(num(r["R"]))]
     tru_R = [num(r["R"]) for r in tr if r["group"] == "truth" and np.isfinite(num(r["R"]))]
     fR = {r["metric"]: num(r["R_fetch"]) for r in fc} if fc else {}
@@ -147,7 +148,8 @@ def summary_blocks(d, tr, fc):
         res.append(f"Transmission, 45S calibrated estimate: reliability {f(min(g('rDNA45S.cn', 'R'), 1))} ({f(g('rDNA45S.cn', 'R_lo'))}–{f(g('rDNA45S.cn', 'R_hi'))}), child–midparent r {f(g('rDNA45S.cn', 'r_mid'))}, spousal r {f(g('rDNA45S.cn', 'spousal_r'))}."
                    + (f" 5S: {f(min(g('rDNA5S.cn', 'R'), 1))} ({f(g('rDNA5S.cn', 'R_lo'))}–{f(g('rDNA5S.cn', 'R_hi'))})." if ok("rDNA5S.cn") else ""))
     if sat_R:
-        res.append(f"Positive controls, {len(sat_R)} satellite families: reliability {f(min(sat_R))} to {f(max(sat_R))} (HSat1B, on Yq, excluded: father-to-son only).")
+        res.append(f"Positive controls, {len(sat_R)} satellite families: reliability {f(min(sat_R))} to {f(max(sat_R))} (HSat1B, on Yq, excluded: father-to-son only)"
+                   + (f"; the telomeric repeat, which changes with age and in culture, {f(tel_R)}." if tel_R is not None else "."))
     if cul_R or tru_R:
         res.append(f"Negative controls: culture and library {f(min(cul_R))} to {f(max(cul_R))}; known copy numbers {f(min(tru_R))} to {f(max(tru_R))}." if cul_R and tru_R else "")
     if "rDNA45S.cn" in fR and np.isfinite(fR["rDNA45S.cn"]):
@@ -155,6 +157,19 @@ def summary_blocks(d, tr, fc):
     if md.get("n_both"):
         c = md["columns"].get("rDNA45S.cn_single", {})
         res.append(f"Targeted fetch against whole-file scan, 45S: median {f(c.get('median'), 4)} ({f(c.get('min'), 4)}–{f(c.get('max'), 4)}) over {md['n_both']:,} genomes.")
+    bt = t.get("batches") or {}
+    if bt.get("n"):
+        (kb, kn), (pb, pn) = (max(bt[w].items(), key=lambda kv: kv[1]) for w in ("child", "parent"))
+        lab = lambda b_: f"{int(b_):,}" if str(b_).isdigit() else str(b_)
+        if kb != pb:
+            # genomic metrics whose children spread differently from their parents: the batch's scale, which moves R and not R rescaled
+            moved = [r for r in tr if r["group"] in ("rDNA", "satellites") and np.isfinite(num(r.get("sd_ratio_lo")))
+                     and (num(r["sd_ratio_lo"]) > 1 or num(r["sd_ratio_hi"]) < 1)]
+            res.append(f"Parents and children were sequenced apart: {kn} of {bt['n']} children in release batch {lab(kb)}, {pn} of {2 * bt['n']} parents in "
+                       f"{lab(pb)}. No batch is shared within a family, but one that reads a generation on another scale moves R with it"
+                       + (": " + "; ".join(f"{r['label']} spreads {num(r['sd_ratio']):.2f}× as much in the children as in their parents and reads R "
+                                           f"{num(r['R']):.2f}, or {num(r['R_rescaled']):.2f} with the children on their parents' scale" for r in moved) if moved else "")
+                       + ".")
     hp = (d["satellites"].get("hprc") or {})
     if hp:
         good = [c for c, s_ in hp["stats"].items() if s_.get("n", 0) >= 4 and s_.get("pearson", 0) >= 0.95]

@@ -215,7 +215,7 @@ def page(data: dict, rows: list[dict]) -> str:
                      f"chrX {fmt(sx['chrX_men_max'], 2)} at most in men, {fmt(sx['women_intact']['min'], 2)} at least in women", "#truth"))
     if dj.get("carriers") is not None:
         tot = dj["transmitted"] + dj["not_transmitted"]
-        case.append(("A ten-copy paralog", f'{fmt(DJ.get("median"), 2)} ± {fmt(dj.get("spread"), 2)}', f"distal junction; {n_off} people one or two copies off, steps transmitted {dj['transmitted']} of {tot}", "#djsteps"))
+        case.append(("A ten-copy paralog", f'{fmt(DJ.get("median"), 2)} ± {fmt(dj.get("spread"), 2)}', f"distal junction, median and robust SD; {n_off} people one or two copies off, steps transmitted {dj['transmitted']} of {tot}", "#djsteps"))
     if md["n_both"]:
         case.append(("Fetch = scan", fmt(modes45.get("median"), 4), f"45S, {md['n_both']:,} genomes both ways, range {fmt(modes45.get('min'), 4)}–{fmt(modes45.get('max'), 4)}", "#modes"))
     if rc and rf:
@@ -430,7 +430,7 @@ controls {", ".join(esc(x) for x in m["controls_sha"]) or "–"}{(", sinks " + "
              ("Complete trios", f"{tr['n_complete']:,}", f"of {tr['n_total']:,}"),
              ("Median depth", fmt(qc["depth"].get("median"), 1) + "×", f"{fmt(qc['depth'].get('q10'), 1)}–{fmt(qc['depth'].get('q90'), 1)} (10–90%)"),
              ("Insert size", fmt(qc["insert"].get("median"), 0) + " bp", "median of medians"),
-             ("Duplicate-flagged", fmt(qc["dup"].get("median"), 3, pct=True), "of control reads, median"),
+             ("Duplicate-flagged", fmt(qc["dup"].get("median"), 1, pct=True), "of control reads, median"),
              ("Scan time", fmt(qc["elapsed"].get("median") / 60 if qc["elapsed"].get("n") else None, 1) + " min", "per genome, median" if qc["elapsed"].get("n") else "no scans yet"),
              ("Fetch time", fmt(qc["elapsed_fetch"].get("median") / 60 if qc["elapsed_fetch"].get("n") else None, 1) + " min", "per genome, median" if qc["elapsed_fetch"].get("n") else "no fetches yet")])
     if m.get("by_superpop"):
@@ -513,8 +513,9 @@ the main mode has a robust SD of {fmt(dj["spread"], 2)} copies and {dj["between"
                 P.table([[c["sample"], f"{c['step']:+.2f}"] + [fmt(c["arm_content"].get(cls), 2) for cls in arm] for c in two]
                         + [["cohort SD", ""] + [fmt(dj["arm_ref"][cls]["sd_rel"], 2) for cls in arm]], ["sample", "DJ step"] + arm, numeric=set(range(1, len(arm) + 2)))
             tot = dj["transmitted"] + dj["not_transmitted"]
+            step_of = {c["sample"]: c["step"] for c in dj["carriers"]}
             P.h(f'''<p>Where a carrier parent and a child were both counted, the step was transmitted in <strong>{dj["transmitted"]} of {tot}</strong>
-(the expectation for a heterozygous variant is one half){"; " + ", ".join(esc(x) for x in dj["de_novo"]) + " carr" + ("ies" if len(dj["de_novo"]) == 1 else "y") + " a step that neither counted parent has" if dj["de_novo"] else "; no child carries a step that neither parent has"}.
+(the expectation for a heterozygous variant is one half){"; " + ", ".join(esc(x) + (f" ({step_of[x]:+.2f} copies)" if x in step_of else "") for x in dj["de_novo"]) + " carr" + ("ies" if len(dj["de_novo"]) == 1 else "y") + " a step that neither counted parent has: a new structural variant, or a change in part of the cell line" if dj["de_novo"] else "; no child carries a step that neither parent has"}.
 The distal junction is measured by the same k-mer path as the rDNA. A change of one copy in ten, seen in a parent and again in the child,
 shows that the path resolves multi-copy acrocentric sequence to a single copy.</p>''')
     else:
@@ -803,9 +804,13 @@ trios{f" and a correlation is uncertain by about ±{fmt(half, 2)} (95%)" if half
                 notes.append(f"{sentence_case(lab(c))}: father–son r = {fmt(bs[c]['father_son']['r'], 2)}, father–daughter r = {fmt(bs[c]['father_daughter']['r'], 2)} "
                              f"({fmt(contrast(c), 1)} standard errors), which is no sign of the sex chromosomes: it is {why_not.get(bs[c]['group'], 'not genomic sequence')}.")
             if hint:
-                notes.append(f"Between two and three standard errors, as one or two of {len(bs)} metrics would be by chance (the held-out autosomal "
-                             "sequence, which has nothing to inherit, is a guide): " + "; ".join(
-                    f"{lab(c)}, r {fmt(bs[c]['father_son']['r'], 2)} against {fmt(bs[c]['father_daughter']['r'], 2)} (z = {fmt(contrast(c), 1)})" for c in hint) + ".")
+                chance = len(bs) * math.erfc(2 / 2 ** 0.5) - len(bs) * math.erfc(3 / 2 ** 0.5)          # |z| between 2 and 3 under the null
+                few = {0: "none", 1: "one", 2: "two", 3: "three", 4: "four"}.get(round(chance), f"{round(chance)}")
+                neg = lambda x, nd: fmt(x, nd).replace("-", "−")
+                words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+                notes.append(f"Between two and three standard errors lie {words.get(len(hint), len(hint))} of the {len(bs)} metrics, where chance alone "
+                             f"would put about {few} (the held-out autosomal sequence, which has nothing to inherit, is a guide): " + "; ".join(
+                    f"{lab(c)}, r {neg(bs[c]['father_son']['r'], 2)} against {neg(bs[c]['father_daughter']['r'], 2)} (z = {neg(contrast(c), 1)})" for c in hint) + ".")
             notes.append(("No other metric's" if ylinked or xlinked or other_far else "No metric's") + " father–son and father–daughter correlations differ by more than three standard errors.")
             P.h("<p>" + " ".join(notes) + "</p>")
             pts_all = tr.get("points") or {}
@@ -863,10 +868,18 @@ trios{f" and a correlation is uncertain by about ±{fmt(half, 2)} (95%)" if half
             uneven_list = ", ".join(([f"the 45S by {'all three' if len(u45) == 3 else len(u45)} of its estimators"] if len(u45) > 1 else [brief(c) for c in u45])
                                     + [brief(c) for c in uneven if not c.startswith("rDNA45S")])
             said = []
+            # the lowest of the four pairings in each uneven metric (the 45S once, by its calibrated estimate)
+            lowest = {c: min((k for k, _, _ in PAIRS), key=lambda k: bsx[c][k]["r"]) for c in uneven
+                      if not (c.startswith("rDNA45S") and c != "rDNA45S.cn" and "rDNA45S.cn" in uneven) and all(k in bsx[c] for k, _, _ in PAIRS)}
+            lowest_list = "; ".join(f"{brief(c)}, {k.replace('_', '–')}" for c, k in lowest.items())
             spelt = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight", 9: "Nine"}
             uneven_txt = (f"{spelt.get(once(uneven), once(uneven))} of the {once(tested)} metrics (the 45S's three estimators, which share their reads, counted once) reach p &lt; 0.05 "
                           f"by the same test ({uneven_list}), where chance alone would give about {spelt.get(max(1, round(0.05 * once(tested))), '').lower() or round(0.05 * once(tested))}"
                           + ("; the held-out autosomal sequence, which has nothing to inherit, is among them" if "truth.auto" in uneven else "")
+                          + (f". The pairing that stands lowest is not the same in all of them ({lowest_list}), which is not the mark one cause would leave"
+                             if len(set(lowest.values())) > 1 else
+                             f". In each of them the pairing that stands lowest is {next(iter(lowest.values())).replace('_', '–')}, which one cause could explain"
+                             if lowest else "")
                           + ". It is a lead for the full cohort, not a finding")
 
             def pairings(col):
@@ -888,8 +901,8 @@ trios{f" and a correlation is uncertain by about ±{fmt(half, 2)} (95%)" if half
                         "depend on which of a parent's chromosomes it received" + (f". {uneven_txt}." if first else ", and the caution under the 45S applies."))
 
             P.h("""<h3 id="byclass">Class by class</h3>
-<p>Every metric's transmission in the same terms: how much people differ (the parents' coefficient of variation, CV); the share of that
-difference the children inherit (R, with its 95% interval); the part of a person's value that is not inherited, as a percentage of the value
+<p>Every metric's transmission in the same terms: how much people differ (the trio parents' coefficient of variation, CV); the share of that
+difference the children inherit (R, with its 95% interval, as estimated rather than capped at 1 as in the tables above); the part of a person's value that is not inherited, as a percentage of the value
 (CV × √(1 − R): measurement error, or change in the cell line; the interval allows at most the figure in brackets); the children's spread and
 level against their parents'; and whether the four pairings of the parent's and the child's sex differ, which for a quantity carried on the
 autosomes they should not.</p>""")
@@ -973,7 +986,7 @@ They part where the children's spread departs furthest from their parents': """
                 alike = abs(t["r_father"] - t["r_mother"]) < 0.15
                 big = max((x for x in moved if x["group"] in ("rDNA", "satellites")), key=lambda x: abs(x["sd_ratio"] ** 2 - 1), default=None)
                 room = max(0.0, t["sd_ratio_hi"] ** 2 - 1)
-                P.h(f"""<p><strong>45S rDNA.</strong> People differ by a CV of {fmt(cvt(t), 0, pct=True)}. The children inherit
+                P.h(f"""<p><strong>45S rDNA.</strong> The trio parents differ by a CV of {fmt(cvt(t), 0, pct=True)}. The children inherit
 {"all of it that the trios can resolve" if t["R_lo"] <= 1 <= t["R_hi"] else "most of it" if t["R_hi"] < 1 else "all of it"}: R = {sg(t["R"])} ({iv(t, "R")}) from the slope and {sg(t["R_rescaled"])}
 ({iv(t, "R_rescaled")}) with the children on their parents' scale, and at most {fmt(lost(t, True), 1, pct=True)} of a person's value is not inherited{f" (the pilot's replicates across technologies put the measurement's own error at {fmt(rc['sd_log_ratio'] / 2 ** 0.5, 1, pct=True)}, section 3.4)" if rc.get("sd_log_ratio") else ""}. The
 child–midparent correlation, {fmt(t["r_mid"], 2)} ({iv(t, "r_mid")}), {"reaches" if t["r_mid_hi"] >= ceiling else "falls short of"} the ceiling of {fmt(ceiling, 2)} that segregation sets
@@ -987,7 +1000,7 @@ nothing, by at most {fmt(room, 0, pct=True)} of the parents' variance, the top o
                 r5 = rep.get("rDNA5S") or {}
                 similar = t is not None and abs(cvt(t5) - cvt(t)) < 0.05
                 meas = r5["sd_log_ratio"] / 2 ** 0.5 if r5.get("sd_log_ratio") else None
-                P.h(f"""<p><strong>5S rDNA.</strong> People differ {"as much as in the 45S" if similar else "by"} (CV {fmt(cvt(t5), 0, pct=True)}),
+                P.h(f"""<p><strong>5S rDNA.</strong> The parents differ {f"as much as in the 45S (CV {fmt(cvt(t5), 0, pct=True)})" if similar else f"by a CV of {fmt(cvt(t5), 0, pct=True)}"},
 {"but the children inherit less of it, or less certainly" if t and t5["R"] < t["R"] - 0.1 else "and the children inherit"}: R = {sg(t5["R"])} ({iv(t5, "R")}), {sg(t5["R_rescaled"])}
 ({iv(t5, "R_rescaled")}) on the parents' scale, at a spousal correlation of {sg(t5["spousal_r"])}.{f" The interval runs from an array transmitted as faithfully as the 45S to one with {fmt(1 - t5['R_lo'], 0, pct=True)} of its differences not inherited." if t5["R_hi"] >= 1 and t5["R_lo"] < 0.8 else ""}
 New variation arising in the children at random would scatter them about the midparent line without flattening it (they spread
@@ -1384,16 +1397,36 @@ panel can see was measured on the genome it was built from (four families are re
 
     # ---------------------------------------------------------------- 5. limitations
     h2 = hpst.get("HSat2") or {}
-    hsat2_limit = (f"HSat2, compared in the {h2['n']} assemblies that close its arrays, gives r = {fmt(h2.get('pearson'), 2)} (SD of the log ratio "
-                   f"{fmt(h2.get('sd_log'), 2)}){' and is not yet a usable measure' if (h2.get('pearson') or 0) < 0.8 else ''}." if h2.get("n", 0) >= 10
+    t2 = next((t for t in tr["table"] if t["column"] == "HSat2.mass_Mb"), {})
+    # inherited as faithfully as the other classes, on the parents' scale (3.6): heritable, whatever the assemblies say
+    t2_ok = t2.get("R_rescaled_lo") is not None and t2["R_rescaled_lo"] > 0.8
+    hsat2_limit = ((f"HSat2 agrees poorly with the {h2['n']} assemblies that close its arrays (r = {fmt(h2.get('pearson'), 2)}, SD of the log ratio "
+                    f"{fmt(h2.get('sd_log'), 2)}), though it is inherited as faithfully as the other classes (R = {fmt(t2['R_rescaled'], 2)}, "
+                    f"{fmt(t2['R_rescaled_lo'], 2)} to {fmt(t2['R_rescaled_hi'], 2)}, with the children on their parents' scale; 3.6): what it measures "
+                    "is heritable, but the assemblies do not yet confirm that it is the mass of HSat2."
+                    if t2_ok else
+                    f"HSat2, compared in the {h2['n']} assemblies that close its arrays, gives r = {fmt(h2.get('pearson'), 2)} (SD of the log ratio "
+                    f"{fmt(h2.get('sd_log'), 2)}) and is not yet a usable measure.")
+                   if h2.get("n", 0) >= 10 and (h2.get("pearson") or 0) < 0.8 else
+                   f"HSat2, compared in the {h2['n']} assemblies that close its arrays, gives r = {fmt(h2.get('pearson'), 2)} (SD of the log ratio "
+                   f"{fmt(h2.get('sd_log'), 2)})." if h2.get("n", 0) >= 10
                    else "HSat2 is unjudged until assemblies without gaps in it have been compared.")
+    bt = tr.get("batches") or {}
+    kid_b = max((bt.get("child") or {}).items(), key=lambda kv: kv[1], default=(None, 0))
+    par_b = max((bt.get("parent") or {}).items(), key=lambda kv: kv[1], default=(None, 0))
+    apart = bool(bt) and kid_b[0] != par_b[0] and kid_b[1] >= 0.9 * bt["n"] and par_b[1] >= 0.9 * 2 * bt["n"]
+    trio_limit = ("<strong>Generation and batch go together in the trios.</strong> Every child was sequenced in a later batch than its parents "
+                  "(3.6), so no batch is shared within a family to imitate inheritance, but a difference in the children's level or spread cannot be "
+                  "told from the batch's; R and R with the children on their parents' scale bracket the reliability."
+                  if apart else
+                  "<strong>Trios bound reliability from above</strong> where members of a family were prepared together; the spousal correlation is the check.")
     P.section("limitations", "5. Limitations", "Limitations")
     P.h(f'''<ul>
 <li><strong>No absolute calibration.</strong> No orthogonal assay of rDNA copy number exists for these samples. The absolute level rests on unit
 windows on which three Illumina chemistries agree; the known truths test the model and the k-mer path, not the absolute scale of the rDNA.</li>
 <li><strong>Cell-line DNA.</strong> Every sample is a lymphoblastoid line; its replication state, EBV load and mitochondrial content are measured
 but not removed. Blood-derived genomes will not carry the first of these.</li>
-<li><strong>Trios bound reliability from above</strong> where members of a family were prepared together; the spousal correlation is the check.
+<li>{trio_limit}
 Because the rDNA varies far more between people than any estimator errs, trios show that the measured variation is real, not which estimator
 measures it best.</li>
 <li><strong>One chemistry, one pipeline.</strong> The cohort is NovaSeq 2×150 aligned by one pipeline; the cross-technology evidence is twelve
@@ -1453,7 +1486,7 @@ complete trios.</p>""")
             present = [(c, l) for c, l in cols if c in pts_all and c in by_col]
             if not present:
                 continue
-            P.h(f"<h3>{esc(gl[0].upper() + gl[1:])}</h3>")
+            P.h(f"<h3>{esc(sentence_case(gl))}</h3>")
             P.h('<div class="grid2">')
             for col, label in present:
                 t, unit, d = by_col[col], unit_of(col), bs.get(col) or {}
