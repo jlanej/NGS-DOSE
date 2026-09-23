@@ -145,6 +145,10 @@ def page(data: dict, rows: list[dict]) -> str:
         r_.append(t + ".")
     if md["n_both"]:
         r_.append(f'The targeted fetch returns {fmt(modes45.get("median"), 4)} of the whole-file scan\'s 45S estimate ({md["n_both"]:,} genomes; range {fmt(modes45.get("min"), 4)}–{fmt(modes45.get("max"), 4)}).')
+    fc = data.get("fetch_check") or {}
+    fR = {t["column"]: t for t in (fc.get("trios") or {}).get("table", [])}
+    if fc and t45 and "rDNA45S.cn" in fR and "R_lo" in fR["rDNA45S.cn"]:
+        r_.append(f'Run on the fetch counts alone, the cohort layer and the trio test give the same answer: 45S reliability {fmt(min(fR["rDNA45S.cn"]["R"], 1.0), 2)} ({fmt(fR["rDNA45S.cn"]["R_lo"], 2)}–{fmt(fR["rDNA45S.cn"]["R_hi"], 2)}) against {fmt(min(t45["R"], 1.0), 2)} from the scans.')
     r_.append("</p><p>")
     if t45 and have_ci:
         neg = {t["column"]: t for t in tr["table"]}
@@ -392,6 +396,20 @@ known-truth and dosage columns are made from the same reads in both modes and ag
         P.chart("fetch45", dict(type="hist", col="fetch_ratio.rDNA45S", xlabel="fetch / scan, 45S copies", ref=[dict(x=1, label="1")], xfmt=4), "45S: targeted fetch against the whole-file scan, per genome")
     else:
         P.h("<p>No genome has been counted in both modes yet; this section fills in when the per-sample jobs, which do both, land.</p>")
+    if fc and fc.get("agreement"):
+        S_ = {t["column"]: t for t in tr["table"]}
+        cls_rows = [(col, d) for col, d in fc["agreement"].items() if not d.get("identical")]
+        P.h(f"""<h3>Does the fetch carry the same information?</h3>
+<p>The cohort layer (window calibration, control-region PCs) and the trio test were run a second time on the fetch counts of the
+{fc["n"]:,} genomes alone, without reference to the scans. Columns made from the same reads in both modes (the known truths, the
+dosage regions, the library's properties) come out identical and are not listed; the classes differ by what the sinks miss and by a
+calibration learned twice.</p>""")
+        P.table([[d["label"], d["n"], f'{fmt(d["ratio_median"], 4)} ({fmt(d["q10"], 4)}–{fmt(d["q90"], 4)})', fmt(d.get("r"), 4),
+                  (fmt(min(S_[col]["R"], 1.0), 2) + (f' ({fmt(S_[col]["R_lo"], 2)}–{fmt(S_[col]["R_hi"], 2)})' if "R_lo" in S_[col] else "")) if col in S_ else "–",
+                  (fmt(min(fR[col]["R"], 1.0), 2) + (f' ({fmt(fR[col]["R_lo"], 2)}–{fmt(fR[col]["R_hi"], 2)})' if "R_lo" in fR[col] else "")) if col in fR else "–"]
+                 for col, d in cls_rows],
+                ["metric", "genomes", "fetch / scan, median (10–90%)", "r across genomes", "reliability from scan (95% CI)", "reliability from fetch (95% CI)"], numeric={1, 2, 3, 4, 5})
+        P.h('<p class="small">The full comparison, every column: <code>data/fetch_check.tsv</code>.</p>')
     cap = md["capture"]
     if any(c.get("n") for c in cap.values()):
         P.h("<p>Share of each class's reads that fell inside the sink intervals, in every whole-file scan of this run:</p>")
@@ -459,13 +477,48 @@ mitochondrial and EBV content of the culture, which vary but are not in the nucl
         P.chart("trio", dict(type="scatter", points=[dict(x=p["mid"], y=p["c"], label=p["child"], extra=[f"father {fmt(p['f'], 0)}, mother {fmt(p['m'], 0)}", p["pop"]]) for p in tr["scatter"]],
                              xlabel="midparent copies", ylabel="child copies", identity=True, fit=True), f"Child against midparent: {esc(tr['scatter_column'])}",
                 "Grey diagonal: child equals midparent. Fitted line: the midparent slope.")
+        # the heatmap: every metric the trios were asked about, grouped by what the answer must be
+        from .report import TRIO_GROUPS
+        by_col = {t["column"]: t for t in tr["table"]}
+        stats = [("r_father", "r father"), ("r_mother", "r mother"), ("r_mid", "r midparent"), ("spousal_r", "spousal r"), ("slope", "slope"), ("R", "R")]
+        titles = ["child–father correlation", "child–mother correlation", "child–midparent correlation", "spousal correlation", "midparent slope", "reliability R = b − ρ(1 − b)"]
+        hm_rows, hm_groups, hm_vals, hm_extra = [], [], [], []
+        for key, gl, cols in TRIO_GROUPS:
+            for col, label in cols:
+                t = by_col.get(col)
+                if not t:
+                    continue
+                hm_rows.append(label); hm_groups.append(gl)
+                v = [t.get(k) for k, _ in stats]
+                x = [f"n = {t['n_trios']}"] * 4 + [f"± {fmt(t['slope_se'], 2)} (SE)", (f"{fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)} (95%)" if "R_lo" in t else "")]
+                if fR:
+                    f_ = fR.get(col)
+                    v.append(f_["R"] if f_ else None)
+                    x.append((f"{fmt(f_['R_lo'], 2)} to {fmt(f_['R_hi'], 2)} (95%)" if f_ and "R_lo" in f_ else "") + (f"; n = {f_['n_trios']}" if f_ else ""))
+                hm_vals.append(v); hm_extra.append(x)
+        cols_hm = [l for _, l in stats] + (["R, fetch"] if fR else [])
+        titles += ["reliability R from the fetch counts alone"] if fR else []
+        P.h('''<p>Every metric the cohort measures was put to the same test, in four groups: the rDNA estimators, whose transmission is
+the claim; the satellite arrays, whose mass is a property of the genome and must be inherited (positive controls); sequence of known
+copy number, which has nothing to inherit except the distal junction's whole-copy steps (3.2); and the culture's and the library's properties,
+which are not in the nuclear genome (negative controls). A method that measured library artefacts would light up the last group; one that measured nothing would light up
+none. HSat1B lives mostly on Yq and passes from father to son only, so its midparent statistics are diluted by design.'''
+            + (" The last column repeats the reliability with the cohort layer and the trio test run on the fetch counts alone (3.3).</p>" if fR else "</p>"))
+        P.chart("heat", dict(type="heatmap", rows=hm_rows, groups=hm_groups, cols=cols_hm, col_titles=titles, values=hm_vals, extra=hm_extra, lo=0, hi=1, nd=2),
+                "Transmission of every metric, at a glance", "Colour from 0 (white) to 1 (blue); values are printed in the cells. Correlations are within population.")
         rows_t = []
         for t in tr["table"]:
             r_ci = f" ({fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)})" if "R_lo" in t else ""
             err = ("≤ " + fmt(t["error_cv_max"], 1, pct=True)) if "error_cv_max" in t else fmt(t["error_cv"], 1, pct=True)
-            rows_t.append([t["label"], t["n_trios"], fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
+            rows_t.append([t["label"], t.get("group", ""), t["n_trios"], fmt(t["r_mid"], 3), fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
                            fmt(min(t["R_single"], 1.0), 3), fmt(min(t["R_mendel"], 1.0), 3), err])
-        P.table(rows_t, ["estimator", "trios", "midparent slope", "spousal r", "reliability (95% CI)", "single-parent R", "Mendelian R", "error CV the interval allows"], numeric={1, 2, 3, 4, 5, 6, 7})
+        heads = ["metric", "trios", "child–midparent r", "midparent slope", "spousal r", "reliability (95% CI)", "single-parent R", "Mendelian R", "error CV the interval allows"]
+        main_rows = [r for r in rows_t if r[1] in ("rDNA", "truth", "culture")]
+        P.table([r[:1] + r[2:] for r in main_rows], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8})
+        if len(rows_t) > len(main_rows):
+            P.h("<details><summary>The same for the satellite arrays (the full table is <code>data/transmission.tsv</code>)</summary>")
+            P.table([r[:1] + r[2:] for r in rows_t if r[1] == "satellites"], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8})
+            P.h("</details>")
         P.h('<p class="small">Reliability is capped at 1; a slope above 1 is noise around 1, and the interval says how much. A spousal correlation far from zero means members of a family share something other than DNA (a batch), and every reliability in the table is inflated by about as much. The negative-control rows should read near zero.</p>')
         if t45 and have_ci:
             cv = bio.get("cn45_cv")
@@ -482,6 +535,7 @@ across technologies in the pilot (3.4); the full cohort decides.</p>''')
             P.h("<p>Paired family bootstrap of the reliability difference against the 18S depth ratio:</p>")
             P.table([[c["label"], fmt(c["delta"], 3), f"{fmt(c['lo'], 3)} to {fmt(c['hi'], 3)}", fmt(c["p_better"], 3)] for c in tr["compare"]],
                     ["estimator", "ΔR vs 18S ratio", "95% CI", "P(better)"], numeric={1, 2, 3})
+        P.h('<p class="small">A printable assessment built from these tables, with a child-against-midparent scatter for every metric, the fetch check and the assembly comparison: <a href="trio_report.pdf">trio_report.pdf</a>. Every trio\'s values: <code>data/trios.tsv</code>.</p>')
         if data.get("trios_adjusted", {}).get("table"):
             ta = data["trios_adjusted"]
             P.h(f'<details><summary>The same, after regressing out {pcs["adjusted"]["k"]} control-region PCs</summary>')
@@ -675,8 +729,9 @@ landed.</li>
 <pre>pip install ngsdose        # or: apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
 ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ --qc ngspca_sample_qc.tsv -o docs/</pre>
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
-<code>data/transmission.tsv</code>, <code>data/pcsweep.tsv</code>, <code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
-in the prose, <code>report.json</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
+<code>data/transmission.tsv</code> and <code>data/trios.tsv</code> (every trio's values), <code>data/fetch_check.tsv</code>, <code>data/pcsweep.tsv</code>,
+<code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
+in the prose, <code>report.json</code>; the trio assessment as a document, <code>trio_report.pdf</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
 (Byrska-Bishop et al., <em>Cell</em> 2022; AWS Open Data) with the {esc(m.get("bundle"))} resource bundle. Method, design document and
 audit: <a href="https://github.com/jlanej/NGS-DOSE">github.com/jlanej/NGS-DOSE</a>.</p>''')
     P.end()

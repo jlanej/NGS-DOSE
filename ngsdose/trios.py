@@ -80,7 +80,9 @@ def _estimators(c, f, m) -> dict:
     bm, sem = _ols(m, c)
     V = float(np.var(np.r_[f, m], ddof=1))
     D = float(np.var(c - mid, ddof=1))
+    r = lambda x, y: float(np.corrcoef(x, y)[0, 1]) if np.std(x) > 0 and np.std(y) > 0 else float("nan")
     return dict(spousal_r=rho, midparent_slope=b, midparent_slope_se=se, reliability_midparent=b - rho * (1 - b),
+                r_midparent=r(mid, c), r_father=r(f, c), r_mother=r(m, c),
                 father_slope=bf, father_slope_se=sef, mother_slope=bm, mother_slope_se=sem,
                 reliability_single_parent=(bf + bm) - rho, mendel_D_over_V=D / V, reliability_mendel=1.5 - D / V,
                 parent_sd=float(np.sqrt(V)), child_minus_midparent_sd=float(np.sqrt(D)))
@@ -112,7 +114,7 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
         null = np.array([_ols(mid, c[rng.permutation(n)])[0] for _ in range(n_perm)])
         out["perm_null_mean"], out["perm_null_sd"] = float(null.mean()), float(null.std())
     if n_boot and n >= 20:
-        keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r")
+        keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r", "r_midparent")
         draws = {k: [] for k in keys}
         for _ in range(n_boot):
             i = rng.integers(0, n, n)
