@@ -37,15 +37,16 @@ POSITIONAL = ("rDNA45S", "rDNA5S", "DJ")
 # the classes fetch mode retrieves through the sinks, and the column their two modes are compared on
 FETCHABLE = [("rDNA45S", "rDNA45S.cn_single"), ("rDNA5S", "rDNA5S.cn_single"), ("DJ", "DJ.cn_single"), ("TEL", "TEL.mass_Mb")]
 SATELLITES = hprc.CLASSES + ("TEL",)
-ESTIMATORS = [("rDNA45S.cn", "45S, calibrated"), ("rDNA45S.cn_single", "45S, single-sample anchor"),
-              ("rDNA45S.18S.flat", "45S, 18S depth ratio (literature)"), ("rDNA5S.cn", "5S, calibrated"), ("DJ.cn", "distal junction, calibrated")]
+# NGS-DOSE's estimators, and the 18S depth ratio of published studies computed from the same reads as the comparator (not NGS-DOSE's)
+ESTIMATORS = [("rDNA45S.cn", "45S, NGS-DOSE calibrated"), ("rDNA45S.cn_single", "45S, NGS-DOSE single-sample"),
+              ("rDNA45S.18S.flat", "45S, 18S depth ratio (published)"), ("rDNA5S.cn", "5S, NGS-DOSE calibrated"), ("DJ.cn", "distal junction, NGS-DOSE calibrated")]
 NEGATIVE_CONTROLS = [("truth.auto", "held-out autosomal (no variance but error)"), ("chrM.copies", "mitochondrial genomes per cell (culture)"),
                      ("chrEBV.copies", "EBV episomes per cell (culture)")]
 # every metric the trios are asked about, in the groups a sceptic would want to see side by side: what is claimed to be
 # inherited, what must be inherited (the satellite arrays are genomic), what has no variation to inherit, and what is
 # not in the nuclear genome at all
 TRIO_GROUPS = [
-    ("rDNA", "rDNA copy number (the claim)", [e for e in ESTIMATORS if e[0] != "DJ.cn"]),
+    ("rDNA", "rDNA copy number: NGS-DOSE (the claim), and the published 18S ratio for comparison", [e for e in ESTIMATORS if e[0] != "DJ.cn"]),
     ("satellites", "satellite arrays, mass (genomic: positive controls)", [(f"{c}.mass_Mb", f"{c} array") for c in hprc.CLASSES] + [("TEL.mass_Mb", "telomeric repeat")]),
     ("truth", "known copy number (nothing to inherit but the distal junction's whole-copy steps)", [("truth.auto", "held-out autosomal (2)"), ("DJ.cn", "distal junction (10)")]),
     ("culture", "culture and library (not in the nuclear genome)", [("chrM.copies", "mitochondrial genomes per cell"), ("chrEBV.copies", "EBV episomes per cell"),
@@ -569,10 +570,10 @@ def replicate_analysis(pilot_dir) -> dict | None:
         return None
     H = list(csv.DictReader(open(held), delimiter="\t"))
     R = {r["sample"]: r for r in csv.DictReader(open(rep), delimiter="\t")} if rep.exists() else {}
-    pairs = {"calibrated": ("45S, calibrated, anchors chosen with the family held out", [(float(r["nygc"]), float(r["replicate"]), r["sample"]) for r in H]),
-             "flat": ("45S, 18S depth ratio, no GC model", [(float(r["nygc_18S_flat"]), float(r["replicate_18S_flat"]), r["sample"]) for r in H])}
-    for key, label, a, b in (("rDNA5S", "5S, fragment-GC model", "rDNA5S, fragment-GC model [NYGC]", "rDNA5S, fragment-GC model [replicate]"),
-                             ("DJ", "distal junction, fragment-GC model", "DJ, fragment-GC model [NYGC]", "DJ, fragment-GC model [replicate]")):
+    pairs = {"calibrated": ("45S, NGS-DOSE calibrated (anchors chosen with the family held out)", [(float(r["nygc"]), float(r["replicate"]), r["sample"]) for r in H]),
+             "flat": ("45S, 18S depth ratio (published method; no GC model)", [(float(r["nygc_18S_flat"]), float(r["replicate_18S_flat"]), r["sample"]) for r in H])}
+    for key, label, a, b in (("rDNA5S", "5S, NGS-DOSE (fragment-GC model)", "rDNA5S, fragment-GC model [NYGC]", "rDNA5S, fragment-GC model [replicate]"),
+                             ("DJ", "distal junction, NGS-DOSE (fragment-GC model)", "DJ, fragment-GC model [NYGC]", "DJ, fragment-GC model [replicate]")):
         if R and all(a in R[s] and b in R[s] for s in R):
             pairs[key] = (label, [(float(R[s][a]), float(R[s][b]), s) for s in sorted(R)])
 
@@ -589,7 +590,7 @@ def replicate_analysis(pilot_dir) -> dict | None:
         out["table"][key] = dict(label=label, **stats(xy))
     # the depth ratio with its offset between technologies removed: what a batch correction would leave
     off = float(np.exp(out["table"]["flat"]["mean_log_ratio"]))
-    out["table"]["flat_centred"] = dict(label="45S, 18S depth ratio, offset between technologies removed", **stats([(x, y / off, q) for x, y, q in pairs["flat"][1]]))
+    out["table"]["flat_centred"] = dict(label="45S, 18S depth ratio (published), its offset between technologies removed", **stats([(x, y / off, q) for x, y, q in pairs["flat"][1]]))
     for si, key in enumerate(("calibrated", "flat")):
         out["points"] += [dict(sample=q, x=x, y=y, si=si) for x, y, q in pairs[key][1]]
     return out
