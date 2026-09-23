@@ -104,13 +104,13 @@ class Page:
         self.h('<div class="tiles">' + "".join(f'<div class="tile"><div class="label">{esc(a)}</div><div class="value">{b}</div><div class="note">{esc(c)}</div></div>'
                                              for a, b, c in items) + "</div>")
 
-    def table(self, rows: list[list], header: list[str], numeric: set[int] = frozenset(), flagged=None, filter_box=False, wrap=False):
+    def table(self, rows: list[list], header: list[str], numeric: set[int] = frozenset(), flagged=None, filter_box=False, wrap=False, cls=""):
         head = "".join(f'<th class="{"num" if i in numeric else ""}">{esc(h)}</th>' for i, h in enumerate(header))
         body = []
         for r in rows:
-            cls = ' class="flagged"' if flagged and flagged(r) else ""
-            body.append(f"<tr{cls}>" + "".join(f'<td class="{"num" if i in numeric else ""}">{c if isinstance(c, str) and c.startswith("<") else esc(c)}</td>' for i, c in enumerate(r)) + "</tr>")
-        t = f'<table class="data"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
+            row_cls = ' class="flagged"' if flagged and flagged(r) else ""
+            body.append(f"<tr{row_cls}>" + "".join(f'<td class="{"num" if i in numeric else ""}">{c if isinstance(c, str) and c.startswith("<") else esc(c)}</td>' for i, c in enumerate(r)) + "</tr>")
+        t = f'<table class="data{" " + cls if cls else ""}"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
         if filter_box:
             self.h('<input class="filter" type="search" placeholder="filter rows…" aria-label="filter rows">')
         self.h(f'<div class="tablewrap">{t}</div>' if wrap else t)
@@ -724,13 +724,13 @@ none. HSat1B lives mostly on Yq and passes from father to son only, so its midpa
             err = ("≤ " + fmt(t["error_cv_max"], 1, pct=True)) if "error_cv_max" in t else fmt(t["error_cv"], 1, pct=True)
             pp = t.get("perm_p")
             rows_t.append([t["label"], t.get("group", ""), t["n_trios"], fmt(t["r_mid"], 3), fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
-                           ("< 0.001" if pp is not None and pp < 0.001 else fmt(pp, 3)), fmt(min(t["R_single"], 1.0), 3), fmt(min(t["R_mendel"], 1.0), 3), err])
-        heads = ["metric", "trios", "child–midparent r (Pearson)", "midparent slope b", "spousal r", "reliability R (95% CI)", "permutation p", "single-parent R", "Mendelian R", "error CV the interval allows"]
+                           ("< 0.001" if pp is not None and pp < 0.001 else fmt(pp, 3)), fmt(min(t["R_single"], 1.0), 3), err])
+        heads = ["metric", "trios", "child–midparent r (Pearson)", "midparent slope b", "spousal r", "reliability R (95% CI)", "permutation p", "single-parent R", "error CV the interval allows"]
         main_rows = [r for r in rows_t if r[1] in ("rDNA", "truth", "culture")]
-        P.table([r[:1] + r[2:] for r in main_rows], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8, 9})
+        P.table([r[:1] + r[2:] for r in main_rows], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8})
         if len(rows_t) > len(main_rows):
             P.h("<details><summary>The same for the satellite arrays (the full table is <code>data/transmission.tsv</code>)</summary>")
-            P.table([r[:1] + r[2:] for r in rows_t if r[1] == "satellites"], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8, 9})
+            P.table([r[:1] + r[2:] for r in rows_t if r[1] == "satellites"], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8})
             P.h("</details>")
         P.h('<p class="small">Reliability is capped at 1; a slope above 1 is noise around 1, and the interval says how much. A spousal correlation far from zero means members of a family share something other than DNA (a batch), and every reliability in the table is inflated by about as much. The negative-control rows should read near zero.</p>')
         if t45 and have_ci:
@@ -740,10 +740,6 @@ measurement error of at most {fmt(t45.get("error_cv_max"), 1, pct=True)} of a pe
 people differ in 45S copy number by a CV of {fmt(cv, 0, pct=True) if cv else "about 20%"} and every estimator errs by a few percent, every estimator
 has a reliability near 1 within one cohort and one pipeline, and the trios cannot rank them: the paired differences below are the test, and they
 are small. Ranking rests on the comparison across technologies (3.4).</p>''')
-        if t5 and have_ci:
-            P.h(f'''<p>The 5S array reads {fmt(min(t5["R"], 1.0), 2)} ({fmt(t5["R_lo"], 2)} to {fmt(t5["R_hi"], 2)}) at {t5["n_trios"]} trios: an interval too wide to
-say whether its copy number is transmitted like the 45S's. Its spread between people is as large, its estimate as precise, and it reproduced
-across technologies in the pilot (3.4); the full cohort decides.</p>''')
         if tr["compare"]:
             P.h("<p>Paired family bootstrap of each estimator's reliability minus that of the published 18S depth ratio:</p>")
             P.table([[c["label"], fmt(c["delta"], 3), f"{fmt(c['lo'], 3)} to {fmt(c['hi'], 3)}", fmt(c["p_better"], 3)] for c in tr["compare"]],
@@ -828,6 +824,236 @@ trios{f" and a correlation is uncertain by about ±{fmt(half, 2)} (95%)" if half
                             f"{fmt(d['father_son']['slope'], 2)} for sons (r = {fmt(d['father_son']['r'], 2)}) and {fmt(d['father_daughter']['slope'], 2)} for "
                             f"daughters (r = {fmt(d['father_daughter']['r'], 2)}).")
                 P.h("</div>")
+        # ---- class by class: every metric's transmission in the same terms, and what this design can and cannot tell apart
+        if have_ci and tr["table"] and "sd_ratio_lo" in tr["table"][0]:
+            from .report import TRIO_GROUPS
+            from .trios import PAIRS
+            byc = {t["column"]: t for t in tr["table"]}
+            bsx = (tr.get("by_sex") or {}).get("table") or {}
+            zf = lambda col: ((bsx.get(col) or {}).get("father_contrast") or {}).get("z", 0) or 0
+            linked = {col: ("Y" if zf(col) > 0 else "X") for col, d in bsx.items() if d["group"] in ("rDNA", "satellites") and abs(zf(col)) > 3}
+            ylinked = [c for c in linked if linked[c] == "Y" and c in byc]
+            cvt = lambda t: t["parent_sd"] / t["parent_mean"] if t.get("parent_mean") else float("nan")
+            sg = lambda x, nd=2: fmt(x, nd).replace("-", "−")
+            iv = lambda t, k, nd=2: f"{sg(t[k + '_lo'], nd)} to {sg(t[k + '_hi'], nd)}" if t.get(k + "_lo") is not None else ""
+            signed = lambda x: ("+" if x >= 0 else "−") + fmt(abs(x), 1, pct=True)
+            level = lambda t: (f"{fmt(abs(t['mean_ratio'] - 1), 1, pct=True)} {'more' if t['mean_ratio'] > 1 else 'less'} than their parents "
+                               f"({signed(t['mean_ratio_lo'] - 1)} to {signed(t['mean_ratio_hi'] - 1)})")
+            # the part of a person's value not inherited, CV x sqrt(1 - R), at the lower of the two reliabilities (a batch's scale must not hide it)
+            pc = lambda x: fmt(x, 1 if x < 0.1 else 0, pct=True)
+            lost = lambda t, hi=False: cvt(t) * max(0.0, 1 - (min(t["R_lo"], t["R_rescaled_lo"]) if hi else min(t["R"], t["R_rescaled"]))) ** 0.5
+            het = lambda col: (bsx.get(col) or {}).get("heterogeneity") or {}
+            hp = lambda col: ("≤ 0.001" if het(col)["p"] <= 0.001 else fmt(het(col)["p"], 3)) if het(col) else "–"
+            pr = lambda col, k: fmt(bsx[col][k]["r"], 2) if k in (bsx.get(col) or {}) else "–"
+            name = {col: label for _, _, cols in TRIO_GROUPS for col, label in cols}
+            nm = lambda col: esc(name.get(col, col))
+            bt = tr.get("batches") or {}
+            top = lambda d: max(d.items(), key=lambda kv: kv[1]) if d else (None, 0)
+            (kb, kn), (pb, pn) = top(bt.get("child") or {}), top(bt.get("parent") or {})
+            apart = bool(bt) and kb != pb and kn >= 0.9 * bt["n"] and pn >= 0.9 * 2 * bt["n"]
+            blab = lambda b: f"{int(b):,}" if str(b).isdigit() else esc(str(b))
+            # the children's spread against their parents', where the interval excludes 1; largest departure first
+            moved = sorted((t for t in tr["table"] if t["sd_ratio_lo"] > 1 or t["sd_ratio_hi"] < 1), key=lambda t: -abs(math.log(t["sd_ratio"])))
+            # the four sex pairings: the metrics that differ beyond chance, the sex-linked ones aside and the three 45S estimators (one set of reads) counted once
+            tested = [c for c in bsx if c not in linked and het(c)]
+            uneven = [c for c in tested if het(c)["p"] < 0.05]
+            once = lambda cols: len([c for c in cols if not c.startswith("rDNA45S")]) + any(c.startswith("rDNA45S") for c in cols)
+            u45 = [c for c in uneven if c.startswith("rDNA45S")]
+            brief = lambda c: "the 45S" if c.startswith("rDNA45S") else "the 5S" if c.startswith("rDNA5S") else nm(c).replace(" array", "")
+            uneven_list = ", ".join(([f"the 45S by {'all three' if len(u45) == 3 else len(u45)} of its estimators"] if len(u45) > 1 else [brief(c) for c in u45])
+                                    + [brief(c) for c in uneven if not c.startswith("rDNA45S")])
+            said = []
+            spelt = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight", 9: "Nine"}
+            uneven_txt = (f"{spelt.get(once(uneven), once(uneven))} of the {once(tested)} metrics (the 45S's three estimators, which share their reads, counted once) reach p &lt; 0.05 "
+                          f"by the same test ({uneven_list}), where chance alone would give about {spelt.get(max(1, round(0.05 * once(tested))), '').lower() or round(0.05 * once(tested))}"
+                          + ("; the held-out autosomal sequence, which has nothing to inherit, is among them" if "truth.auto" in uneven else "")
+                          + ". It is a lead for the full cohort, not a finding")
+
+            def pairings(col):
+                s = bsx.get(col) or {}
+                if not all(k in s for k, _, _ in PAIRS):
+                    return ""
+                txt = (f"split by the sex of parent and child, the four correlations are {pr(col, 'father_son')} (father–son), {pr(col, 'father_daughter')} "
+                       f"(father–daughter), {pr(col, 'mother_son')} (mother–son) and {pr(col, 'mother_daughter')} (mother–daughter)")
+                if not het(col):
+                    return txt + "."
+                if het(col)["p"] >= 0.05:
+                    return txt + f", no more different than chance makes them (p = {hp(col)})."
+                lo_k = min((k for k, _, _ in PAIRS), key=lambda k: s[k]["r"])
+                hi_k = max((k for k, _, _ in PAIRS), key=lambda k: s[k]["r"])
+                first = not said
+                said.append(col)
+                return (txt + f", more different than chance makes them (p = {hp(col)}): {lo_k.replace('_', '–')} {pr(col, lo_k)} against "
+                        f"{hi_k.replace('_', '–')} {pr(col, hi_k)}. Inheritance on the autosomes gives no reason for that, since a child's sex does not "
+                        "depend on which of a parent's chromosomes it received" + (f". {uneven_txt}." if first else ", and the caution under the 45S applies."))
+
+            P.h("""<h3 id="byclass">Class by class</h3>
+<p>Every metric's transmission in the same terms: how much people differ (the parents' coefficient of variation, CV); the share of that
+difference the children inherit (R, with its 95% interval); the part of a person's value that is not inherited, as a percentage of the value
+(CV × √(1 − R): measurement error, or change in the cell line; the interval allows at most the figure in brackets); the children's spread and
+level against their parents'; and whether the four pairings of the parent's and the child's sex differ, which for a quantity carried on the
+autosomes they should not.</p>""")
+            if apart:
+                dep = byc.get("depth")
+                wide_ok = [t for t in moved if t["sd_ratio"] > 1 and t["R_lo"] > 1]            # a slope above 1: new variation cannot raise it
+                narrow = [t for t in moved if t["sd_ratio"] < 1 and t["group"] in ("rDNA", "satellites")]   # a narrower spread: new variation cannot narrow it
+                P.h(f"""<p><strong>Parents and children were sequenced apart.</strong> {"All" if kn == bt["n"] else f"{kn:,} of the"} {bt["n"]:,} children are among the
+{blab(kb)} related genomes that the 1000 Genomes 30× release added to its original {blab(pb)} (the release batch in NGS-PCA's table), and {pn:,} of
+their {2 * bt["n"]:,} parents are among the {blab(pb)}; {bt["shared"]:,} {"family has" if bt["shared"] == 1 else "families have"} a parent in the child's batch. A batch shared
+within a family, which could imitate inheritance, is therefore all but absent. But a difference between the batches is a difference between the
+generations. Where the later batch reads a quantity on a slightly larger or smaller scale, the children's spread changes, and the midparent slope
+and R change with it by the same factor, while R computed with the children's values first put on their parents' scale does not. New
+variation arising in the children would also widen their spread, and lowers the rescaled R instead; the two values bracket the reliability.
+They part where the children's spread departs furthest from their parents': """
+                    + "; ".join(f"{nm(t['column'])}, {fmt(t['sd_ratio'], 2)}× ({iv(t, 'sd_ratio')})" for t in moved[:6]) + "."
+                    + (" " + " ".join([f"The {nm(t['column'])}'s wider spread cannot be new variation arising in the children, because its slope rises with it "
+                                        f"(R {iv(t, 'R')})." for t in wide_ok]
+                                       + [f"{'Nor can' if wide_ok else 'Neither can'} the {nm(t['column'])}'s narrower one." for t in narrow])
+                       + " New variation widens the children's spread and leaves the slope alone; a batch that reads the children on a slightly different "
+                         "scale moves both together." if wide_ok or narrow else "")
+                    + (" The Mendelian reliability shown in earlier versions of this page's table, 1.5 − Var(child − midparent) / Var(parent), equals "
+                       "R + 1 + ρ/2 − s², with s the ratio of spreads, so on this design it measured the batch"
+                       + (f": sequencing depth, which no child inherits (R = {sg(dep['R'])}), reads {sg(dep['R_mendel'])} by it" if dep else "")
+                       + ". It is no longer shown; <code>data/transmission.tsv</code> keeps it.</p>"))
+            # the forest: R and its interval, and R on the parents' scale, for every metric in its group
+            f_rows, f_groups, est, lo, hi, est2, extra, rows_c = [], [], [], [], [], [], [], []
+            for _, gl, cols in TRIO_GROUPS:
+                for col, label in cols:
+                    t = byc.get(col)
+                    if not t or t.get("R_lo") is None:
+                        continue
+                    lk = linked.get(col)
+                    f_rows.append(label + (f" ({lk}-linked)" if lk else "")); f_groups.append(gl)
+                    est.append(t["R"]); lo.append(t["R_lo"]); hi.append(t["R_hi"]); est2.append(t["R_rescaled"])
+                    extra.append(f"people differ by a CV of {fmt(cvt(t), 1, pct=True)}; the children spread {fmt(t['sd_ratio'], 2)}× as much as their "
+                                 f"parents and read {fmt(abs(t['mean_ratio'] - 1), 1, pct=True)} {'more' if t['mean_ratio'] > 1 else 'less'}")
+                    rows_c.append([label + (f" ({lk}-linked)" if lk else ""), "–" if lk else fmt(cvt(t), 1, pct=True), sg(t["R"]), sg(t["R_rescaled"]),
+                                   "–" if lk else f"{pc(lost(t))} (≤ {pc(lost(t, True))})",
+                                   f"{fmt(t['sd_ratio'], 2)} ({fmt(t['sd_ratio_lo'], 2)}–{fmt(t['sd_ratio_hi'], 2)})",
+                                   f"{fmt(t['mean_ratio'], 2)} ({fmt(t['mean_ratio_lo'], 2)}–{fmt(t['mean_ratio_hi'], 2)})",
+                                   (f"{lk}-linked, " if lk else "") + hp(col)])
+            span = [v for v in lo + hi + est + est2 if isinstance(v, float) and math.isfinite(v)] + [0.0, 1.0]
+            P.chart("forest", dict(type="forest", rows=f_rows, groups=f_groups, est=est, lo=lo, hi=hi, est2=est2, extra=extra, refs=[0, 1],
+                                   xmin=math.floor(min(span) * 4) / 4, xmax=math.ceil(max(span) * 4) / 4,
+                                   xlabel="reliability R: the share of the differences between people that is inherited",
+                                   legend=["R from the midparent slope, with its 95% interval", "R with the children put on their parents' scale"]),
+                    f"Reliability of every metric, class by class, through {tr['n_complete']:,} trios",
+                    "Each row is one metric measured in the 1000 Genomes 30× cohort, grouped by what its transmission has to be: NGS-DOSE's rDNA "
+                    "estimates (the claim, with the 18S depth ratio of published studies computed from the same reads), satellite-array mass (genomic, "
+                    "so it must be inherited), sequence of known copy number, and the cell line's and the library's properties (not in the nuclear "
+                    f"genome). Filled dot and bar: the reliability R = b − ρ(1 − b) from the slope b of child on midparent in {tr['n_complete']:,} complete "
+                    "parent–child trios, corrected for the spousal correlation ρ, with its 95% family-bootstrap interval: 1 for a perfectly measured "
+                    "heritable quantity, 0 for one the children do not inherit. Open ring: the same with each child's value first rescaled to the "
+                    "parents' spread"
+                    + (", because every child was sequenced in a later batch than its parents and a batch can read on a slightly different scale" if apart else "")
+                    + ". Values above 1 are noise around 1, or a larger scale in the children's measurements. Lines at 0 and 1; values centred within "
+                    "population."
+                    + (" " + "; ".join(f"The {name.get(c, c)} lies mostly on the Y chromosome and passes from father to son (r = {pr(c, 'father_son')}), "
+                                       "which the midparent does not measure" for c in ylinked) + "." if ylinked else "")
+                    + " On the page, hover a row for the spread between people and the children's spread and level against their parents'.")
+            P.table(rows_c, ["metric", "CV", "R", "R, rescaled", "not inherited", "children's spread", "children's level", "sex pairings: p"],
+                    numeric={1, 2, 3, 4, 5, 6, 7}, wrap=True, cls="compact")
+            nperm = next((het(c)["n_perm"] for c in bsx if het(c)), None)
+            P.h('<p class="small">CV: how much people differ, the parents\' standard deviation over their mean. R: from the midparent slope, and rescaled: with the '
+                "children's values first put on their parents' spread (both with their 95% intervals in the figure). Not inherited: CV × √(1 − R) at the "
+                "lower of the two, as a percentage of a person's value, and in brackets the most the intervals allow. Children's spread: their standard "
+                "deviation over their parents'; children's level: their mean over their parents'; both on values centred within population, with 95% "
+                "family-bootstrap intervals. Sex pairings: how often the four child–parent correlations (father–son, father–daughter, mother–son, "
+                f"mother–daughter) differ as much as these when the children's sexes are shuffled among the families and each family's parents swap roles{f' ({nperm:,} shuffles)' if nperm else ''}. The "
+                "textbook test, which assumes normal values, is far too small for skewed ones"
+                + (f" (the distal junction's four pairings: {'&lt; 0.001' if het('DJ.cn')['p_normal'] < 0.001 else fmt(het('DJ.cn')['p_normal'], 3)} by it, "
+                   f"{hp('DJ.cn')} by the shuffles)" if het("DJ.cn") else "")
+                + ".</p>")
+            # ---- the rDNA
+            rep = (data.get("replicates") or {}).get("table") or {}
+            t, t5 = byc.get("rDNA45S.cn"), byc.get("rDNA5S.cn")
+            if t:
+                ceiling = (0.5 * (1 + t["spousal_r"])) ** 0.5
+                rc = rep.get("calibrated") or {}
+                alike = abs(t["r_father"] - t["r_mother"]) < 0.15
+                big = max((x for x in moved if x["group"] in ("rDNA", "satellites")), key=lambda x: abs(x["sd_ratio"] ** 2 - 1), default=None)
+                room = max(0.0, t["sd_ratio_hi"] ** 2 - 1)
+                P.h(f"""<p><strong>45S rDNA.</strong> People differ by a CV of {fmt(cvt(t), 0, pct=True)}. The children inherit
+{"all of it that the trios can resolve" if t["R_lo"] <= 1 <= t["R_hi"] else "most of it" if t["R_hi"] < 1 else "all of it"}: R = {sg(t["R"])} ({iv(t, "R")}) from the slope and {sg(t["R_rescaled"])}
+({iv(t, "R_rescaled")}) with the children on their parents' scale, and at most {fmt(lost(t, True), 1, pct=True)} of a person's value is not inherited{f" (the pilot's replicates across technologies put the measurement's own error at {fmt(rc['sd_log_ratio'] / 2 ** 0.5, 1, pct=True)}, section 3.4)" if rc.get("sd_log_ratio") else ""}. The
+child–midparent correlation, {fmt(t["r_mid"], 2)} ({iv(t, "r_mid")}), {"reaches" if t["r_mid_hi"] >= ceiling else "falls short of"} the ceiling of {fmt(ceiling, 2)} that segregation sets
+for a perfectly measured trait at the spousal correlation of {sg(t["spousal_r"])} ({iv(t, "spousal")}). {"The father and the mother pass it on alike" if alike else "The two parents pass it on"}
+(child–father r = {fmt(t["r_father"], 2)}, child–mother r = {fmt(t["r_mother"], 2)}){", as they should for arrays on the short arms of five autosomes" if alike else ""};
+{pairings("rDNA45S.cn")} The children spread {fmt(t["sd_ratio"], 2)}× as much as their parents ({iv(t, "sd_ratio")}) and read {level(t)}{": a difference of generation or of batch, which this design cannot separate, and one the slopes and correlations, unchanged when every child is shifted by the same amount, do not see" if not t["mean_ratio_lo"] <= 1 <= t["mean_ratio_hi"] else ""}.
+An array is rearranged in more than one meiosis in ten ({doi("Stults et al. 2008", "10.1101/gr.6858507")}). Rearrangement as likely to lengthen
+an array as to shorten it scatters the children about the midparent without flattening the slope, and widens their spread: if the batch changed
+nothing, by at most {fmt(room, 0, pct=True)} of the parents' variance, the top of the interval{f". The batch alone moves the variance of the {nm(big['column'])} by {fmt(abs(big['sd_ratio'] ** 2 - 1), 0, pct=True)}, so the trios bound that variation; they do not measure it" if big and abs(big["sd_ratio"] ** 2 - 1) >= 0.5 * room else ""}.</p>""")
+            if t5:
+                r5 = rep.get("rDNA5S") or {}
+                similar = t is not None and abs(cvt(t5) - cvt(t)) < 0.05
+                meas = r5["sd_log_ratio"] / 2 ** 0.5 if r5.get("sd_log_ratio") else None
+                P.h(f"""<p><strong>5S rDNA.</strong> People differ {"as much as in the 45S" if similar else "by"} (CV {fmt(cvt(t5), 0, pct=True)}),
+{"but the children inherit less of it, or less certainly" if t and t5["R"] < t["R"] - 0.1 else "and the children inherit"}: R = {sg(t5["R"])} ({iv(t5, "R")}), {sg(t5["R_rescaled"])}
+({iv(t5, "R_rescaled")}) on the parents' scale, at a spousal correlation of {sg(t5["spousal_r"])}.{f" The interval runs from an array transmitted as faithfully as the 45S to one with {fmt(1 - t5['R_lo'], 0, pct=True)} of its differences not inherited." if t5["R_hi"] >= 1 and t5["R_lo"] < 0.8 else ""}
+New variation arising in the children at random would scatter them about the midparent line without flattening it (they spread
+{fmt(t5["sd_ratio"], 2)}× as much as their parents, {iv(t5, "sd_ratio")}). A slope below 1 means that part of the parents' measured differences is not passed
+on: error, change in the cell line, or arrays that drift toward the average as they are transmitted; {fmt(lost(t5), 0, pct=True)} of a person's value at the
+estimate, at most {fmt(lost(t5, True), 0, pct=True)}.{f" The pilot's replicates across technologies put the measurement's own error near {fmt(meas, 1, pct=True)} (section 3.4), so at the estimate the part not inherited would lie in the cell lines or in transmission rather than in the measurement." if meas and lost(t5) > 2 * meas else ""}
+The array is on chromosome 1 (1q42); {pairings("rDNA5S.cn")}</p>""")
+            # ---- the satellite arrays, the telomeric repeat aside
+            sats = [byc[c] for _, _, cols in TRIO_GROUPS for c, _ in cols if c in byc and byc[c]["group"] == "satellites" and c != "TEL.mass_Mb"]
+            if sats:
+                plain = [t for t in sats if t["column"] not in linked and t not in moved]
+                low = sorted((t for t in plain if cvt(t) < 0.08), key=cvt)
+                wide = sorted((t for t in plain if cvt(t) >= 0.1), key=cvt)
+                errs = [lost(t) for t in plain]
+                scaled = [t for t in sats if t["column"] not in linked and t in moved]
+                pmax = max((t["perm_p"] for t in sats if t["column"] not in linked and t.get("perm_p") is not None), default=None)
+                short = lambda col: nm(col).replace(" array", "")
+                names = lambda ts: ", ".join(short(t["column"]) for t in ts[:-1]) + (" and " if len(ts) > 1 else "") + short(ts[-1]["column"])
+                span = lambda ts, f, nd=0: f"{fmt(min(map(f, ts)), nd, pct=True)} to {fmt(max(map(f, ts)), nd, pct=True)}"
+                sat_uneven = [c for c in uneven if byc.get(c, {}).get("group") == "satellites"]
+                P.h("<p><strong>Satellite arrays.</strong> "
+                    + (f"Every class is inherited (permutation p ≤ {fmt(pmax, 3)}). " if pmax is not None and pmax < 0.05 else "")
+                    + (f"In every class whose children spread as their parents do, the part of a person's value that is not inherited lies between "
+                       f"{fmt(min(errs), 0, pct=True)} and {fmt(max(errs), 0, pct=True)}, and how much of R that costs depends on how much people differ. " if errs else "")
+                    + (f"The classes that vary least between people ({names(low)}, CV {span(low, cvt, 1)}) read the lowest R "
+                       f"({', '.join(sg(t['R']) for t in low[:-1])} and {sg(low[-1]['R'])}): the same few percent is a larger share of a smaller spread. " if len(low) > 1 else "")
+                    + (f"Those that vary most ({names(wide)}, CV {span(wide, cvt)}) read {sg(min(t['R'] for t in wide))} to {sg(max(t['R'] for t in wide))}. " if len(wide) > 1 else "")
+                    + (f"{'Two classes are' if len(scaled) == 2 else 'One class is' if len(scaled) == 1 else f'{len(scaled)} classes are'} read on a different scale in "
+                       "the children (above): " + "; ".join(f"{short(t['column'])} spreads {fmt(t['sd_ratio'], 2)}× as much in the children as in their parents "
+                                                           f"({iv(t, 'sd_ratio')}), and its R reads {sg(t['R'])} from the slope but {sg(t['R_rescaled'])} on the "
+                                                           "parents' scale" for t in scaled) + "." if scaled else "")
+                    + (" " + " ".join(f"{short(c)} lies mostly on the Y chromosome: it passes from father to son at r = {pr(c, 'father_son')} and to daughters at "
+                                      f"{pr(c, 'father_daughter')}, which the midparent statistics do not measure (<a href=\"#bysex\">by sex</a>, above)." for c in ylinked) if ylinked else "")
+                    + (" By sex, " + "; ".join(f"{short(c)}'s four pairings differ at p = {hp(c)}" for c in sat_uneven)
+                       + (", and the caution under the 45S applies." if said else f". {uneven_txt}.") if sat_uneven else "")
+                    + "</p>")
+            t = byc.get("TEL.mass_Mb")
+            if t:
+                genomic = [x for x in tr["table"] if x["group"] in ("rDNA", "satellites") and x["column"] not in linked]
+                P.h(f"""<p><strong>Telomeric repeat.</strong> {"The least inherited genomic quantity" if t["R"] <= min(x["R"] for x in genomic) else "Weakly inherited"}:
+R = {sg(t["R"])} ({iv(t, "R")}), at {"the largest" if cvt(t) >= max(cvt(x) for x in genomic) else "a large"} spread between people (CV {fmt(cvt(t), 0, pct=True)}),
+so {fmt(lost(t), 0, pct=True)} of a person's value is not inherited. Telomeres shorten with age and change in culture; the children, younger than
+their parents{" and sequenced in the later batch" if apart else ""}, read {level(t)}.</p>""")
+            ta, tdj = byc.get("truth.auto"), byc.get("DJ.cn")
+            if ta or tdj:
+                P.h("<p><strong>Known copy number.</strong> "
+                    + (f"Held-out autosomal sequence has nothing to inherit, and the children inherit nothing of it: R = {sg(ta['R'])} ({iv(ta, 'R')}), with "
+                       f"people differing by {fmt(cvt(ta), 1, pct=True)}, the measurement's floor. " if ta else "")
+                    + ("The distal junction is 10 copies in most genomes; the whole-copy steps some carry (3.2) run in families"
+                       + (" and are inherited" if tdj["R_lo"] > 0 else ", and the trios cannot yet tell whether they are inherited")
+                       + f": R = {sg(tdj['R'])} ({iv(tdj, 'R')}), people differing by {fmt(cvt(tdj), 1, pct=True)}." if tdj else "")
+                    + "</p>")
+            cul = [byc[c] for _, _, cols in TRIO_GROUPS for c, _ in cols if c in byc and byc[c]["group"] == "culture"]
+            if cul:
+                above = [t for t in cul if t["R_lo"] > 0]
+                below = [t for t in cul if t["R_hi"] < 0]
+                P.h("<p><strong>Culture and library.</strong> "
+                    + ("None is inherited" if not above else "Only " + " and ".join(nm(t["column"]) for t in above) + " read above zero")
+                    + f": R runs from {sg(min(t['R'] for t in cul))} to {sg(max(t['R'] for t in cul))}"
+                    + (", and every interval includes zero." if not above and not below else
+                       ", and every interval but " + " and ".join(f"that of {nm(t['column'])} ({iv(t, 'R')})" for t in above + below) + " includes zero"
+                       + ("; an interval wholly below zero is not inheritance" if below else "")
+                       + f", and one such interval among {len(tr['table'])} metrics is what chance gives at 95%.")
+                    + " These are also the metrics whose spread differs most between the generations"
+                    + (f" (the children's sequencing depth varies {fmt(byc['depth']['sd_ratio'], 2)}× as much as their parents')" if "depth" in byc else "")
+                    + ": properties of the batch, not of the family.</p>")
         P.h('<p class="small">A printable assessment built from these tables, with a child-against-midparent scatter for every metric, the fetch check and the assembly comparison: <a href="trio_report.pdf">trio_report.pdf</a>. Every trio\'s values: <code>data/trios.tsv</code>; the split by the sex of parent and child: <code>data/transmission_by_sex.tsv</code>'
             + ('; every metric\'s child against midparent: <a href="#supp">supplementary figures</a>' if (tr.get("points") or {}) and tr["n_complete"] >= 10 else "") + ".</p>")
         if data.get("trios_adjusted", {}).get("table"):

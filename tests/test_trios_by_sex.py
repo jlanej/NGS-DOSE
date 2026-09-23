@@ -45,3 +45,31 @@ def test_a_y_linked_quantity_passes_from_fathers_to_sons_only():
 def test_too_few_pairs_gives_nothing():
     trios, sex, pop, auto, _ = _families(n=12)
     assert by_sex(auto, trios, pop, sex) == {}
+
+
+def test_the_four_pairings_differ_only_for_a_sex_linked_quantity():
+    trios, sex, pop, auto, ylink = _families()
+    a, y = by_sex(auto, trios, pop, sex, n_perm=200), by_sex(ylink, trios, pop, sex, n_perm=200)
+    assert a["heterogeneity"]["p"] > 0.01 and y["heterogeneity"]["p"] < 0.01
+
+
+def test_a_batch_that_rescales_the_children_moves_the_slope_but_not_the_rescaled_reliability():
+    """Every child measured by a later batch reading 1.2x: the midparent slope, and R, read 1.2; R with the
+    children on their parents' scale reads 1; and the Mendelian reliability is R + 1 + rho/2 - s^2."""
+    from ngsdose.trios import transmission
+    trios, _, pop, auto, _ = _families(n=2000, seed=3)
+    kids = {t.child for t in trios}
+    later = {s: (1.2 * v if s in kids else v) for s, v in auto.items()}
+    t = transmission(later, trios, pop, n_perm=0, n_boot=0)
+    assert abs(t["midparent_slope"] - 1.2) < 0.06 and abs(t["sd_ratio"] - 1.2) < 0.05
+    assert abs(t["reliability_rescaled"] - 1.0) < 0.05
+    identity = t["reliability_midparent"] + 1 + t["spousal_r"] / 2 - t["sd_ratio"] ** 2
+    assert abs(t["reliability_mendel"] - identity) < 0.03
+
+
+def test_the_batch_of_each_generation_is_counted():
+    from ngsdose.report import trio_batches
+    from ngsdose.trios import Trio
+    rows = [dict(sample=s, **{"ngspca.batch": b}) for s, b in (("C1", "698"), ("F1", "2504"), ("M1", "2504"), ("C2", "698"), ("F2", "698"), ("M2", "2504"))]
+    b = trio_batches(rows, [Trio("C1", "F1", "M1"), Trio("C2", "F2", "M2"), Trio("C3", "F1", "M1")])
+    assert b == dict(n=2, child={"698": 2}, parent={"2504": 3, "698": 1}, shared=1)
