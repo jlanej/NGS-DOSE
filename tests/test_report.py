@@ -57,3 +57,24 @@ def test_the_numbers_are_the_pilots(report):
     assert len(d["samples"]) == 12 and all(s["sex_inferred"] in ("M", "F") for s in d["samples"])
     cols = (report / "data" / "cohort.tsv").read_text().splitlines()[0].split("\t")
     assert {"sample", "rDNA45S.cn", "truth.chrY", "chrM.copies", "flags", "sex_inferred"} <= set(cols)
+
+
+def test_the_coverage_qc_comparison(report):
+    """NGS-PCA's QC table for the same files: a synthetic one built from the pilot's own numbers with a
+    constant duplicate-flag offset and noise must come back at r > 0.99 with the offset recovered."""
+    import numpy as np
+
+    from ngsdose import report as R
+    d = json.loads((report / "report.json").read_text())
+    rows = [dict(s) for s in d["samples"]]
+    rng = np.random.default_rng(3)
+    qc = report / "sample_qc.tsv"
+    with open(qc, "w") as fh:
+        fh.write("SAMPLE_ID\tMEAN_AUTOSOMAL_COV\tX_COV_RATIO\tY_COV_RATIO\tINFERRED_SEX\tMTDNA_CN\tRELEASE_BATCH\n")
+        for r in rows:
+            fh.write(f'{r["sample"]}\t{0.88 * r["depth"]:.3f}\t{r["truth.chrX"] / 2:.4f}\t{0.85 * r["truth.chrY"] / 2:.4f}\t{r["sex_inferred"]}\t{0.92 * r["chrM.copies"] * np.exp(rng.normal(0, 0.02)):.2f}\t2504\n')
+        fh.write("NA00000\t30\t0.5\t0.4\tM\t500\t698\n")                               # a sample that was not counted
+    q = R.ngspca_qc_comparison(rows, qc)
+    assert q["n"] == 12 and q["n_qc"] == 13 and q["sex_agree"] == q["sex_n"] == 12
+    assert q["mtdna"]["r"] > 0.99 and abs(q["mtdna"]["ratio"]["median"] - 0.92) < 0.02 and q["chrX"]["r"] > 0.999 and abs(q["depth"]["ratio"]["median"] - 0.88) < 0.01
+    assert [m["sample"] for m in q["mosaic_X"]] == ["HG00732"] and rows[0]["ngspca.batch"] == "2504"

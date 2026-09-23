@@ -76,7 +76,8 @@ class Page:
 def page(data: dict, rows: list[dict]) -> str:
     m, kt, md, tr, bio, pcs, sat, qc = (data["meta"], data["known_truth"], data["modes"], data["trios"], data["biology"], data["pcs"],
                                          data["satellites"], data["qc"])
-    rep, hall, rd = data.get("replicates") or {}, data.get("hall") or {}, data["rdna"]
+    rep, hall, rd, nq = data.get("replicates") or {}, data.get("hall") or {}, data["rdna"], data.get("ngspca_qc") or {}
+    qc_ok = nq.get("n", 0) >= 3 and nq.get("mtdna", {}).get("r") is not None
     n, total = m["n"], m["total"]
     P = Page(data)
     sex_levels = [["M", "male"], ["F", "female"]]
@@ -149,6 +150,8 @@ def page(data: dict, rows: list[dict]) -> str:
         r_.append(f'Within one chemistry the depth ratio follows each library\'s GC bias (r = {fmt(gcb["flat_vs_gc"]["r"], 2)}); under the fragment-GC model it does not (r = {fmt(gcb["modelled_vs_gc"]["r"], 2)}).')
     if hall.get("n", 0) >= 3:
         r_.append(f'Against the published estimates of Hall et al. (2021) for the same files, r = {fmt(hall["flat"].get("r"), 3)} on {hall["n"]:,} shared samples; their exclusion of duplicate-flagged reads accounts for the offset.')
+    if qc_ok:
+        r_.append(f'NGS-PCA\'s coverage-based mitochondrial copy number for the same files agrees with ours at r = {fmt(nq["mtdna"]["r"], 3)} (theirs {fmt(nq["mtdna"]["ratio"]["median"], 2)}× ours, the duplicate flag again), its chrX ratio at r = {fmt(nq["chrX"]["r"], 4)}.')
     if tracking:
         r_.append(f'{len(tracking)} of {len(hpst)} satellite families track HPRC assemblies of {(sat.get("hprc") or {}).get("n_samples", 0)} of these individuals with r ≥ 0.95.')
     s.append(" ".join(r_) + "</p>")
@@ -173,6 +176,8 @@ def page(data: dict, rows: list[dict]) -> str:
         case.append(("What the GC model removes", f'r {fmt(gcb["flat_vs_gc"].get("r"), 2)} → {fmt(gcb["modelled_vs_gc"].get("r"), 2)}', "how much the estimate follows the library's GC bias, before and after", "#gcmodel"))
     if hall.get("n", 0) >= 3:
         case.append(("Another pipeline, same files", f'r = {fmt(hall["flat"].get("r"), 3)}', f"Hall et al. 2021, {hall['n']:,} shared samples; offset explained by the duplicate flag", "#published"))
+    if qc_ok:
+        case.append(("Coverage QC, same files", f'r = {fmt(nq["mtdna"]["r"], 3)}', f"mitochondrial copies per cell vs NGS-PCA (mosdepth), {nq['n']:,} genomes; chrX r = {fmt(nq['chrX']['r'], 4)}", "#published"))
     if tracking:
         case.append(("Against assemblies", f"{len(tracking)} of {len(hpst)} families", f"track HPRC assemblies with r ≥ 0.95 in {(sat.get('hprc') or {}).get('n_samples', 0)} people", "#assemblies"))
     P.h('<div class="tiles case">' + "".join(f'<a class="tile" href="{h}"><div class="label">{esc(l)}</div><div class="value">{v}</div><div class="note">{esc(t)}</div></a>' for l, v, t, h in case) + "</div>")
@@ -230,7 +235,9 @@ NGS-PCA's genome-wide coverage PCs are applied where available.</dd>
 2×126, 2015; Illumina Platinum, HiSeq 2000 2×100, 2012–13), compared with anchor windows chosen with the family held out. Hall, Turner
 &amp; Queitsch (<em>Sci Rep</em> 2021) published 18S copy number for 2,419 of these CRAMs as read depth relative to chromosome 1 with
 duplicate-flagged reads excluded. HPRC release-2 assemblies of cohort samples give the size of every satellite array (CenSat annotation,
-both haplotypes); a class is compared only where arrays containing gaps are immaterial.</dd>
+both haplotypes); a class is compared only where arrays containing gaps are immaterial. NGS-PCA's per-sample QC for the same cohort
+(mosdepth, 1-kb bins, duplicate-flagged reads excluded) gives mitochondrial copies per cell, the X and Y coverage ratios and the autosomal
+depth by a coverage route.</dd>
 <dt>Provenance</dt><dd>Engine builds: {eng}. Resource bundle {esc(m.get("bundle"))}; panel {", ".join(esc(x) for x in m["panel_sha"]) or "–"},
 controls {", ".join(esc(x) for x in m["controls_sha"]) or "–"}{(", sinks " + ", ".join(esc(x) for x in m["sinks_sha"])) if m["sinks_sha"] else ""}
 (SHA-256 prefixes; one of each means one cohort). Read length {", ".join(str(x) for x in qc["read_length"])}; placement grid
@@ -434,6 +441,29 @@ estimate ({esc(hall["calibrated_column"])}/2): r = {fmt(hall["calibrated"].get("
                 "Same CRAMs, two pipelines", "Per haploid genome, as they report it.")
     else:
         P.h("<p>Appears when genomes in Hall et al.'s table (their Supplementary Data 1, the 2,504 unrelated samples) have been counted.</p>")
+    if qc_ok:
+        mt, xx, yy, dp = nq["mtdna"], nq["chrX"], nq["chrY_men"], nq["depth"]
+        mos = ""
+        if nq["mosaic_X"] or nq["mosaic_Y"]:
+            mos = (f' The {len(nq["mosaic_X"])} women and {len(nq["mosaic_Y"])} men whose cultures have lost part of an X or a Y read the same by both routes'
+                   + (f' (for example {esc(nq["mosaic_X"][0]["sample"])}: {fmt(nq["mosaic_X"][0]["ours"], 2)} here, {fmt(nq["mosaic_X"][0]["theirs"], 2)} there).' if nq["mosaic_X"] else "."))
+        P.h(f'''<h3>NGS-PCA's coverage QC on the same files</h3>
+<p><a href="https://github.com/jlanej/NGS-PCA">NGS-PCA</a> computes, from mosdepth coverage of the same CRAMs in 1-kb bins with duplicate-flagged reads
+excluded, mitochondrial copies per cell as twice the chrM mean coverage over the median autosomal coverage, and the X and Y coverage ratios. On the
+{nq["n"]:,} shared genomes, mitochondrial copies per cell agree at r = <strong>{ci(mt, 3)}</strong>, theirs {fmt(mt["ratio"]["median"], 3)}× ours
+(10–90% {fmt(mt["ratio"]["q10"], 3)}–{fmt(mt["ratio"]["q90"], 3)}; SD of the log ratio {fmt(mt["ratio"]["sd_log"], 3)}); chrX at r = {fmt(xx["r"], 4)}, ratio
+{fmt(xx["ratio"]["median"], 3)}; autosomal depth at r = {fmt(dp["r"], 3)}, theirs {fmt(dp["ratio"]["median"], 2)}× ours. Sex inferred by the two agrees in
+{nq["sex_agree"]:,} of {nq["sex_n"]:,}.{mos} The chrY ratio in men is compressed and noisier by the coverage route (median
+{fmt(nq["chrY_intact_men"].get("median"), 2)} in men with an intact Y, r = {fmt(yy["r"], 2)} against our 40 X-degenerate regions), since a whole-chromosome
+mean includes sequence that maps poorly. The mitochondrial offset lies in the direction of the duplicate flag, which mosdepth honours and NGS-DOSE
+does not: a 16.6-kb genome at several thousand-fold depth saturates the positions a duplicate marker can distinguish, and the ratio falls with
+depth (r = {fmt(nq["mtdna_ratio_vs_depth"].get("r"), 2)}).</p>''')
+        P.h('<div class="grid2">')
+        P.chart("qc_mtdna", dict(type="scatter", x="chrM.copies", y="ngspca.MTDNA_CN", xlabel="NGS-DOSE, mitochondrial genomes per cell", ylabel="NGS-PCA, mtDNA copy number", identity=True, fit=True),
+                "Mitochondrial copies per cell, two routes", f"r = {fmt(mt['r'], 3)}; the diagonal is equality.")
+        P.chart("qc_chrX", dict(type="scatter", x="truth.chrX", y="ngspca.chrX", group=dict(col="sex_inferred", levels=sex_levels), xlabel="NGS-DOSE, chrX copies (60 regions)", ylabel="NGS-PCA, 2 × chrX coverage ratio", identity=True),
+                "chrX copies, two routes", f"r = {fmt(xx['r'], 4)}; the cultures that have lost part of an X sit off the clusters in both.")
+        P.h("</div>")
     P.end()
 
     # ---------------------------------------------------------------- 3.8 assemblies
@@ -580,7 +610,7 @@ landed.</li>
     P.h(f'''<p>The counts files under <code>counts_scan/</code> and <code>counts_fetch/</code> are the primary data: about 240 kB per whole-file scan and
 70 kB per fetch, no reads, no genotypes. Everything above is computed from them:</p>
 <pre>pip install ngsdose        # or: apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
-ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ -o docs/</pre>
+ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ --qc ngspca_sample_qc.tsv -o docs/</pre>
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
 <code>data/transmission.tsv</code>, <code>data/pcsweep.tsv</code>, <code>data/satellites_hprc.tsv</code>, <code>data/flags.tsv</code>; the numbers
 in the prose, <code>report.json</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs

@@ -102,6 +102,14 @@ hides duplicates from the marker), by an amount that differs between samples (0.
 control rate). **What it rules out:** that the number is idiosyncratic to this code — and it
 explains the one difference. *Panel f.*
 
+A second independent pipeline covers the dosage path: NGS-PCA's per-sample QC of the same CRAMs
+(mosdepth coverage, duplicate-flagged reads excluded) gives mitochondrial copies per cell that
+agree with ours at r = 0.995 on 372 genomes (theirs 0.92× ours, again the duplicate flag: a
+16.6-kb genome at thousands-fold depth saturates the positions a duplicate marker distinguishes,
+and the ratio falls with depth), a chrX coverage ratio that agrees at r = 0.9998, sex in 372 of
+372, and the same seven women and five men with partial loss of an X or a Y. The page's
+section 3.7 carries it (`--qc`).
+
 ## 7. Against long-read assemblies
 
 Assemblies collapse the rDNA, so they are no truth for it; but six of the 333 genomes have HPRC
