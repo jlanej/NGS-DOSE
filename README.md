@@ -131,7 +131,7 @@ ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt -o docs
 
 ```bash
 # whole-file scan, the full-accuracy mode: placement-independent, the only mode for dispersed sequence (the
-# experimental satellite families, the telomeric repeat), and a record of where class reads were aligned and
+# experimental satellite families; the telomeric repeat is fetchable), and a record of where class reads were aligned and
 # what else is in those 1-kb bins
 E=resources/experimental
 target/release/ngs-dose count -m scan -@ 10 -i sample.cram -T ref.fa -c $B/controls.fa.gz -p $B/panel.k31.tsv.gz \
@@ -159,7 +159,7 @@ proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.
 | `rDNA45S.cn_single` | single-sample headline: anchor windows under the fragment-GC model |
 | `rDNA45S.18S`, `.28S`, … / `.flat` | per-feature estimates with / without the GC model; `18S.flat` is the estimator used in the UK Biobank literature |
 | `rDNA5S.cn`, `DJ.cn` | 5S units; distal junction (expected 10) |
-| `HSat3.mass_Mb`, `ACRO.mass_Mb`, `TEL.mass_Mb`, … | scan mode with the experimental panels: diploid sequence mass of a dispersed family (how far each is validated: `resources/experimental/README.md`) |
+| `HSat3.mass_Mb`, `ACRO.mass_Mb`, `TEL.mass_Mb`, … | the experimental panels: diploid sequence mass of a satellite family (scan mode) or of the telomeric repeat (either mode; its sinks are in the bundle). How far each is validated: `resources/experimental/README.md` |
 | `*.adj` | an estimate with coverage PCs regressed out (`ngsdose adjust`) |
 | `truth.auto`, `truth.chrX`, `truth.chrY` | held-out known-copy-number sequence (expected 2; 1 or 2; 1 or 0) |
 | `chrM.copies`, `chrEBV.copies` | mitochondrial genomes and EBV episomes per cell: covariates of the state of the tissue or cell line, measured like the truths |
@@ -181,8 +181,9 @@ a version tag makes a release with prebuilt engines, the Python package and the 
 (`.github/workflows/`). Before the cohort run every assumption the counts files
 rest on was audited against data; nine were wrong and are fixed (DESIGN.md §15). Validated so far on a
 12-sample, 4-trio pilot in which every sample has an independent library replicate.
-Experimental panels for dispersed sequence - ten satellite families and the telomeric repeat -
-ship under `resources/experimental/` for scan mode: in a first comparison with HPRC assemblies
+Experimental panels - ten satellite families, which are dispersed and need scan mode, and the
+telomeric repeat, which the aligner concentrates and either mode measures - ship under
+`resources/experimental/`: in a first comparison with HPRC assemblies
 of the same people (two samples) HSat3, HSat1A and the α-satellite HORs come out within 7% of
 the assembly; the rest are relative measures or undecided, and that README says which and why.
 Not yet done: the cohort run (3,202 samples, 602 trios) and with it the comparison with the 200

@@ -278,7 +278,7 @@ def cmd_sinks(a):
             for cls, (tot, inside) in sinks.capture(c, bed).items():
                 print(f"{c['sample']}\t{cls}\t{tot}\t{inside}\t{inside / max(tot, 1):.5f}")
         return
-    rows, stats = sinks.learn(a.counts, a.min_frac, a.pad, a.min_reads)
+    rows, stats = sinks.learn(a.counts, a.min_frac, a.pad, a.min_reads, classes=a.classes)
     with (sys.stdout if a.out == "-" else open(a.out, "w")) as fh:
         for contig, s0, e0, cls in rows:
             fh.write(f"{contig}\t{s0}\t{e0}\t{cls}\n")
@@ -385,6 +385,8 @@ def main(argv=None):
     k.add_argument("--evaluate", metavar="BED", help="instead of learning, report how much of each class an existing sinks BED captures")
     k.add_argument("--min-reads", type=int, default=25)
     k.add_argument("--pad", type=int, default=1000)
+    k.add_argument("--classes", nargs="+", metavar="CLASS", help="also learn sinks for these compositional classes (TEL: the aligner concentrates telomeric "
+                   "reads at the chromosome ends, so they are fetchable; the satellite families are dispersed and are not)")
     k.set_defaults(fn=cmd_sinks)
 
     s = sub.add_parser("selftest", help="simulation-based check of the estimator; needs no data")

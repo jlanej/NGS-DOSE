@@ -265,12 +265,17 @@ from elsewhere. One locus *is* exempted: chr21:8,986,604–8,988,749 is a 99.6%-
 piece of genuine rDNA that GRCh38 happens to place outside the annotated copies; without the
 exemption the 18S keeps a third of its k-mers.
 
-Dispersed sequence — satellite families, the telomeric repeat — is compositional, and it is the
-one kind of class that only a whole-file scan can measure: its reads are scattered across an
-alignment (3–54% of a satellite family on decoy and unplaced contigs), so there are no sinks to
-fetch. A positional class can always be added later and fetched from the few places its reads
-land; a dispersed one cannot, which is why a cohort that is scanned once is scanned with the
-**experimental** panels under `resources/experimental/` loaded:
+Dispersed sequence — the satellite families — is compositional, and it is the one kind of class
+that only a whole-file scan can measure: its reads are scattered across an alignment (3–54% of a
+satellite family on decoy and unplaced contigs), so there are no sinks to fetch. A positional
+class can always be added later and fetched from the few places its reads land; a dispersed one
+cannot, which is why a cohort that is scanned once is scanned with the **experimental** panels
+under `resources/experimental/` loaded. The telomeric repeat turned out not to be dispersed: in
+372 NYGC scans the aligner put 92% of its reads within 25 kb of a chromosome end and 60% into one
+10-kb bin of chr5p, essentially none on unplaced or decoy contigs, and the rest at a fixed set of
+interstitial loci (chr4 at 94 kb from the 4q end, chr18 at 113 kb from the 18q end, chr2:32.9 Mb,
+…). Sinks learned from 40 scans captured ≥ 99.87% of it in the other 332, so the bundle carries
+them (`ngsdose sinks --classes TEL`) and fetch mode measures the class when its panel is loaded.
 
 - *Ten satellite families* from the CHM13 CenSat annotation (HSat1A, HSat1B, HSat2, HSat3,
   β-satellite, α-satellite HORs, and four smaller families of the acrocentric short arms and
@@ -301,6 +306,9 @@ land; a dispersed one cannot, which is why a cohort that is scanned once is scan
   interstitial telomeric sequence also has, and an exact 31-mer is lost to one sequencing error
   where TelSeq's hexamer count is not. The per-read share of k-mers that hit is recorded for every
   class (`hit_frac`), so the threshold can be chosen, and calibrated against TelSeq, afterwards.
+  Fetchable through the bundle's sinks (above); the whole-file count and the count inside the
+  chromosome-end windows an NGS-TL/TelSeq-style query would retrieve agree at r = 0.9997 across
+  the 372 scans.
 
 ## 6. Controls and the fragment-GC model
 
