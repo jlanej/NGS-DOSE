@@ -82,6 +82,11 @@ input.filter { font: inherit; font-size: 14px; padding: 6px 10px; border: 1px so
 .good i { background: var(--good); } .warn i { background: var(--warn); } .critical i { background: var(--critical); }
 .small { font-size: 14px; color: var(--ink-2); }
 details { margin: 10px 0; } summary { cursor: pointer; color: var(--ink-2); }
+dl.methods { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 12px 0; max-width: 900px; }
+dl.methods dt { font-weight: 600; color: var(--ink); white-space: nowrap; }
+dl.methods dd { margin: 0; color: var(--ink-2); }
+.summary p { max-width: 900px; }
+@media (max-width: 640px) { dl.methods { grid-template-columns: 1fr; gap: 2px 0; } dl.methods dd { margin-bottom: 8px; } }
 .callout { border-left: 3px solid var(--s1); padding: 4px 14px; margin: 14px 0; background: var(--s1-wash); border-radius: 0 6px 6px 0; max-width: 760px; }
 footer { margin-top: 48px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 14px; }
 @media (max-width: 640px) { header.mast h1 { font-size: 24px; } .hero .n { font-size: 40px; } .grid2 { grid-template-columns: 1fr; } table.data th { position: static; } }

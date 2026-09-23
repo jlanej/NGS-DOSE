@@ -22,7 +22,7 @@ def report(tmp_path_factory):
                                        ("SH032", "HG00514", "HG00512", "HG00513", 2, "CHS", "EAS"), ("PR05", "HG00733", "HG00731", "HG00732", 2, "PUR", "AMR")):
         lines += [f"{fam} {c} {f} {m} {cs} {pop} {sp}", f"{fam} {f} 0 0 1 {pop} {sp}", f"{fam} {m} 0 0 2 {pop} {sp}"]
     ped.write_text("\n".join(lines) + "\n")
-    subprocess.run([sys.executable, "-m", "ngsdose", "report", "--fetch", str(PILOT / "counts_nygc"), "-p", str(ped), "--hall", str(PILOT / "hall2021_MOESM1.txt"),
+    subprocess.run([sys.executable, "-m", "ngsdose", "report", "--fetch", str(PILOT / "counts_nygc"), "-p", str(ped), "--hall", str(PILOT / "hall2021_MOESM1.txt"), "--pilot", str(PILOT),
                     "--pcs", str(ROOT / "example/1000G/ngspca/svd.pcs.txt"), "-o", str(out), "-j", "2", "--as-of", "2026-09-22"], check=True, cwd=ROOT, capture_output=True)
     return out
 
@@ -37,7 +37,7 @@ def test_outputs_exist_and_are_reproducible(report):
     assert "NaN" not in visible and "None" not in visible.replace("None of", "") and "nan" not in visible.split("<style>")[1].split("</style>")[0]
     # the second run reuses the cached estimates and produces the same page
     first = html
-    subprocess.run([sys.executable, "-m", "ngsdose", "report", "--fetch", str(PILOT / "counts_nygc"), "-p", str(report / "ped.txt"), "--hall", str(PILOT / "hall2021_MOESM1.txt"),
+    subprocess.run([sys.executable, "-m", "ngsdose", "report", "--fetch", str(PILOT / "counts_nygc"), "-p", str(report / "ped.txt"), "--hall", str(PILOT / "hall2021_MOESM1.txt"), "--pilot", str(PILOT),
                     "--pcs", str(ROOT / "example/1000G/ngspca/svd.pcs.txt"), "-o", str(report), "-j", "2", "--as-of", "2026-09-22"], check=True, cwd=ROOT, capture_output=True)
     assert (report / "index.html").read_text() == first
 
@@ -52,6 +52,8 @@ def test_the_numbers_are_the_pilots(report):
     h = d["hall"]
     assert h["n"] == 5 and h["flat"]["r"] > 0.97 and 1.05 < h["flat_ratio"] < 1.1 and 1.0 < h["dup_corrected_ratio"] < 1.05
     assert any("HG00732" == s and "chrX" in f for s, f in d["flags"])            # the culture that lost an X
+    rep = d["replicates"]                                                          # the same twelve people on an older technology
+    assert rep["n"] == 12 and rep["table"]["calibrated"]["icc"] > 0.95 and rep["table"]["flat"]["icc"] < 0.5 and rep["table"]["flat_centred"]["icc"] > 0.8
     assert len(d["samples"]) == 12 and all(s["sex_inferred"] in ("M", "F") for s in d["samples"])
     cols = (report / "data" / "cohort.tsv").read_text().splitlines()[0].split("\t")
     assert {"sample", "rDNA45S.cn", "truth.chrY", "chrM.copies", "flags", "sex_inferred"} <= set(cols)

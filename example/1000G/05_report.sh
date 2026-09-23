@@ -12,7 +12,7 @@
 set -euo pipefail
 source "${SLURM_SUBMIT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/config.sh"
 OUT="${REPORT_OUT:-$WORK_DIR/report}"; mkdir -p "$OUT"
-args=(-p "$PEDIGREE" --hall "$EX_DIR/pilot/hall2021_MOESM1.txt" --pcs "$NGSPCA_DIR/svd.pcs.txt" -o "$OUT" -j "${SLURM_CPUS_PER_TASK:-8}" --cache "${REPORT_CACHE:-$WORK_DIR/report_cache}")
+args=(-p "$PEDIGREE" --hall "$EX_DIR/pilot/hall2021_MOESM1.txt" --pilot "$EX_DIR/pilot" --pcs "$NGSPCA_DIR/svd.pcs.txt" -o "$OUT" -j "${SLURM_CPUS_PER_TASK:-8}" --cache "${REPORT_CACHE:-$WORK_DIR/report_cache}")
 [ -d "$WORK_DIR/counts_scan" ] && [ -n "$(ls "$WORK_DIR"/counts_scan/*.json.gz 2>/dev/null)" ] && args+=(--scan "$WORK_DIR/counts_scan")
 [ -d "$WORK_DIR/counts_fetch" ] && [ -n "$(ls "$WORK_DIR"/counts_fetch/*.json.gz 2>/dev/null)" ] && args+=(--fetch "$WORK_DIR/counts_fetch")
 [ -d "$WORK_DIR/hprc_censat" ] && args+=(--censat "$WORK_DIR/hprc_censat")     # from 04_hprc_satellites.sh, if it has run

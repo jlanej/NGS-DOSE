@@ -1,9 +1,11 @@
 """`ngsdose report`: one static, self-contained page from whatever counts files exist.
 
-The page introduces what NGS-DOSE measures and why, and then shows - computed afresh from the
-counts files it was given - the evidence that the measurement works: sequence of known copy
-number in every sample, the targeted fetch against the whole-file scan of the same file,
-transmission through trios, and the covariates of the cell line. It is meant to be regenerated
+The page states the rationale and the method, then shows - computed afresh from the counts
+files it was given - the validation: sequence of known copy number in every sample, the
+distal junction's whole-copy steps and their transmission, the targeted fetch against the
+whole-file scan, the same people on two sequencing technologies (the pilot), what the GC model
+removes, transmission through trios, an independent pipeline on the same files, and satellite
+arrays against assemblies; then the descriptive results and the limitations. It is meant to be regenerated
 as a cohort run proceeds (a sample's estimate is cached and reused if its counts file has not
 changed) and published as it stands, partial or complete.
 
@@ -472,6 +474,49 @@ def hall_comparison(rows, hall_path) -> dict | None:
                 points=[dict(sample=r["sample"], theirs=float(t), flat=float(o), cal=float(c)) for r, t, o, c in zip(shared, theirs, ours_flat, ours_cal)])
 
 
+def replicate_analysis(pilot_dir) -> dict | None:
+    """The pilot's twelve people, each sequenced twice: the NYGC library (NovaSeq 2x150, 2019) and
+    an older library of the same cell line (HGSVC HiSeq 2500 2x126, 2015, or Illumina Platinum
+    HiSeq 2000 2x100, 2012-13). Test-retest agreement of each estimator across the two
+    technologies, as a one-way intraclass correlation (absolute agreement, so an offset between
+    technologies counts against it), the pair SD of the log ratio and the within-person CV. The
+    calibrated 45S values are those with the anchor windows chosen with the person's family held
+    out (`evaluate_pilot.py`), so the cross-technology level is out of sample."""
+    if not pilot_dir:
+        return None
+    import csv
+    d = Path(pilot_dir)
+    held, rep = d / "pilot_heldout.tsv", d / "pilot_replicates.tsv"
+    if not held.exists():
+        return None
+    H = list(csv.DictReader(open(held), delimiter="\t"))
+    R = {r["sample"]: r for r in csv.DictReader(open(rep), delimiter="\t")} if rep.exists() else {}
+    pairs = {"calibrated": ("45S, calibrated, anchors chosen with the family held out", [(float(r["nygc"]), float(r["replicate"]), r["sample"]) for r in H]),
+             "flat": ("45S, 18S depth ratio, no GC model", [(float(r["nygc_18S_flat"]), float(r["replicate_18S_flat"]), r["sample"]) for r in H])}
+    for key, label, a, b in (("rDNA5S", "5S, fragment-GC model", "rDNA5S, fragment-GC model [NYGC]", "rDNA5S, fragment-GC model [replicate]"),
+                             ("DJ", "distal junction, fragment-GC model", "DJ, fragment-GC model [NYGC]", "DJ, fragment-GC model [replicate]")):
+        if R and all(a in R[s] and b in R[s] for s in R):
+            pairs[key] = (label, [(float(R[s][a]), float(R[s][b]), s) for s in sorted(R)])
+
+    def stats(xy):
+        x, y = np.array([q[0] for q in xy]), np.array([q[1] for q in xy])
+        lr = np.log(y / x)
+        n, mean = len(x), (x + y) / 2
+        msb, msw = 2 * float(mean.var(ddof=1)), float(((x - y) ** 2).sum() / (2 * n))
+        return dict(n=n, mean_log_ratio=float(lr.mean()), offset=float(np.exp(lr.mean()) - 1), sd_log_ratio=float(lr.std(ddof=1)),
+                    r=float(np.corrcoef(x, y)[0, 1]), icc=float((msb - msw) / (msb + msw)), within_cv=float(np.sqrt(msw) / mean.mean()))
+
+    out = dict(n=len(H), table={}, points=[])
+    for key, (label, xy) in pairs.items():
+        out["table"][key] = dict(label=label, **stats(xy))
+    # the depth ratio with its offset between technologies removed: what a batch correction would leave
+    off = float(np.exp(out["table"]["flat"]["mean_log_ratio"]))
+    out["table"]["flat_centred"] = dict(label="45S, 18S depth ratio, offset between technologies removed", **stats([(x, y / off, q) for x, y, q in pairs["flat"][1]]))
+    for si, key in enumerate(("calibrated", "flat")):
+        out["points"] += [dict(sample=q, x=x, y=y, si=si) for x, y, q in pairs[key][1]]
+    return out
+
+
 def biology(rows) -> dict:
     """The relations the cohort can test: 45S with 5S, 45S with the culture's mitochondrial content and
     EBV load, the late-replicating controls with each other (the S-phase hypothesis), and the
@@ -596,6 +641,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         data["trios_adjusted"] = trio_analysis(rows, trio_list, population, adj_cols)
     data["satellites"] = satellite_analysis(rows, a.censat)
     data["hall"] = hall_comparison(rows, a.hall)
+    data["replicates"] = replicate_analysis(a.pilot)
     for r in rows:
         r["flags"] = "; ".join(flags_for(r, majority_engine))
     data["flags"] = [(r["sample"], r["flags"]) for r in rows if r["flags"]]
@@ -670,6 +716,7 @@ def add_arguments(ap):
     ap.add_argument("--pcs", help="NGS-PCA svd.pcs.txt (with svd.singularvalues.txt and svd.bins.txt beside it)")
     ap.add_argument("--censat", help="directory of HPRC CenSat annotations (<sample>_<hap>_...cenSat.bed)")
     ap.add_argument("--hall", help="Hall, Turner & Queitsch 2021 Supplementary Data 1 (per-sample table for the same CRAMs)")
+    ap.add_argument("--pilot", help="the pilot directory (pilot_heldout.tsv, pilot_replicates.tsv): the same twelve people on two sequencing technologies")
     ap.add_argument("--total", type=int, default=3202, help="samples the run will have when complete")
     ap.add_argument("--title", default="NGS-DOSE · 1000 Genomes 30× cohort")
     ap.add_argument("--as-of", help="date stamp (default: today)")
