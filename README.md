@@ -62,6 +62,20 @@ window efficiencies and anchors were established on three Illumina chemistries o
 
 Full tables: [example/1000G/pilot/pilot_report.md](example/1000G/pilot/pilot_report.md).
 
+## What the first 333 genomes show
+
+The cohort run is under way; its counts files and the page built from them accumulate in
+[NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G) (live at
+[jlanej.github.io/NGS-DOSE-1000G](https://jlanej.github.io/NGS-DOSE-1000G/)). The case that the
+method works — known copy numbers read correctly in every genome, a ten-copy paralog that steps
+in whole copies and whose steps are inherited, rDNA variation inherited with reliability 1 in
+42 trios, the same person agreeing across two sequencing technologies (ICC 0.98, against 0.19
+for the 18S depth ratio), r = 0.984 with an independent pipeline on the same files, and a
+one-minute fetch that returns 0.9997 of the whole-file scan — is laid out with its numbers, what
+each finding rules out, and what is not yet shown, in [docs/EVIDENCE.md](docs/EVIDENCE.md).
+
+![the evidence](docs/evidence.png)
+
 ## Quick start
 
 From source (the engine needs a Rust toolchain and libclang; the package needs numpy):

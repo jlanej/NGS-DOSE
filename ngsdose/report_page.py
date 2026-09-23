@@ -83,6 +83,34 @@ short-read genomes and checked against what is known — on the 1000 Genomes coh
 <div class="stamp">As of {esc(m["as_of"])}. Every number and figure on this page is recomputed from the counts files in this repository by
 <code>ngsdose report</code> ({esc(m["generator"])}); nothing is typed in. Partial results are published as they stand.</div></header>''')
 
+    # ---------------------------------------------------------------- the case, in numbers
+    a, X, Y, DJ, sx = kt["auto"], kt["chrX"], kt["chrY"], kt["DJ"], kt["sex"]
+    dj = kt.get("DJ_steps") or {}
+    t45 = next((t for t in tr["table"] if t["column"] == "rDNA45S.cn"), None)
+    gcb = bio.get("gc_bias") or {}
+    hall = data.get("hall") or {}
+    hp = (sat.get("hprc") or {}).get("stats") or {}
+    tracking = [c for c, st_ in hp.items() if st_.get("n", 0) >= 4 and st_.get("pearson", 0) >= 0.95]
+    case = [("Known copy numbers, every sample", f'{fmt(a.get("mean"), 3)} ± {fmt(a.get("sd"), 3)}', f"held-out autosomal sequence, truth 2, n = {a.get('n', 0):,}", "#truth")]
+    if sx.get("women_intact", {}).get("n"):
+        case.append(("Sex from the reads", f'{sx["n_inferred"] - len(sx["mismatch"]):,} of {sx["n_inferred"]:,}',
+                     f"chrX {fmt(sx['chrX_men_max'], 2)} at most in men, {fmt(sx['women_intact']['min'], 2)} at least in women", "#truth"))
+    if dj.get("carriers") is not None:
+        tot = dj["transmitted"] + dj["not_transmitted"]
+        case.append(("A ten-copy paralog", f'{fmt(DJ.get("median"), 2)} ± {fmt(dj.get("spread"), 2)}', f"distal junction; {sum(dj['near'].get(k, 0) for k in ('-2', '-1', '1', '2', -2, -1, 1, 2))} people one or two copies off, steps transmitted {dj['transmitted']} of {tot}", "#truth"))
+    if md["n_both"]:
+        c45 = md["columns"].get("rDNA45S.cn_single", {})
+        case.append(("Fetch = scan", fmt(c45.get("median"), 4), f"45S, {md['n_both']:,} samples both ways, range {fmt(c45.get('min'), 4)}–{fmt(c45.get('max'), 4)}", "#modes"))
+    if t45 and "R_lo" in t45:
+        case.append(("Inherited", fmt(min(t45["R"], 1.0), 2), f"45S transmission reliability ({fmt(t45['R_lo'], 2)}–{fmt(t45['R_hi'], 2)}), {t45['n_trios']} trios", "#trios"))
+    if gcb.get("flat_vs_gc", {}).get("n"):
+        case.append(("What the GC model removes", f'r {fmt(gcb["flat_vs_gc"].get("r"), 2)} → {fmt(gcb["modelled_vs_gc"].get("r"), 2)}', "how much the estimate follows the library's GC bias, before and after", "#gcmodel"))
+    if hall.get("n", 0) >= 3:
+        case.append(("Another pipeline, same files", f'r = {fmt(hall["flat"].get("r"), 3)}', f"Hall et al. 2021, {hall['n']:,} shared samples; offset explained by the duplicate flag", "#published"))
+    if tracking:
+        case.append(("Against assemblies", f"{len(tracking)} of {len(hp)} families", f"track HPRC assemblies with r ≥ 0.95 in {(sat.get('hprc') or {}).get('n_samples', 0)} people", "#satellites"))
+    P.h('<div class="tiles case">' + "".join(f'<a class="tile" href="{h}"><div class="label">{esc(l)}</div><div class="value">{v}</div><div class="note">{esc(n)}</div></a>' for l, v, n, h in case) + "</div>")
+
     # ---------------------------------------------------------------- 1. what and why
     P.section("what", "What is being measured, and why", "What and why")
     P.h('''<p class="lede">Every human genome carries a few hundred copies of the ribosomal DNA unit — the 43-kb sequence that
@@ -141,7 +169,6 @@ cohort accumulates. The method and its own audit are described in
 
     # ---------------------------------------------------------------- 3. known truth
     P.section("truth", "Evidence 1 — sequence of known copy number, in every sample", "Known truth")
-    a, X, Y, DJ = kt["auto"], kt["chrX"], kt["chrY"], kt["DJ"]
     P.h(f'''<p class="lede">If the method is right, held-out autosomal sequence reads 2, the X reads 1 in men and 2 in women, the
 Y reads 1 and 0, and the distal junction reads 10 — in every sample, by the same code that measures the rDNA.</p>
 <p>Across {a.get("n", 0):,} samples the held-out autosomal regions read <strong>{pm(a)}</strong> copies (expected 2).
@@ -182,6 +209,12 @@ carrier's children and arise de novo in almost none. Within ±0.3 of a step: <st
                 rel = "; ".join(f"{r['who']} {esc(r['sample'])} {r['step']:+.2f}" for r in c["relatives"]) or "none counted"
                 rows_c.append([c["sample"], c.get("pop") or "", c.get("sex") or "", f"{c['step']:+.2f}", rel])
             P.table(rows_c, ["sample", "population", "sex", "step (copies)", "relatives counted, and their step"], numeric={3})
+            two = [c for c in dj["carriers"] if c["step"] <= -1.5 and c.get("arm_content")]
+            if two and dj.get("arm_ref"):
+                arm = [cls for cls in ("ACRO", "SST1", "bSat", "HSat3", "CER", "HSat1A", "aSatHOR") if cls in dj["arm_ref"]]
+                P.h("<p>A lost short arm takes its satellite arrays with it. The satellite families of the acrocentric short arms, in the two-copy carriers, as a fraction of the cohort's median (the pan-centromeric α-satellite, which every chromosome carries, is the control):</p>")
+                P.table([[c["sample"], f"{c['step']:+.2f}"] + [fmt(c["arm_content"].get(cls), 2) for cls in arm] for c in two]
+                        + [["cohort SD", ""] + [fmt(dj["arm_ref"][cls]["sd_rel"], 2) for cls in arm]], ["sample", "DJ step"] + arm, numeric=set(range(1, len(arm) + 2)))
             tot = dj["transmitted"] + dj["not_transmitted"]
             P.h(f'''<p>Where a carrier parent and a child were both counted: the step was transmitted in <strong>{dj["transmitted"]} of {tot}</strong>
 (half is the expectation for a heterozygous variant){"; " + ", ".join(esc(x) for x in dj["de_novo"]) + " carr" + ("ies" if len(dj["de_novo"]) == 1 else "y") + " a step that neither counted parent has" if dj["de_novo"] else "; no child carries a step that neither parent has"}.
@@ -260,6 +293,29 @@ child would be remarkable; the full cohort decides.</p>''')
             P.h("</details>")
     else:
         P.h(f'<p>{tr["n_complete"]} complete trio(s) among the samples counted so far (the cohort has {tr["n_total"]:,}); the transmission analysis appears at three, its confidence intervals at twenty.</p>')
+    P.end()
+
+    # ---------------------------------------------------------------- 5b. what the model removes
+    P.section("gcmodel", "Evidence 4 — what the model removes is the library, not the person", "GC model")
+    if gcb.get("flat_vs_gc", {}).get("n", 0) >= 10:
+        fv, mv, g65 = gcb["flat_vs_gc"], gcb["modelled_vs_gc"], gcb["gc65"]
+        P.h(f'''<p class="lede">Every library has its own GC bias, even within one chemistry: here the rate at which 65%-GC fragments were
+sequenced, relative to the library's mean, runs from {fmt(g65.get("q10"), 2)} to {fmt(g65.get("q90"), 2)} across the middle 80% of samples. The rDNA
+is GC-rich. A depth ratio that ignores this reads a library property as copy number.</p>
+<p>The 18S read-depth ratio as the literature computes it, divided by the calibrated estimate of the same sample, follows the library's GC bias with
+<strong>r = {fmt(fv.get("r"), 2)}</strong> ({fmt(fv.get("r_lo"), 2)} to {fmt(fv.get("r_hi"), 2)}; n = {fv["n"]:,}). The same 18S region under the fragment-GC
+model: r = {fmt(mv.get("r"), 2)} ({fmt(mv.get("r_lo"), 2)} to {fmt(mv.get("r_hi"), 2)}). Within one cohort the effect is a few percent (SD of the log ratio
+{fmt(gcb["flat_sd_log"], 3)}), small next to the {fmt(bio.get("cn45_cv"), 0, pct=True)} by which people differ — which is why every estimator has the same
+transmission reliability here — but it is systematic, and between sequencing technologies it is not small: in the pilot the same twelve people, sequenced years
+apart on different instruments, differed by 27% on the depth ratio and by 2% on the calibrated estimate.</p>''')
+        P.h('<div class="grid2">')
+        P.chart("gcflat", dict(type="scatter", x="gc_rel_65", y="rDNA45S.18S.flat_over_cn", xlabel="library: rate at 65% GC relative to its mean", ylabel="18S depth ratio / calibrated estimate", fit=True),
+                "Uncorrected 18S ratio against the library's GC bias", f"r = {fmt(fv.get('r'), 2)}: the ratio rises with the library's appetite for GC-rich fragments.")
+        P.chart("gcmodelled", dict(type="scatter", x="gc_rel_65", y="rDNA45S.18S_over_cn", xlabel="library: rate at 65% GC relative to its mean", ylabel="18S under the GC model / calibrated estimate", fit=True),
+                "The same region under the fragment-GC model", f"r = {fmt(mv.get('r'), 2)}: what is left does not follow the library.")
+        P.h("</div>")
+    else:
+        P.h("<p>Appears at ten samples.</p>")
     P.end()
 
     # ---------------------------------------------------------------- 6. rDNA across people
