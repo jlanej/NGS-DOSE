@@ -41,7 +41,7 @@ def f(x, nd=2):
     return "–" if x is None or not np.isfinite(x) else f"{x:,.{nd}f}"
 
 
-def wrap(s, width=118):
+def wrap(s, width=124):
     return "\n".join(textwrap.fill(par, width) for par in s.split("\n\n"))
 
 
@@ -79,12 +79,12 @@ class Doc:
             fig.text(0.07, 0.93, subtitle, fontsize=8.5, color=MUTED, va="top"); y = 0.90
         for head, body in blocks:
             lines = wrap(body).count("\n") + 1
-            need = 0.0148 * lines + (0.03 if head else 0.012)
+            need = 0.0136 * lines + (0.028 if head else 0.010)
             if y - need < 0.06:
                 self.close(fig); fig, y = self.page(title + " (continued)"), 0.92
             if head:
-                fig.text(0.07, y, head, fontsize=10.5, fontweight="bold", va="top"); y -= 0.024
-            fig.text(0.07, y, wrap(body), fontsize=8.6, va="top", linespacing=1.35); y -= need - (0.024 if head else 0)
+                fig.text(0.07, y, head, fontsize=10, fontweight="bold", va="top"); y -= 0.022
+            fig.text(0.07, y, wrap(body), fontsize=8.1, va="top", linespacing=1.3); y -= need - (0.022 if head else 0)
         self.close(fig)
 
     def done(self):
@@ -118,10 +118,19 @@ def summary_blocks(d, tr, fc):
             "on the controls, gives the expected count of any sequence; copy number is 2 × observed / expected per 250-bp window, and the windows of "
             "the 45S unit are calibrated across the cohort with the scale set by anchor windows on which three Illumina chemistries agreed. "
             "Two counting modes: scan reads the whole CRAM, fetch retrieves only the controls and the intervals where the aligner places class "
-            "reads. Cohort: the 1000 Genomes 30× CRAMs (NYGC, NovaSeq 2×150, GRCh38), all lymphoblastoid cell lines.")
-    test = ("In a trio, a child's copy number is the mean of the parents' plus segregation; measurement error is not inherited. The regression of "
-            "child on midparent therefore measures the share of a metric's variance that is real: reliability R = b − ρ(1 − b), with b the midparent "
-            "slope and ρ the spousal correlation, computed within population, with family-bootstrap intervals. The test is applied to every metric "
+            "reads. Cohort: the 1000 Genomes 30× CRAMs (NYGC, NovaSeq 2×150, GRCh38), all lymphoblastoid cell lines.\n\n"
+            "Three 45S estimators travel through every table. '45S, calibrated': the cohort model log C(i,w) = c(i) + a(w) + e(i,w) over every "
+            "retained 250-bp window w of the unit, fitted by median polish across samples i with the window efficiencies a(w) pinned to a median of "
+            "zero over the anchor windows; the estimate is exp(c(i)). '45S, single-sample anchor': 2 × observed / expected fragment ends over the "
+            "anchor windows alone, under the sample's own GC model, with no information from any other sample. '45S, 18S depth ratio': 2 × fragment "
+            "ends in the 18S gene / (positions × the control regions' mean rate), no GC model, no calibration — the literature's estimator.")
+    test = ("In a trio, a child's copy number is the mean of the parents' plus segregation; measurement error is not inherited. Values are centred "
+            "within population; the correlations are Pearson's. The child–midparent correlation cannot reach 1 even for a perfectly measured heritable "
+            "trait, because half of a child's variance is segregation, which the midparent does not predict (r is bounded by about √((1 + ρ)/2), 0.71 "
+            "at ρ = 0). The least-squares slope b of child on midparent has no such ceiling, so the slope, corrected for the spousal correlation ρ, is "
+            "the statistic that answers what share of the measured variance is real: reliability R = b − ρ(1 − b), 1 for a perfectly measured "
+            "heritable trait and 0 for pure error, with family-bootstrap 95% intervals and a one-sided p-value for the slope from 1,000 permutations "
+            "of children among families. The test is applied to every metric "
             "in four groups. The rDNA estimators are the claim. The satellite arrays are positive controls: their mass is a property of the genome, "
             "measured by the same k-mer machinery, and must be inherited. Known copy numbers (held-out autosomal sequence, the distal junction) have "
             "nothing to inherit. The culture's and the library's properties (mitochondrial and EBV content, depth, duplicate rate, GC bias, insert "
@@ -221,7 +230,8 @@ def scatter_pages(doc, tr, trios):
                 ax.plot([lo, hi], [a0 + b * lo, a0 + b * hi], color=INK, lw=1.2, alpha=0.7)
                 ax.set_xlim(lo - pad, hi + pad); ax.set_ylim(lo - pad, hi + pad)
                 t = by[col]
-                ax.text(0.03, 0.97, f"n {int(num(t['n_trios']))}  r {num(t['r_mid']):.2f}\nR {min(num(t['R']), 1):.2f}" + (f" ({num(t['R_lo']):.2f}–{num(t['R_hi']):.2f})" if np.isfinite(num(t.get("R_lo"))) else ""),
+                pp = num(t.get("perm_p"))
+                ax.text(0.03, 0.97, f"n {int(num(t['n_trios']))}  r {num(t['r_mid']):.2f}" + (f"  p {'<0.001' if pp < 0.001 else f'{pp:.3f}'}" if np.isfinite(pp) else "") + f"\nR {min(num(t['R']), 1):.2f}" + (f" ({num(t['R_lo']):.2f}–{num(t['R_hi']):.2f})" if np.isfinite(num(t.get("R_lo"))) else ""),
                         transform=ax.transAxes, fontsize=6.5, va="top", bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.5))
             ax.set_title(textwrap.shorten(label, 34, placeholder="…"), fontsize=7.5, color=GROUP_COLOR.get(grp, INK))
             ax.tick_params(labelsize=6)
@@ -230,7 +240,7 @@ def scatter_pages(doc, tr, trios):
             if k % 4 == 0:
                 ax.set_ylabel("child", fontsize=6.5)
         fig.text(0.07, 0.085, wrap("Raw values (not centred); grey diagonal: child equals midparent; black line: least squares. Printed: the report's statistics, computed within "
-                                   "population (n trios, child–midparent r, reliability R with its family-bootstrap 95% interval). Colours: blue rDNA estimators, green satellite "
+                                   "population (n trios, Pearson child–midparent r, the permutation p of the midparent slope, reliability R with its family-bootstrap 95% interval). Colours: blue rDNA estimators, green satellite "
                                    "arrays (positive controls), grey known copy numbers, orange culture and library (negative controls).", 140),
                  fontsize=7.4, va="top")
         doc.close(fig)

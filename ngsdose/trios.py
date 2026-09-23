@@ -113,6 +113,8 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
     if n_perm and n >= 10:
         null = np.array([_ols(mid, c[rng.permutation(n)])[0] for _ in range(n_perm)])
         out["perm_null_mean"], out["perm_null_sd"] = float(null.mean()), float(null.std())
+        # one-sided: how often a slope at least as large arises when children are shuffled among the families
+        out["perm_p"] = float((1 + np.sum(null >= out["midparent_slope"])) / (n_perm + 1))
     if n_boot and n >= 20:
         keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r", "r_midparent")
         draws = {k: [] for k in keys}

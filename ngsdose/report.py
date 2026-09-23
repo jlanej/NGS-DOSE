@@ -368,7 +368,7 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
         row = dict(column=col, label=label, group=TRIO_GROUP_OF.get(col.split(".adj")[0], ""), n_trios=t["n_trios"], R=t["reliability_midparent"],
                    R_single=t["reliability_single_parent"], R_mendel=t["reliability_mendel"], spousal_r=t["spousal_r"], slope=t["midparent_slope"],
                    slope_se=t["midparent_slope_se"], r_mid=t["r_midparent"], r_father=t["r_father"], r_mother=t["r_mother"],
-                   error_cv=t["error_cv"], perm_null_sd=t.get("perm_null_sd"))
+                   error_cv=t["error_cv"], perm_null_sd=t.get("perm_null_sd"), perm_p=t.get("perm_p"))
         if "reliability_midparent_ci95" in t:
             row["R_lo"], row["R_hi"] = t["reliability_midparent_ci95"]
             row["spousal_lo"], row["spousal_hi"] = t["spousal_r_ci95"]
