@@ -143,6 +143,15 @@ def page(data: dict, rows: list[dict]) -> str:
     rt = rep.get("table") or {}
     rc, rf, rfc = rt.get("calibrated"), rt.get("flat"), rt.get("flat_centred")
     women_ok = sx.get("women_intact", {}).get("n")
+    # men with one X; a man with two X chromosomes and a Y is described on his own
+    xxy = sx.get("men_extra_x") or []
+    men1x = sx.get("men_one_x") or X["M"]
+    one_x = " with one X" if xxy else ""
+    ngx = {r["sample"]: num_(r, "ngspca.chrX") for r in rows}
+    xxy_txt = ((" One man reads" if len(xxy) == 1 else f" {len(xxy)} men read") + " two X chromosomes and a Y ("
+               + "; ".join(f"{esc(d['sample'])}: X {fmt(d['chrX'], 2)}, Y {fmt(d['chrY'], 2)}"
+                           + (f", X {fmt(ngx[d['sample']], 2)} by NGS-PCA's coverage ratio" if math.isfinite(ngx.get(d["sample"], float("nan"))) else "") for d in xxy)
+               + "), as a 47,XXY karyotype would; " + ("he is" if len(xxy) == 1 else "they are") + " left out of the men's mean and SD.") if xxy else ""
     eng = ", ".join(f"{esc(k)} ({v:,})" for k, v in sorted(m["engines"].items(), key=lambda kv: -kv[1]))
 
     # ---------------------------------------------------------------- masthead
@@ -169,7 +178,7 @@ def page(data: dict, rows: list[dict]) -> str:
     if a.get("n"):
         r_.append(f'In {n:,} genomes, held-out autosomal sequence reads {pm(a)} copies (expected 2)')
         if women_ok:
-            r_[-1] += (f'; chrX reads {pm(X["M"])} in men and {pm(sx["women_intact"])} in women with an intact culture (expected 1 and 2); '
+            r_[-1] += (f'; chrX reads {pm(men1x)} in men{one_x} and {pm(sx["women_intact"])} in women with an intact culture (expected 1 and 2); '
                        f'chrY reads {pm(sx["men_intact_Y"])} in men and at most {fmt(Y["F"].get("max"), 3)} in women (expected 1 and 0)')
         r_[-1] += "."
     if sx.get("n_pedigree"):
@@ -212,7 +221,7 @@ def page(data: dict, rows: list[dict]) -> str:
     case = [("Known copy numbers, every genome", f'{fmt(a.get("mean"), 3)} ± {fmt(a.get("sd"), 3)}', f"held-out autosomal sequence, expected 2, n = {a.get('n', 0):,}", "#truth")]
     if women_ok:
         case.append(("Sex from the reads", f'{sx["n_inferred"] - len(sx["mismatch"]):,} of {sx["n_inferred"]:,}',
-                     f"chrX {fmt(sx['chrX_men_max'], 2)} at most in men, {fmt(sx['women_intact']['min'], 2)} at least in women", "#truth"))
+                     f"chrX {fmt(men1x.get('max', sx['chrX_men_max']), 2)} at most in men{one_x}, {fmt(sx['women_intact']['min'], 2)} at least in women", "#truth"))
     if dj.get("carriers") is not None:
         tot = dj["transmitted"] + dj["not_transmitted"]
         case.append(("A ten-copy paralog", f'{fmt(DJ.get("median"), 2)} ± {fmt(dj.get("spread"), 2)}', f"distal junction, median and robust SD; {n_off} people one or two copies off, steps transmitted {dj['transmitted']} of {tot}", "#djsteps"))
@@ -449,9 +458,9 @@ controls {", ".join(esc(x) for x in m["controls_sha"]) or "–"}{(", sinks " + "
     P.section("truth", "3.1 Sequence of known copy number, in every genome", "Known truth")
     P.h(f'''<p>If the model is right, held-out autosomal sequence reads 2, chrX reads 1 in men and 2 in women, chrY reads 1 and 0, and the
 distal junction reads 10, in every genome. Held-out autosomal sequence reads <strong>{pm(a)}</strong> copies (n = {a.get("n", 0):,}).
-chrX reads <strong>{pm(X["M"])}</strong> in {X["M"].get("n", 0):,} men'''
+chrX reads <strong>{pm(men1x)}</strong> in {men1x.get("n", 0):,} men{one_x}'''
         + (f''' and <strong>{pm(sx["women_intact"])}</strong> in the {sx["women_intact"]["n"]:,} women whose culture has kept both X chromosomes (at least 1.85 copies); {sx["n_mosaic_X"]} women read below that.
-chrY reads <strong>{pm(sx["men_intact_Y"])}</strong> in men with an intact Y and {fmt(Y["F"].get("mean"), 4)} in women (maximum {fmt(Y["F"].get("max"), 4)}); {sx["n_mosaic_Y"]} men read below 0.85.''' if women_ok
+chrY reads <strong>{pm(sx["men_intact_Y"])}</strong> in men with an intact Y and {fmt(Y["F"].get("mean"), 4)} in women (maximum {fmt(Y["F"].get("max"), 4)}); {sx["n_mosaic_Y"]} men read below 0.85.{xxy_txt}''' if women_ok
            else f''' and {pm(X["F"])} in {X["F"].get("n", 0):,} women; chrY {pm(Y["M"])} in men and {pm(Y["F"], 4)} in women.''')
         + f''' The distal junction reads <strong>{pm(DJ)}</strong>{" (cohort-calibrated)" if kt["DJ_col"] == "DJ.cn" else ""}.'''
         + (" Women read the X and every genome reads the distal junction a few percent below expectation; both are late-replicating sequence, which DNA from a growing culture under-represents (section 4)." if X["F"].get("median", 2) < 1.98 else "") + "</p>")
@@ -462,9 +471,9 @@ chrY reads <strong>{pm(sx["men_intact_Y"])}</strong> in men with an intact Y and
             f"in each of {a.get('n', 0):,} {cohort_}. Bars count genomes; the line marks 2. Mean ± SD {pm(a)}.")
     P.chart("chrX", dict(type="hist", col="truth.chrX", group=dict(col="sex_inferred", levels=sex_levels), xlabel="copies", ref=[dict(x=1, label="1"), dict(x=2, label="2")], xfmt=2),
             "Known copy number: chrX, by sex (expected 1 in men, 2 in women)",
-            f"60 chrX regions in each of {X['M'].get('n', 0) + X['F'].get('n', 0):,} {cohort_}: men blue, women orange, by the sex the reads show; lines at 1 and 2. Men {pm(X['M'])}"
+            f"60 chrX regions in each of {X['M'].get('n', 0) + X['F'].get('n', 0):,} {cohort_}: men blue, women orange, by the sex the reads show; lines at 1 and 2. Men{one_x} {pm(men1x)}"
             + (f"; women whose cell line has kept both X chromosomes {pm(sx['women_intact'])}. The {sx['n_mosaic_X']} women below 1.85 copies have lost an X in part of their cell line."
-               if women_ok else f"; women {pm(X['F'])}."))
+               if women_ok else f"; women {pm(X['F'])}.") + xxy_txt)
     P.chart("chrY", dict(type="hist", col="truth.chrY", group=dict(col="sex_inferred", levels=sex_levels), xlabel="copies", ref=[dict(x=0, label="0"), dict(x=1, label="1")], xfmt=2),
             "Known copy number: chrY, by sex (expected 1 in men, 0 in women)",
             f"40 X-degenerate chrY regions in each of {Y['M'].get('n', 0) + Y['F'].get('n', 0):,} {cohort_}: men blue, women orange; lines at 0 and 1. "

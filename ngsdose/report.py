@@ -256,6 +256,12 @@ def known_truth(rows) -> dict:
         ym = fin([num(r, "truth.chrY") for r in rows if r.get("sex_inferred") == "M"])
         out["sex"]["men_intact_Y"] = describe(ym[ym >= 0.85])
         out["sex"]["n_mosaic_X"], out["sex"]["n_mosaic_Y"] = int((xf < 1.85).sum()), int((ym < 0.85).sum())
+        # a man whose reads show two X chromosomes and a Y (47,XXY) is set apart from the men's figures, as a woman whose culture
+        # lost an X is set apart from the women's: neither is a failure of the X model
+        men = [(r["sample"], num(r, "truth.chrX"), num(r, "truth.chrY")) for r in rows if r.get("sex_inferred") == "M"]
+        extra = [dict(sample=s_, chrX=x, chrY=y) for s_, x, y in men if np.isfinite(x) and x > 1.5]
+        out["sex"]["men_extra_x"] = extra
+        out["sex"]["men_one_x"] = describe(fin([x for s_, x, _ in men if s_ not in {e["sample"] for e in extra}]))
     return out
 
 
