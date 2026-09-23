@@ -12,6 +12,19 @@ independent between individuals) and rho the observed spousal correlation,
 where R = s_T^2 / (s_T^2 + s_e^2) is the reliability. (The last line assumes random mating and
 independent assortment; de novo or culture-induced change inflates D and makes it conservative.)
 
+The last line also assumes the children are measured on their parents' scale. In general, with s the
+children's standard deviation over the parents' and equal parental variances, it is exactly
+
+    R_mendel = R + 1 + rho/2 - s^2
+
+so it adds to the midparent slope only whether the children vary more or less than their parents:
+more when variation arises new in them, and either way when a batch that measured only the children
+reads on another scale. `sd_ratio` reports s itself. A batch that multiplies the children's values by
+k multiplies the slope, and R with it, by k; `reliability_rescaled` is R with the children first
+rescaled to their parents' spread (b / s for b), which such a factor does not move and new variation in
+the children lowers. The two bracket the reliability when generation and batch go together, as in
+the 1000 Genomes 30x release, which sequenced the children after their parents.
+
 All three are inflated by error *shared within a family* (a trio libraried and sequenced
 together). The spousal correlation is the direct test: spouses share no dosage by descent, so
 after removing population means rho measures shared error (plus assortment). Technical
@@ -89,7 +102,8 @@ def centre_within_sex(values: dict[str, float], population: dict[str, str], sex:
 PAIRS = (("father_son", "father", "M"), ("father_daughter", "father", "F"), ("mother_son", "mother", "M"), ("mother_daughter", "mother", "F"))
 
 
-def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None, sex: dict[str, str], min_pairs: int = 10) -> dict:
+def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None, sex: dict[str, str], min_pairs: int = 10,
+           n_perm: int = 1000, seed: int = 1) -> dict:
     """Parent-to-child transmission split by the sex of parent and child.
 
     An autosomal quantity passes half of each parent's deviation to every child (single-parent slope
@@ -101,7 +115,11 @@ def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, st
     differs between the sexes for a sex-linked quantity. `father_contrast` compares the father-son with the
     father-daughter correlation (independent groups, Fisher z): near 0 for an autosomal quantity, large and
     positive for a Y-linked one, large and negative for an X-linked one; `father_slope_contrast` does the
-    same with the slopes."""
+    same with the slopes. `heterogeneity` asks whether the four pairings' correlations differ at all, as an
+    autosomal quantity's should not: Cochran's Q on Fisher's z (each pairing weighted by n - 3) over the trios
+    with all three values, referred to its distribution when the children's sexes are shuffled among the
+    families and each family's parents swap roles at random (`p`). `p_normal` refers Q to chi-square with 3
+    degrees of freedom instead, which assumes normal values and is far too small for skewed ones."""
     v = centre_within_sex(values, population or {}, sex)
     out = {}
     for key, who, child_sex in PAIRS:
@@ -122,7 +140,36 @@ def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, st
         out["father_contrast"] = dict(diff=a["r"] - d["r"], z=(fz(a["r"]) - fz(d["r"])) / se_z)
         diff, se = a["slope"] - d["slope"], float(np.hypot(a["slope_se"], d["slope_se"]))
         out["father_slope_contrast"] = dict(diff=diff, se=se, z=diff / se if se > 0 else float("nan"))
+    full = [t for t in trios if sex.get(t.child) in ("M", "F") and all(s in v for s in (t.child, t.father, t.mother))]
+    if n_perm and all(k in out for k, _, _ in PAIRS) and min(sum(sex[t.child] == "M" for t in full), sum(sex[t.child] == "F" for t in full)) >= min_pairs:
+        f, m, c = (np.array([v[getattr(t, who)] for t in full]) for who in ("father", "mother", "child"))
+        son = np.array([sex[t.child] == "M" for t in full])
+        q = _pairing_q(f, m, c, son)
+        rng = np.random.default_rng(seed)
+        null = np.empty(n_perm)
+        for j in range(n_perm):
+            swap = rng.random(len(full)) < 0.5
+            null[j] = _pairing_q(np.where(swap, m, f), np.where(swap, f, m), c, rng.permutation(son))
+        out["heterogeneity"] = dict(q=q, p=float((1 + np.sum(null >= q)) / (n_perm + 1)), p_normal=_chi2_sf3(q), n_trios=len(full), n_perm=n_perm)
     return out
+
+
+def _pairing_q(f, m, c, son) -> float:
+    """Cochran's Q over the four parent-child pairings' Fisher z, each weighted by its pairs less 3."""
+    zw = []
+    for parent in (f, m):
+        for sel in (son, ~son):
+            x, y = parent[sel], c[sel]
+            r = np.corrcoef(x, y)[0, 1] if np.std(x) > 0 and np.std(y) > 0 else 0.0
+            zw.append((np.arctanh(np.clip(r, -0.999999, 0.999999)), len(x) - 3))
+    zbar = sum(z * w for z, w in zw) / sum(w for _, w in zw)
+    return float(sum(w * (z - zbar) ** 2 for z, w in zw))
+
+
+def _chi2_sf3(x: float) -> float:
+    """Upper tail of chi-square with 3 degrees of freedom, in closed form."""
+    from math import erfc, exp, pi, sqrt
+    return float(erfc(sqrt(x / 2)) + sqrt(2 * x / pi) * exp(-x / 2))
 
 
 def _estimators(c, f, m) -> dict:
@@ -134,11 +181,15 @@ def _estimators(c, f, m) -> dict:
     V = float(np.var(np.r_[f, m], ddof=1))
     D = float(np.var(c - mid, ddof=1))
     r = lambda x, y: float(np.corrcoef(x, y)[0, 1]) if np.std(x) > 0 and np.std(y) > 0 else float("nan")
+    s = float(np.std(c, ddof=1) / np.sqrt(V)) if V > 0 else float("nan")
+    pm = float(np.mean(np.r_[f, m]))
     return dict(spousal_r=rho, midparent_slope=b, midparent_slope_se=se, reliability_midparent=b - rho * (1 - b),
                 r_midparent=r(mid, c), r_father=r(f, c), r_mother=r(m, c),
                 father_slope=bf, father_slope_se=sef, mother_slope=bm, mother_slope_se=sem,
                 reliability_single_parent=(bf + bm) - rho, mendel_D_over_V=D / V, reliability_mendel=1.5 - D / V,
-                parent_sd=float(np.sqrt(V)), child_minus_midparent_sd=float(np.sqrt(D)))
+                parent_sd=float(np.sqrt(V)), child_minus_midparent_sd=float(np.sqrt(D)),
+                sd_ratio=s, reliability_rescaled=(b / s) * (1 + rho) - rho if s > 0 else float("nan"),
+                mean_ratio=float(np.mean(c)) / pm if pm > 0 else float("nan"))
 
 
 def transmission(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None = None,
@@ -169,7 +220,8 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
         # one-sided: how often a slope at least as large arises when children are shuffled among the families
         out["perm_p"] = float((1 + np.sum(null >= out["midparent_slope"])) / (n_perm + 1))
     if n_boot and n >= 20:
-        keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r", "r_midparent")
+        keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r", "r_midparent",
+                "reliability_rescaled", "sd_ratio", "mean_ratio")
         draws = {k: [] for k in keys}
         for _ in range(n_boot):
             i = rng.integers(0, n, n)

@@ -91,7 +91,9 @@
     var d = document.createElement("div"); d.className = "legend";
     items.forEach(function (it) { var s = document.createElement("span"); var i = document.createElement("i");
       i.style.background = it.dash ? "repeating-linear-gradient(90deg, " + it.color + " 0 4px, transparent 4px 7px)" : it.color;
-      if (it.line) i.className = "line"; if (it.tick) i.className = "tick"; s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
+      if (it.line) i.className = "line"; if (it.tick) i.className = "tick";
+      if (it.ring) { i.className = "ring"; i.style.background = "transparent"; i.style.borderColor = it.color; }
+      s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
     container.insertBefore(d, container.firstChild);
   }
   function groupsOf(spec) {
@@ -313,6 +315,49 @@
     });
   }
 
+  // ---------------- forest: one estimate and its interval per row, grouped rows, vertical reference lines
+  function forest(container, spec) {
+    var rows = spec.rows || []; if (!rows.length) return empty(container);
+    var longest = Math.max.apply(null, rows.map(function (r) { return r.length; })), rowH = 20, groupH = 24;
+    var order = [], last = null;
+    rows.forEach(function (r, i) { var g = spec.groups ? spec.groups[i] : null; if (g !== last) { order.push({ header: g }); last = g; } order.push({ i: i }); });
+    var H = order.reduce(function (a, o) { return a + (o.header !== undefined ? groupH : rowH); }, 0);
+    var f = frame(container, 640, H + 50, { l: Math.min(230, 12 + longest * 6.6), t: 8, r: 16, b: 42 });
+    var num = function (v) { return typeof v === "number" && isFinite(v); };
+    var vals = [].concat(spec.lo, spec.hi, spec.est, spec.est2 || [], spec.refs || []).filter(num);
+    var lo = spec.xmin !== undefined ? spec.xmin : Math.min.apply(null, vals), hi = spec.xmax !== undefined ? spec.xmax : Math.max.apply(null, vals);
+    var xs = scale(lo, hi, 0, f.W), clamp = function (v) { return Math.max(lo, Math.min(hi, v)); };
+    if (spec.legend) legend(container, [{ color: COLORS[spec.ci || 0], label: spec.legend[0] }].concat(spec.est2 ? [{ color: COLORS[spec.ci || 0], label: spec.legend[1], ring: true }] : []), true);
+    var ticks = nice(lo, hi, 6), xf = stepFmt(ticks), colour = COLORS[spec.ci || 0];
+    ticks.forEach(function (t) { if (t < lo - 1e-9 || t > hi + 1e-9) return; var x = xs.map(t);
+      el("line", { x1: x, x2: x, y1: 0, y2: f.H, stroke: "var(--grid)", "stroke-width": 1 }, f.g);
+      text(f.g, x, f.H + 18, xf(t), { "text-anchor": "middle", fill: "var(--muted)" }); });
+    if (spec.xlabel) text(f.g, f.W / 2, f.H + 36, spec.xlabel, { "text-anchor": "middle" });
+    (spec.refs || []).forEach(function (r) { var x = xs.map(r); el("line", { x1: x, x2: x, y1: 0, y2: f.H, stroke: "var(--ink-2)", "stroke-width": 1 }, f.g); });
+    var y = 0;
+    order.forEach(function (o) {
+      if (o.header !== undefined) {                              // a group's title, on the surface so the gridlines stop behind it
+        var ht = text(f.g, -f.m.l + 4, y + 17, o.header, { "font-weight": 600, "font-size": 11.5, fill: "var(--ink)" });
+        try { var bb = ht.getBBox(); f.g.insertBefore(el("rect", { x: bb.x - 4, y: bb.y - 2, width: bb.width + 8, height: bb.height + 4, fill: "var(--surface)" }), ht); } catch (e) { /* not laid out */ }
+        y += groupH; return;
+      }
+      var i = o.i, cy = y + rowH / 2, e = spec.est[i], l = spec.lo[i], h = spec.hi[i];
+      text(f.g, -8, cy + 4, rows[i], { "text-anchor": "end" });
+      if (num(l) && num(h)) el("line", { x1: xs.map(clamp(l)), x2: xs.map(clamp(h)), y1: cy, y2: cy, stroke: colour, "stroke-width": 2, "stroke-linecap": "round" }, f.g);
+      if (num(e)) el("circle", { cx: xs.map(clamp(e)), cy: cy, r: 4.5, fill: colour, stroke: "var(--surface)", "stroke-width": 2 }, f.g);
+      var e2 = spec.est2 ? spec.est2[i] : null;                  // a second estimate of the same row: an open ring over the first
+      if (num(e2)) el("circle", { cx: xs.map(clamp(e2)), cy: cy, r: 4.5, fill: "none", stroke: colour, "stroke-width": 1.75 }, f.g);
+      var hit = el("rect", { x: -f.m.l, y: y, width: f.W + f.m.l, height: rowH, fill: "transparent" }, f.g);
+      var names = spec.legend || [];
+      var lines = [{ b: rows[i] }, { b: fmt(e, 2) + (num(l) && num(h) ? " (" + fmt(l, 2) + " to " + fmt(h, 2) + ")" : ""), k: names[0] || "" }];
+      if (num(e2)) lines.push({ b: fmt(e2, 2), k: names[1] || "" });
+      if (spec.extra && spec.extra[i]) lines.push({ k: spec.extra[i] });
+      hit.addEventListener("pointermove", function (ev) { showTip(ev, lines); });
+      hit.addEventListener("pointerleave", hideTip);
+      y += rowH;
+    });
+  }
+
   // ---------------- heatmap: metrics by statistics, grouped rows, values printed in the cells
   function heatmap(container, spec) {
     var rows = spec.rows || [], cols = spec.cols || []; if (!rows.length || !cols.length) return empty(container);
@@ -338,7 +383,7 @@
     });
   }
 
-  var TYPES = { hist: hist, scatter: scatter, strip: strip, lines: lines, meters: meters, heatmap: heatmap };
+  var TYPES = { hist: hist, scatter: scatter, strip: strip, lines: lines, meters: meters, heatmap: heatmap, forest: forest };
   Object.keys(DATA.charts || {}).forEach(function (id) {
     var c = document.getElementById("chart-" + id); if (!c) return;
     try { TYPES[DATA.charts[id].type](c, DATA.charts[id]); } catch (e) { empty(c, "chart failed: " + e.message); }

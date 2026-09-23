@@ -372,8 +372,13 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
                    R_single=t["reliability_single_parent"], R_mendel=t["reliability_mendel"], spousal_r=t["spousal_r"], slope=t["midparent_slope"],
                    slope_se=t["midparent_slope_se"], r_mid=t["r_midparent"], r_father=t["r_father"], r_mother=t["r_mother"],
                    error_cv=t["error_cv"], perm_null_sd=t.get("perm_null_sd"), perm_p=t.get("perm_p"))
+        # the children against their parents: spread and level, and R with the children on their parents' scale (trios.py)
+        row["sd_ratio"], row["mean_ratio"], row["R_rescaled"] = t["sd_ratio"], t["mean_ratio"], t["reliability_rescaled"]
         if "reliability_midparent_ci95" in t:
             row["R_lo"], row["R_hi"] = t["reliability_midparent_ci95"]
+            row["R_rescaled_lo"], row["R_rescaled_hi"] = t["reliability_rescaled_ci95"]
+            row["sd_ratio_lo"], row["sd_ratio_hi"] = t["sd_ratio_ci95"]
+            row["mean_ratio_lo"], row["mean_ratio_hi"] = t["mean_ratio_ci95"]
             row["spousal_lo"], row["spousal_hi"] = t["spousal_r_ci95"]
             row["r_mid_lo"], row["r_mid_hi"] = t["r_midparent_ci95"]
             # the error the interval allows: from its lower bound (a slope above 1 is noise around 1)
@@ -402,6 +407,18 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
             row[f"{c}.child"], row[f"{c}.father"], row[f"{c}.mother"] = v.get(t.child), v.get(t.father), v.get(t.mother)
         out["values"].append(row)
     return out
+
+
+def trio_batches(rows, trio_list) -> dict:
+    """The sequencing batch of each generation of the complete trios, from NGS-PCA's release batch. The 1000 Genomes 30x
+    release sequenced its 698 related genomes after the original 2,504, which puts the children in one batch and their
+    parents in the other: a difference between the batches is then a difference between the generations."""
+    batch = {r["sample"]: r.get("ngspca.batch") or "unknown" for r in rows}
+    complete = [t for t in trio_list if all(s in batch for s in (t.child, t.father, t.mother))]
+    count = lambda people: {b: people.count(b) for b in sorted(set(people))}
+    return dict(n=len(complete), child=count([batch[t.child] for t in complete]),
+                parent=count([batch[p] for t in complete for p in (t.father, t.mother)]),
+                shared=sum(batch[t.child] in (batch[t.father], batch[t.mother]) for t in complete))
 
 
 def transmission_by_sex(rows, trio_list, population, columns) -> dict:
@@ -869,6 +886,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     data["hall"] = hall_comparison(rows, a.hall)
     data["replicates"] = replicate_analysis(a.pilot)
     data["ngspca_qc"] = ngspca_qc_comparison(rows, a.qc)
+    if data["ngspca_qc"] and data["trios"]["n_complete"]:
+        data["trios"]["batches"] = trio_batches(rows, trio_list)
     for r in rows:
         r["flags"] = "; ".join(flags_for(r, majority_engine))
     data["flags"] = [(r["sample"], r["flags"]) for r in rows if r["flags"]]
@@ -890,7 +909,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         write_table([dict(metric=col, label=d["label"], group=d["group"],
                           **{f"{k}.{f}": d[k][f] for k, _, _ in T.PAIRS if k in d for f in ("n", "slope", "slope_se", "r", "r_lo", "r_hi")},
                           **{f"father_contrast.{f}": v for f, v in (d.get("father_contrast") or {}).items()},
-                          **{f"father_slope_contrast.{f}": v for f, v in (d.get("father_slope_contrast") or {}).items()}) for col, d in bs.items()],
+                          **{f"father_slope_contrast.{f}": v for f, v in (d.get("father_slope_contrast") or {}).items()},
+                          **{f"heterogeneity.{f}": v for f, v in (d.get("heterogeneity") or {}).items()}) for col, d in bs.items()],
                     out / "data" / "transmission_by_sex.tsv")
     if data.get("fetch_check"):
         fc, R_s, R_f = data["fetch_check"], {t["column"]: t for t in data["trios"]["table"]}, {t["column"]: t for t in data["fetch_check"]["trios"]["table"]}

@@ -519,6 +519,22 @@ interval of +0.03 to +0.14). The algebra is checked in `ngsdose selftest`: norma
 (log-normal) array sizes, additive and multiplicative error, spousal correlation, and error
 shared within families.
 
+The Mendelian line also assumes the children are measured on their parents' scale. With s the
+children's standard deviation over the parents', it is exactly R_mendel = R + 1 + ρ/2 − s², so it
+adds to the slope only whether the children vary more or less than their parents. In the 1000
+Genomes 30× release every child is among the 698 related genomes sequenced after the original
+2,504, where nearly every parent is, so generation and batch go together: a batch that reads a
+quantity on a scale k multiplies b, and R, by k. The cohort page therefore reports s, the
+children's level against their parents', and R with the children first rescaled to their
+parents' spread (b/s for b). A batch's scale moves R and leaves the rescaled R alone; new
+variation arising in the children does the reverse; the two bracket the reliability. On the
+first 135 trios they agree within a few hundredths for most metrics and part for HSat2 (s = 1.16,
+slope above 1, which new variation cannot produce) and ACRO (s = 0.84, which it cannot either).
+`trios.by_sex` asks whether the four parent–child pairings by sex differ, referring Cochran's Q
+on Fisher's z to its distribution under shuffled children's sexes and swapped parental roles:
+the chi-square reference is far too liberal for skewed quantities (the distal junction's
+pairings: p < 0.001 by chi-square, 0.51 by the shuffles).
+
 The cohort table carries its own controls for this analysis. `truth.auto` has no variance but
 error, so its "reliability" should be nil. The EBV load and the mitochondrial content of the
 culture (`chrEBV.copies`, `chrM.copies`; section 6) vary several-fold between cell lines and are
