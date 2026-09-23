@@ -86,10 +86,12 @@
     else { var y = ys.map(ref.y); el("line", { x1: 0, x2: f.W, y1: y, y2: y, stroke: "var(--ink-2)", "stroke-width": 1 }, f.g);
       if (ref.label) text(f.g, f.W - 4, y - 4, ref.label, { "text-anchor": "end", fill: "var(--ink-2)" }); }
   }
-  function legend(container, items) {
-    if (items.length < 2) return;
+  function legend(container, items, always) {
+    if (items.length < (always ? 1 : 2)) return;
     var d = document.createElement("div"); d.className = "legend";
-    items.forEach(function (it) { var s = document.createElement("span"); var i = document.createElement("i"); i.style.background = it.color; if (it.line) i.className = "line"; s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
+    items.forEach(function (it) { var s = document.createElement("span"); var i = document.createElement("i");
+      i.style.background = it.dash ? "repeating-linear-gradient(90deg, " + it.color + " 0 4px, transparent 4px 7px)" : it.color;
+      if (it.line) i.className = "line"; s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
     container.insertBefore(d, container.firstChild);
   }
   function groupsOf(spec) {
@@ -156,6 +158,16 @@
     var lf = spec.log ? function (v) { return fmt(Math.pow(10, v)); } : undefined;
     axes(f, xs, ys, spec.xlabel, spec.ylabel, lf, lf);
     if (spec.identity) el("line", { x1: xs.map(xlo - px), y1: ys.map(xlo - px), x2: xs.map(xhi + px), y2: ys.map(xhi + px), stroke: "var(--axis)", "stroke-width": 1 }, f.g);
+    // y = k x, clipped to the plot: k = 1 is equality without forcing the two axes onto one range, dashed for any other slope
+    var refKeys = [];
+    function slopeLine(k, dashed) {
+      if (spec.log || !(k > 0)) return false;
+      var a = Math.max(xs.lo, ys.lo / k), b = Math.min(xs.hi, ys.hi / k); if (!(b > a)) return false;
+      el("line", { x1: xs.map(a), y1: ys.map(k * a), x2: xs.map(b), y2: ys.map(k * b), stroke: dashed ? "var(--ink-2)" : "var(--axis)", "stroke-width": dashed ? 1.5 : 1, "stroke-dasharray": dashed ? "5 4" : null }, f.g);
+      return true;
+    }
+    if (spec.diagonal && slopeLine(1, false)) refKeys.push({ color: "var(--axis)", label: "equality", line: true });
+    if (spec.slope_ref && slopeLine(spec.slope_ref.k, true)) refKeys.push({ color: "var(--ink-2)", label: spec.slope_ref.label, line: true, dash: true });
     if (spec.xref !== undefined) refLine(f, xs, ys, { x: tx(spec.xref) }, true);
     if (spec.yref !== undefined) refLine(f, xs, ys, { y: tx(spec.yref), label: spec.yref_label }, false);
     var fitLabels = [];
@@ -190,8 +202,8 @@
       showTip(ev, lines);
     });
     f.svg.addEventListener("pointerleave", function () { if (hot !== null) dots[hot].setAttribute("r", 4); hot = null; hideTip(); });
-    legend(container, spec.legend ? spec.legend.map(function (l, i) { return { color: COLORS[i], label: l }; })
-      : groups.map(function (g, i) { return { color: COLORS[i], label: g.label }; }).filter(function (g) { return g.label; }));
+    legend(container, (spec.legend ? spec.legend.map(function (l, i) { return { color: COLORS[i], label: l }; })
+      : groups.map(function (g, i) { return { color: COLORS[i], label: g.label }; }).filter(function (g) { return g.label; })).concat(refKeys), refKeys.length > 0);
   }
 
   // ---------------- strip: values by group, with the median
