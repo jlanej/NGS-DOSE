@@ -28,6 +28,11 @@ def pm(d: dict, nd=3, key="mean") -> str:
     return s
 
 
+def doi(text: str, d: str) -> str:
+    """A citation that links to its DOI."""
+    return f'<a href="https://doi.org/{d}">{text}</a>'
+
+
 def ci(d: dict, nd=2) -> str:
     """'r (lo to hi)' from a corr() dict."""
     if not d or d.get("r") is None:
@@ -115,7 +120,9 @@ def page(data: dict, rows: list[dict]) -> str:
     # ---------------------------------------------------------------- summary
     P.section("summary", "Summary")
     s = ['<div class="summary"><p>NGS-DOSE measures the copy number of the 45S and 5S ribosomal DNA arrays, and of other sequence that reference genomes '
-         'collapse, from aligned short-read genomes. Reads are assigned to a sequence class by class-specific 31-mers and counted as fragment ends; a '
+         'collapse, from aligned short-read genomes, which exist for hundreds of thousands of people. Standard analysis of those files does not report it, '
+         'long-read assemblies leave the arrays in pieces, and read-depth ratios measure the library along with the person (<a href="#why">section 1</a>). '
+         'Reads are assigned to a sequence class by class-specific 31-mers and counted as fragment ends; a '
          'per-library model of fragment-GC bias, fitted on 800 single-copy control regions, gives the expected count of any sequence, and the windows '
          'of the rDNA unit are calibrated across the cohort. No orthogonal assay of rDNA copy number exists for these samples, so the measurement is '
          'validated against sequence of known copy number in every genome, inheritance in trios, the same individuals sequenced on two technologies, '
@@ -185,13 +192,69 @@ def page(data: dict, rows: list[dict]) -> str:
 
     # ---------------------------------------------------------------- 1. rationale
     P.section("rationale", "1. Rationale", "Rationale")
-    P.h('''<p>Each human genome carries several hundred copies of the 43-kb 45S ribosomal DNA unit, in tandem arrays on the short arms of
-the five acrocentric chromosomes, and a tandem array of the 5S unit on chromosome 1. Copy number varies severalfold between individuals
-and is heritable. It is not measured by standard genome analysis: a read from a sequence present in hundreds of copies has no unique
-alignment, the reference genome holds a single token copy, and variant and copy-number callers mask these regions.</p>
-<p>Hundreds of thousands of short-read genomes aligned to GRCh38 exist in biobanks and consortia. A measurement of multi-copy dosage
-that is accurate, cheap enough to run on those files and does not require reading them in full would make rDNA copy number a trait
-available at that scale.</p>
+    P.h(f"""<p>Each human genome carries several hundred copies of the 45S ribosomal DNA unit, about 45 kb long, in tandem arrays on the short
+arms of the five acrocentric chromosomes, and a tandem array of the 5S unit on chromosome 1. A single array spans from 50 kb to more than
+6 Mb, the two homologues of a chromosome almost never carry arrays of one size, and an array is rearranged in more than one meiosis in ten
+({doi("Stults et al., <em>Genome Res</em> 2008", "10.1101/gr.6858507")}). Total copy number varies severalfold between individuals and is heritable.</p>""")
+    # why a method is needed: what each technology gives now, with this cohort's numbers wherever it has them
+    ukb = 490_640                                               # genomes sequenced in UK Biobank (Nature 2025)
+    p01 = math.erfc(0.01 * math.sqrt((ukb - 2) / (1 - 0.01 ** 2)) / math.sqrt(2))      # a correlation of 0.01 at that size
+    e10 = math.floor(math.log10(p01))
+    du = bio["dup"]
+    faults = ["the rDNA is GC-rich", "parts of the unit drop out by amounts that depend on the chemistry"]
+    if du["ratio"].get("n"):
+        faults.append(f'the duplicate flag marks {fmt(du["rDNA"].get("median"), 1, pct=True)} of 45S reads against {fmt(du["control"].get("median"), 1, pct=True)} '
+                      f'of single-copy reads, so dropping flagged reads moves the ratio by a different amount in every genome (the two rates\' ratio runs from '
+                      f'{fmt(du["ratio"].get("min"), 2)} to {fmt(du["ratio"].get("max"), 2)})')
+    here = []
+    if gcb.get("flat_vs_gc", {}).get("n", 0) >= 10:
+        here.append(f'within one chemistry the 18S ratio\'s departure from the calibrated estimate follows each library\'s GC bias (r = {fmt(gcb["flat_vs_gc"]["r"], 2)}; <a href="#gcmodel">3.5</a>)')
+    if rc and rf:
+        here.append(f'the same people read {fmt(abs(rf["offset"]), 0, pct=True)} {"lower" if rf["offset"] < 0 else "higher"} by it on the older of two technologies '
+                    f'(intraclass correlation {fmt(rf["icc"], 2)}, against {fmt(rc["icc"], 2)} for the calibrated estimate; <a href="#replicates">3.4</a>)')
+    ra = rd.get("assemblies") or {}
+    asm = ""
+    if ra.get("n"):
+        fr = ra["fraction"]
+        asm = (f' Of the genomes counted here, {ra["n"]} ha{"ve" if ra["n"] > 1 else "s"} an HPRC release-2 assembly; '
+               + ("these hold " + f'{fmt(fr["median"], 0, pct=True)} ({100 * fr["min"]:.0f}–{fmt(fr["max"], 0, pct=True)})' if ra["n"] > 1 else "it holds " + fmt(fr["median"], 0, pct=True))
+               + f' of the rDNA the measured copy number implies, in stretches no longer than {fmt(ra["longest_stretch_Mb"]["max"], 2)} Mb, where the average'
+               f' array would be {fmt(ra["mean_array_Mb"]["median"], 1)} Mb (<code>data/rdna_hprc.tsv</code>).')
+    rak = "10.1016/j.xgen.2024.100562"
+    P.h(f"""<h3 id="why">Why a method is needed</h3>
+<p class="callout">Short-read genomes are the only genomes that exist at population scale: {ukb:,} in UK Biobank alone
+({doi("UK Biobank Whole-Genome Sequencing Consortium, <em>Nature</em> 2025", "10.1038/s41586-025-09272-9")}), where rDNA copy number
+estimated from them has been associated with blood-cell counts and kidney function ({doi("Rodriguez-Algarra, Evans &amp; Rakyan, <em>Cell Genomics</em> 2024", rak)})
+and with metabolic disease ({doi("Raj et al., medRxiv 2026", "10.64898/2026.01.09.26343685")}, a preprint). At that size a correlation of 0.01 between an
+estimate and a trait has p ≈ {p01 / 10 ** e10:.0f} × 10<sup>{str(e10).replace("-", "−")}</sup>, so whatever an estimate carries of the library, rather than
+the person, becomes a finding wherever the library also tracks the trait. Standard analysis does not give the number, and read-depth ratios,
+long reads and laboratory assays each fall short on scale or on the library (below). What is needed is a measurement that finds every rDNA
+read wherever the aligner put it (<a href="#modes">3.3</a>), predicts each library's count of GC-rich sequence from single-copy sequence in the same genome (<a href="#gcmodel">3.5</a>), holds its scale
+across chemistries (<a href="#replicates">3.4</a>), does not depend on the duplicate flag (<a href="#published">3.7</a>), reads a small part of
+each file (<a href="#modes">3.3</a>), and shows in every genome that it reads known copy numbers correctly (<a href="#truth">3.1</a>,
+<a href="#djsteps">3.2</a>). NGS-DOSE is one way to meet these. The tests on this page apply to any other, including the estimators of the
+studies above, and the 18S depth ratio is carried beside it throughout so that the difference can be seen.</p>
+<dl class="methods">
+<dt>Standard analysis</dt><dd>Reports no copy number. GRCh38 carries fewer than ten copies of the 45S transcribed region, on chr21 and two
+small contigs, where a genome has hundreds; the reads of every unit fall on those copies with no unique alignment, and variant and
+copy-number callers mask the loci.</dd>
+<dt>Read-depth ratio</dt><dd>Depth on the reference's rDNA relative to depth elsewhere in the genome, as in published studies
+({doi("Gibbons et al., <em>Nat Commun</em> 2014", "10.1038/ncomms5850")}; {doi("Hall et al., <em>Sci Rep</em> 2021", "10.1038/s41598-020-80049-y")};
+{doi("Rodriguez-Algarra et al. 2024", rak)}), runs on existing files. Without a model of the library it measures the library along with the
+person: {", ".join(faults[:-1])}{"," if len(faults) > 2 else ""} and {faults[-1]}. In UK Biobank its mean differs between the two sequencing centres
+({doi("Rodriguez-Algarra et al. 2024", rak)}).{(" Here, " + "; ".join(here) + ".") if here else ""}</dd>
+<dt>Long reads</dt><dd>The units are near-identical, which defeats assembly. Even in T2T-CHM13, three of the five arrays are model sequences,
+because ultra-long nanopore reads were not long enough to order their units ({doi("Nurk et al., <em>Science</em> 2022", "10.1126/science.abj6987")});
+in 156 acrocentric short arms assembled from HiFi, ultra-long nanopore and Hi-C data, the rDNA array collapsed in every one
+({doi("Lin et al., <em>Cell</em> 2026", "10.1016/j.cell.2026.05.035")}). Long reads, imaging and methylation have given the size and activity of
+each array in fifteen genomes ({doi("Potapova et al., <em>Cell Genomics</em> 2025", "10.1016/j.xgen.2025.101031")}).{asm}</dd>
+<dt>Molecular assays</dt><dd>Droplet digital PCR is precise (CHM13: 409 ± 9 copies; Nurk et al. 2022) and pulsed-field gels size single
+arrays (Stults et al. 2008), but each needs the DNA and a laboratory assay per person: in a biobank, every participant's stored DNA.</dd>
+</dl>
+<p class="small">The case is strongest for the rDNA. Long-read assemblies close most satellite arrays and are their truth here (<a href="#assemblies">3.8</a>),
+so for the satellites it is one of scale alone; telomeric content already has short-read estimators
+({doi("Ding et al., <em>Nucleic Acids Res</em> 2014", "10.1093/nar/gku181")}), and the class measured here is a relative one.</p>""")
+    P.h('''<h3>How the measurement is judged</h3>
 <p>Whether the measurement is correct cannot be settled by comparison with an assay, because none exists for these samples. It can be
 settled by comparison with what is known: (i) sequence of known copy number in every sample, measured by the same code;
 (ii) Mendelian transmission in the cohort's ''' + f"{tr['n_total']:,}" + ''' trios; (iii) the same individuals sequenced on different technologies;
@@ -472,7 +535,7 @@ depth (r = {fmt(nq["mtdna_ratio_vs_depth"].get("r"), 2)}).</p>''')
     if hp:
         st = hp["stats"]
         good = [cls for cls, st_ in st.items() if st_.get("n", 0) >= 4 and st_.get("pearson", 0) >= 0.95]
-        P.h(f'''<p>Assemblies collapse the rDNA and are no truth for it, but {hp["n_samples"]} of these genomes have HPRC release-2 assemblies whose CenSat
+        P.h(f'''<p>Assemblies collapse the rDNA and are no truth for it (<a href="#why">section 1</a>), but {hp["n_samples"]} of these genomes have HPRC release-2 assemblies whose CenSat
 annotation gives the size of every satellite array: the same kind of sequence, measured by the same k-mer machinery. A genome is compared in a
 class only when the arrays its assembly did not close are immaterial.{" " + ", ".join(good) + " track the assemblies across people with r ≥ 0.95." if good else ""}</p>''')
         P.table([[cls, s_["n"], s_.get("n_gapped", 0), fmt(s_.get("ratio_median"), 2), fmt(s_.get("sd_log"), 3), fmt(s_.get("pearson"), 2), fmt(s_.get("spearman"), 2)] for cls, s_ in st.items() if s_.get("n")],
@@ -612,7 +675,7 @@ landed.</li>
 <pre>pip install ngsdose        # or: apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
 ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ --qc ngspca_sample_qc.tsv -o docs/</pre>
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
-<code>data/transmission.tsv</code>, <code>data/pcsweep.tsv</code>, <code>data/satellites_hprc.tsv</code>, <code>data/flags.tsv</code>; the numbers
+<code>data/transmission.tsv</code>, <code>data/pcsweep.tsv</code>, <code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
 in the prose, <code>report.json</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
 (Byrska-Bishop et al., <em>Cell</em> 2022; AWS Open Data) with the {esc(m.get("bundle"))} resource bundle. Method, design document and
 audit: <a href="https://github.com/jlanej/NGS-DOSE">github.com/jlanej/NGS-DOSE</a>.</p>''')

@@ -28,3 +28,18 @@ def test_gap_containing_arrays_are_kept_apart(tmp_path):
     assert mass["HSat2"] == 44_000_000 and gapped["HSat2"] == 17_000_000      # a third of the class sits in an array nobody spanned
     assert mass["HSat3"] == 87_000_000 and gapped["HSat3"] == 100_000         # immaterial: 0.1%
     assert gapped["HSat2"] > h.MAX_GAPPED * (mass["HSat2"] + gapped["HSat2"]) and gapped["HSat3"] < h.MAX_GAPPED * mass["HSat3"]
+
+
+def test_rdna_the_assemblies_hold(tmp_path):
+    """The rDNA an assembly holds: records less than 1 kb apart on one contig are one stretch, a gap is
+    not sequence, and a stray rDNA-like fragment elsewhere still counts toward the total."""
+    from ngsdose.hprc import rdna_in_assembly
+    for hap, lines in (("hap1", ["c1\t20000\t420000\trDNA\t0\t.", "c1\t420500\t520000\trDNA\t0\t.", "c1\t520000\t530000\tcenSat(ACRO1,COMP)\t0\t.",
+                                 "c1\t36200000\t36203000\trDNA\t0\t.", "c2\t0\t2000000\tGAP,rDNA\t0\t."]),
+                       ("hap2", ["track name=x", "c3\t28000\t489000\trDNA\t0\t.", "c3\t489000\t489100\tGAP\t0\t."])):
+        (tmp_path / f"S1_{hap}_hprc_r2_v1.cenSat.bed").write_text("\n".join(lines) + "\n")
+    total, longest, n_files = rdna_in_assembly("S1", str(tmp_path))
+    assert n_files == 2
+    assert longest == 500_000                                   # 20,000-520,000: the 500-bp break is not a gap between arrays
+    assert total == 500_000 + 3_000 + 461_000                   # the 2-Mb gap record is not counted
+    assert rdna_in_assembly("S2", str(tmp_path)) == (0, 0, 0)
