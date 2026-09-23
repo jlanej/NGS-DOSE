@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 
 from .hprc import MAX_GAPPED
 from .report import ASSETS, fmt
@@ -43,6 +44,20 @@ def doi(text: str, d: str) -> str:
     return f'<a href="https://doi.org/{d}">{text}</a>'
 
 
+def sentence_case(s: str) -> str:
+    """A label as the start of a title: an all-lowercase first word is capitalised; a name such as bSat is left alone."""
+    first = s.split(" ", 1)[0]
+    return s[:1].upper() + s[1:] if first.islower() else s
+
+
+def unit_of(col: str) -> str:
+    """The unit a trio metric is plotted in."""
+    if col.endswith(".mass_Mb"):
+        return "Mb"
+    return {"chrM.copies": "genomes per cell", "chrEBV.copies": "episomes per cell", "depth": "×", "ctrl_dup_frac": "fraction flagged",
+            "gc_rel_65": "rate at 65% GC, relative", "insert_median": "bp"}.get(col, "copies")
+
+
 def ci(d: dict, nd=2) -> str:
     """'r (lo to hi)' from a corr() dict."""
     if not d or d.get("r") is None:
@@ -56,7 +71,7 @@ class Page:
         self.parts: list[str] = []
         self.charts: dict = {}
         self.toc: list[tuple[str, str]] = []
-        self.n_fig = 0
+        self.n_fig = self.n_supp = 0
 
     def h(self, s: str):
         self.parts.append(s)
@@ -68,14 +83,20 @@ class Page:
     def end(self):
         self.h("</section>")
 
-    def chart(self, id_: str, spec: dict, title: str, caption: str):
+    def chart(self, id_: str, spec: dict, title: str, caption: str, supp: bool = False):
         """A numbered figure that stands alone, so that a screenshot of it can be shared: the title says what is plotted, the
-        caption which genomes, what every colour and line is and what the figure shows, and the last line where it comes from."""
+        caption which genomes, what every colour and line is and what the figure shows, and the last line where it comes from.
+        Supplementary figures are numbered apart (S1, S2, ...)."""
         self.charts[id_] = spec
-        self.n_fig += 1
+        if supp:
+            self.n_supp += 1
+            number = f"S{self.n_supp}"
+        else:
+            self.n_fig += 1
+            number = str(self.n_fig)
         m = self.d["meta"]
         src = f'{esc(m["title"])} · {esc(m["as_of"])} · github.com/jlanej/NGS-DOSE'
-        self.h(f'<figure id="fig-{id_}"><div class="title">Figure {self.n_fig}. {esc(title)}</div><div class="chart" id="chart-{id_}"></div>'
+        self.h(f'<figure id="fig-{id_}"><div class="title">Figure {number}. {esc(title)}</div><div class="chart" id="chart-{id_}"></div>'
                f'<figcaption>{caption}<span class="src">{src}</span></figcaption></figure>')
 
     def tiles(self, items: list[tuple[str, str, str]]):
@@ -627,7 +648,7 @@ p-value (children shuffled among families) says whether a slope of that size ari
 the claim; the satellite arrays, whose mass is a property of the genome and must be inherited (positive controls); sequence of known
 copy number, which has nothing to inherit except the distal junction's whole-copy steps (3.2); and the culture's and the library's properties,
 which are not in the nuclear genome (negative controls). A method that measured library artefacts would light up the last group; one that measured nothing would light up
-none. HSat1B lives mostly on Yq and passes from father to son only, so its midparent statistics are diluted by design.'''
+none. HSat1B lives mostly on Yq and passes from father to son only, so its midparent statistics are diluted by design; the split by the sex of parent and child (<a href="#bysex">below</a>) tests it as it is inherited.'''
             + (" The last column repeats the reliability with the cohort layer and the trio test run on the fetch counts alone (3.3).</p>" if fR else "</p>"))
         P.chart("heat", dict(type="heatmap", rows=hm_rows, groups=hm_groups, cols=cols_hm, col_titles=titles, values=hm_vals, extra=hm_extra, lo=0, hi=1, nd=2),
                 f"Transmission of every metric through {tr['n_complete']:,} parent–child trios",
@@ -670,7 +691,88 @@ across technologies in the pilot (3.4); the full cohort decides.</p>''')
             P.h("<p>Paired family bootstrap of each estimator's reliability minus that of the published 18S depth ratio:</p>")
             P.table([[c["label"], fmt(c["delta"], 3), f"{fmt(c['lo'], 3)} to {fmt(c['hi'], 3)}", fmt(c["p_better"], 3)] for c in tr["compare"]],
                     ["estimator", "ΔR vs the published 18S ratio", "95% CI", "P(better)"], numeric={1, 2, 3})
-        P.h('<p class="small">A printable assessment built from these tables, with a child-against-midparent scatter for every metric, the fetch check and the assembly comparison: <a href="trio_report.pdf">trio_report.pdf</a>. Every trio\'s values: <code>data/trios.tsv</code>.</p>')
+        # ---- transmission by the sex of parent and child
+        nb = tr.get("by_sex") or {}
+        bs = nb.get("table") or {}
+        if bs:
+            from .report import TRIO_GROUPS
+            pair_cols = [("father_son", "father → son"), ("father_daughter", "father → daughter"), ("mother_son", "mother → son"), ("mother_daughter", "mother → daughter")]
+            hs_rows, hs_groups, hs_vals, hs_extra = [], [], [], []
+            for _, gl, cols in TRIO_GROUPS:
+                for col, label in cols:
+                    d = bs.get(col)
+                    if not d:
+                        continue
+                    hs_rows.append(label); hs_groups.append(gl)
+                    hs_vals.append([d[k]["r"] if k in d else None for k, _ in pair_cols])
+                    hs_extra.append([(f"{d[k]['n']} pairs; 95% CI {fmt(d[k]['r_lo'], 2)} to {fmt(d[k]['r_hi'], 2)}; slope {fmt(d[k]['slope'], 2)} ± {fmt(d[k]['slope_se'], 2)}"
+                                      if k in d else "") for k, _ in pair_cols])
+            half = sorted((d[k]["r_hi"] - d[k]["r_lo"]) / 2 for d in bs.values() for k, _ in pair_cols if k in d)
+            half = half[len(half) // 2] if half else None
+            contrast = lambda col: (bs[col].get("father_contrast") or {}).get("z", 0) or 0
+            # sex linkage is a property of genomic sequence: only the rDNA and the satellite arrays are read that way
+            genomic = lambda col: bs[col]["group"] in ("rDNA", "satellites")
+            ylinked = [col for col in bs if genomic(col) and contrast(col) > 3]
+            xlinked = [col for col in bs if genomic(col) and contrast(col) < -3]
+            other_far = [col for col in bs if not genomic(col) and abs(contrast(col)) > 3]
+            hint = [col for col in bs if 2 < abs(contrast(col)) <= 3]
+            lab = lambda col: bs[col]["label"]
+            P.h(f"""<h3 id="bysex">By the sex of parent and child</h3>
+<p>The midparent test assumes that each parent passes on half of what they carry, as they do for sequence on the autosomes. Sequence on the
+sex chromosomes is inherited differently: a father passes his Y whole to his sons and none of it to his daughters, and his X whole to his
+daughters and none of it to his sons, while a mother passes one of her two X chromosomes to every child. Split by the sex of parent and child,
+the correlation of child with parent is therefore about one half in all four pairings for a well-measured autosomal quantity; close to 1
+from father to son and 0 from father to daughter for a Y-linked one; 0 from father to son and high from father to daughter for an X-linked
+one. Correlations, not slopes, are compared here: a slope also carries the ratio of the child's spread to the parent's, which differs between
+men and women for a sex-linked quantity. Values are centred within population and sex, so that the difference between men and women is not
+read as transmission. {nb['n_sons']} of the trios have a son and {nb['n_daughters']} a daughter, so each pairing rests on about half the
+trios{f" and a correlation is uncertain by about ±{fmt(half, 2)} (95%)" if half else ""}.</p>""")
+            P.chart("heat_sex", dict(type="heatmap", rows=hs_rows, groups=hs_groups, cols=[l for _, l in pair_cols], col_titles=[f"slope of child on parent, {l}" for _, l in pair_cols],
+                                     values=hs_vals, extra=hs_extra, lo=0, hi=1, nd=2),
+                    f"Transmission by the sex of parent and child: {nb['n_sons']} sons, {nb['n_daughters']} daughters",
+                    "Rows: every metric of the trio test above, grouped as there. Columns: the Pearson correlation of child with parent for each pairing "
+                    "of the parent's and the child's sex, on values centred within population and sex. A well-measured autosomal quantity reads about 0.5 "
+                    "in every column; a Y-linked one close to 1 from father to son and 0 from father to daughter; an X-linked one 0 from father to son. "
+                    "Colour from 0 (white) to 1 (blue), value printed" + (f"; each value is uncertain by about ±{fmt(half, 2)} (95%)" if half else "")
+                    + ". On the page, hover a cell for the pairs, the interval and the slope.")
+            notes = []
+            for group, word in ((ylinked, "sequence on the Y chromosome: fathers pass more of it to their sons than to their daughters"),
+                                (xlinked, "sequence on the X chromosome: fathers pass more of it to their daughters than to their sons")):
+                if group:
+                    notes.append(" ".join(f"{lab(c)}: father–son r = {fmt(bs[c]['father_son']['r'], 2)}, father–daughter r = {fmt(bs[c]['father_daughter']['r'], 2)} "
+                                          f"(the difference is {fmt(contrast(c), 1)} standard errors on Fisher's scale)." for c in group)
+                                 + f" By that contrast {'this metric carries' if len(group) == 1 else 'these metrics carry'} {word}, and the midparent reliability "
+                                   "above understates how faithfully it is inherited.")
+            why_not = {"truth": "sequence of known copy number, which varies between people only by the rare whole-copy steps of a few families (3.2), so a "
+                                "handful of carrier parents who happen to have sons or daughters decides it",
+                       "culture": "a property of the cell line or the library, not of the nuclear genome"}
+            for c in other_far:
+                notes.append(f"{sentence_case(lab(c))}: father–son r = {fmt(bs[c]['father_son']['r'], 2)}, father–daughter r = {fmt(bs[c]['father_daughter']['r'], 2)} "
+                             f"({fmt(contrast(c), 1)} standard errors), which is no sign of the sex chromosomes: it is {why_not.get(bs[c]['group'], 'not genomic sequence')}.")
+            if hint:
+                notes.append(f"Between two and three standard errors, as one or two of {len(bs)} metrics would be by chance (the held-out autosomal "
+                             "sequence, which has nothing to inherit, is a guide): " + "; ".join(
+                    f"{lab(c)}, r {fmt(bs[c]['father_son']['r'], 2)} against {fmt(bs[c]['father_daughter']['r'], 2)} (z = {fmt(contrast(c), 1)})" for c in hint) + ".")
+            notes.append(("No other metric's" if ylinked or xlinked or other_far else "No metric's") + " father–son and father–daughter correlations differ by more than three standard errors.")
+            P.h("<p>" + " ".join(notes) + "</p>")
+            pts_all = tr.get("points") or {}
+            flagged = [c for c in ylinked + xlinked if c in pts_all]
+            if flagged:
+                P.h('<div class="grid2">')
+                for col in flagged:
+                    d, unit = bs[col], unit_of(col)
+                    pts = [dict(x=p[3], y=p[2], label=p[0], si=0 if p[5] == "M" else 1, extra=[f"midparent {fmt(p[1], 2)}"]) for p in pts_all[col] if p[5] in ("M", "F")]
+                    P.chart(f"sexfather_{re.sub(r'[^A-Za-z0-9]', '_', col)}", dict(type="scatter", points=pts, legend=["son", "daughter"], xlabel=f"father, {unit}",
+                                                                                   ylabel=f"child, {unit}", diagonal=True, fit=True, fit_labels=["sons", "daughters"]),
+                            f"{sentence_case(d['label'])}: children against their fathers, sons and daughters apart",
+                            f"Each dot is one complete parent–child trio of the 1000 Genomes 30× cohort: x the father's {d['label']}, y the child's, in {unit}; "
+                            f"sons blue ({d['father_son']['n']}), daughters orange ({d['father_daughter']['n']}), each with its least-squares line; grey: "
+                            f"equality, where it falls inside the plot. On values centred within population and sex, the slope of child on father is "
+                            f"{fmt(d['father_son']['slope'], 2)} for sons (r = {fmt(d['father_son']['r'], 2)}) and {fmt(d['father_daughter']['slope'], 2)} for "
+                            f"daughters (r = {fmt(d['father_daughter']['r'], 2)}).")
+                P.h("</div>")
+        P.h('<p class="small">A printable assessment built from these tables, with a child-against-midparent scatter for every metric, the fetch check and the assembly comparison: <a href="trio_report.pdf">trio_report.pdf</a>. Every trio\'s values: <code>data/trios.tsv</code>; the split by the sex of parent and child: <code>data/transmission_by_sex.tsv</code>'
+            + ('; every metric\'s child against midparent: <a href="#supp">supplementary figures</a>' if (tr.get("points") or {}) and tr["n_complete"] >= 10 else "") + ".</p>")
         if data.get("trios_adjusted", {}).get("table"):
             ta = data["trios_adjusted"]
             P.h(f'<details><summary>The same, after regressing out {pcs["adjusted"]["k"]} control-region PCs</summary>')
@@ -1027,7 +1129,7 @@ landed.</li>
 <pre>pip install ngsdose        # or: apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
 ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ --qc ngspca_sample_qc.tsv -o docs/</pre>
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
-<code>data/transmission.tsv</code> and <code>data/trios.tsv</code> (every trio's values), <code>data/fetch_check.tsv</code>, <code>data/pcsweep.tsv</code>,
+<code>data/transmission.tsv</code>, <code>data/transmission_by_sex.tsv</code> and <code>data/trios.tsv</code> (every trio's values), <code>data/fetch_check.tsv</code>, <code>data/pcsweep.tsv</code>,
 <code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
 in the prose, <code>report.json</code>; the trio assessment as a document, <code>trio_report.pdf</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
 (Byrska-Bishop et al., <em>Cell</em> 2022; AWS Open Data) with the {esc(m.get("bundle"))} resource bundle. Method, design document and
@@ -1049,6 +1151,45 @@ audit: <a href="https://github.com/jlanej/NGS-DOSE">github.com/jlanej/NGS-DOSE</
     P.h(f"<p>{len(rows):,} genomes; click a heading to sort, type to filter. Flagged rows are shaded. The full table with every column is <code>data/cohort.tsv</code>.</p>")
     P.table(body, [h for _, h in cols], numeric={i for i, (c, _) in enumerate(cols) if c in nd}, flagged=lambda r: bool(r[-1] and r[-1] != "–") if cols[-1][0] == "flags" else None, filter_box=True, wrap=True)
     P.end()
+
+    # ---------------------------------------------------------------- supplementary: every trio metric, child against midparent
+    pts_all = tr.get("points") or {}
+    if pts_all and tr["n_complete"] >= 10:
+        from .report import TRIO_GROUPS
+        by_col = {t["column"]: t for t in tr["table"]}
+        bs = (tr.get("by_sex") or {}).get("table") or {}
+        P.section("supp", "Supplementary figures: every trio metric, child against midparent", "Supplementary")
+        P.h(f"""<p>One figure for each metric of the trio test (<a href="#trios">3.6</a>), in its groups: x the mean of a child's two parents, y the child,
+on the natural scale; sons blue, daughters orange, each with its least-squares line, and the grey diagonal where child equals midparent. The
+statistics in each caption are those of 3.6, on values centred within population (and, for the split by sex, within sex too). {tr['n_complete']:,}
+complete trios.</p>""")
+        note = {"rDNA": "", "satellites": " Genomic, so it must be inherited: a positive control.",
+                "truth": " Known copy number: nothing to inherit but the distal junction's whole-copy steps.",
+                "culture": " Not in the nuclear genome, so a negative control: expected near 0."}
+        for key, gl, cols in TRIO_GROUPS:
+            present = [(c, l) for c, l in cols if c in pts_all and c in by_col]
+            if not present:
+                continue
+            P.h(f"<h3>{esc(gl[0].upper() + gl[1:])}</h3>")
+            P.h('<div class="grid2">')
+            for col, label in present:
+                t, unit, d = by_col[col], unit_of(col), bs.get(col) or {}
+                pts = [dict(x=p[1], y=p[2], label=p[0], si=0 if p[5] == "M" else 1, extra=[f"father {fmt(p[3], 2)}, mother {fmt(p[4], 2)}"])
+                       for p in pts_all[col] if p[5] in ("M", "F")]
+                split = ", ".join(f"{name} {fmt(d[k]['r'], 2)}" for k, name in (("father_son", "father → son"), ("father_daughter", "father → daughter"),
+                                                                                      ("mother_son", "mother → son"), ("mother_daughter", "mother → daughter")) if k in d)
+                cap = (f"Each dot is one of {len(pts)} complete parent–child trios of the 1000 Genomes 30× cohort: x the mean of the two parents' {label}, "
+                       f"y the child's, in {unit}; sons blue, daughters orange, each with its least-squares line; grey diagonal: child equals midparent. "
+                       f"Midparent slope {fmt(t['slope'], 2)} ± {fmt(t['slope_se'], 2)}, spousal r = {fmt(t['spousal_r'], 2)}, reliability "
+                       f"R = {fmt(min(t['R'], 1.0), 2)}"
+                       + (" (" + "; ".join((["capped at 1"] if t["R"] > 1 else []) + ([f"95% CI {fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)}"] if "R_lo" in t else [])) + ")"
+                          if t["R"] > 1 or "R_lo" in t else "") + "."
+                       + (f" Correlation of child with parent by sex (values centred within population and sex): {split}." if split else "") + note.get(key, ""))
+                P.chart(f"trio_{re.sub(r'[^A-Za-z0-9]', '_', col)}", dict(type="scatter", points=pts, legend=["son", "daughter"], xlabel=f"midparent, {unit}",
+                                                                          ylabel=f"child, {unit}", identity=True, fit=True, fit_labels=["sons", "daughters"]),
+                        f"{sentence_case(label)}: child against midparent", cap, supp=True)
+            P.h("</div>")
+        P.end()
 
     toc = "".join(f'<a href="#{i}">{esc(t)}</a>' for i, t in P.toc)
     nav = f'<nav class="toc">{toc}<button id="theme" type="button" title="light / dark">theme</button></nav>'

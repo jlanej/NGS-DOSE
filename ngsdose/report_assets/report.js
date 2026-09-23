@@ -72,7 +72,7 @@
     if (integerY) { yt = yt.filter(function (t) { return Number.isInteger(t); }); if (yt.length < 2) yt = [0, Math.ceil(ys.hi)]; }
     yt.forEach(function (t) { if (t < ys.lo - 1e-9 || t > ys.hi + 1e-9) return; var y = ys.map(t);
       el("line", { x1: 0, x2: f.W, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, f.g);
-      text(f.g, -8, y + 4, (yfmt || fmt)(t), { "text-anchor": "end", fill: "var(--muted)" }); });
+      if (!ylabel || y >= 10) text(f.g, -8, y + 4, (yfmt || fmt)(t), { "text-anchor": "end", fill: "var(--muted)" }); });   // a tick at the very top would sit on the axis title
     el("line", { x1: 0, x2: f.W, y1: f.H, y2: f.H, stroke: "var(--axis)", "stroke-width": 1 }, f.g);
     ticks.forEach(function (t) { if (t < xs.lo - 1e-9 || t > xs.hi + 1e-9) return; var x = xs.map(t);
       text(f.g, x, f.H + 18, (xfmt || fmt)(t), { "text-anchor": "middle", fill: "var(--muted)" }); });     // clear of the y axis's lowest label
