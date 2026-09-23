@@ -436,6 +436,53 @@ def trio_points(values: list[dict], rows, columns) -> dict:
     return out
 
 
+def method_profiles(grab, rows, eff, features) -> dict | None:
+    """For the Methods figures, from every genome's estimate (`grab`: sample, gc_rel, rDNA45S windows): the library's fragment-GC response (the rate
+    relative to the library's mean, at fragment GC 20-80%), and along the 45S unit each 250-bp window's copy number
+    relative to the genome's calibrated estimate, before and after the cohort's window efficiencies. The cohort model
+    is log C_iw = c_i + a_w + e_iw with exp(c_i) the calibrated estimate, so the first is exp(a_w + e_iw) and the
+    second exp(e_iw). Each as the cohort's median and 10-90% range; with the anchor windows and the unit's features."""
+    e = (eff or {}).get("rDNA45S")
+    if not e or not grab:
+        return None
+    cal = {r["sample"]: num(r, "rDNA45S.cn") for r in rows}
+    gx = list(range(20, 85, 5))
+    idx = {s: i for i, s in enumerate(e["start"])}
+    curves, raw = [], []
+    for r in grab:
+        g = r.get("gc_rel") or {}
+        curve = [g.get(str(x)) for x in gx]
+        if all(isinstance(v, (int, float)) and np.isfinite(v) for v in curve):
+            curves.append(curve)
+        c = cal.get(r.get("sample"), float("nan"))
+        w = r.get("windows") or []
+        if np.isfinite(c) and c > 0 and w:
+            v = np.full(len(idx), np.nan)
+            for x in w:
+                i = idx.get(x.get("start"))
+                if i is not None and isinstance(x.get("cn"), (int, float)) and x["cn"] > 0:
+                    v[i] = x["cn"] / c
+            raw.append(v)
+    if not curves or not raw:
+        return None
+    a = np.array([x if isinstance(x, (int, float)) else np.nan for x in e["a"]], float)
+    keep = np.isfinite(a)
+    R = np.array(raw)
+    C = R / np.exp(a)
+    q = lambda M, pc: [round(float(v), 4) for v in np.nanpercentile(M[:, keep], pc, axis=0)]
+    G = np.array(curves, float)
+    wgc = np.array([x if isinstance(x, (int, float)) else np.nan for x in e["gc"]], float)[keep]
+    return dict(n_gc=len(curves), n_unit=len(raw),
+                gc=dict(x=gx, median=[round(float(v), 4) for v in np.median(G, axis=0)], q10=[round(float(v), 4) for v in np.percentile(G, 10, axis=0)],
+                        q90=[round(float(v), 4) for v in np.percentile(G, 90, axis=0)]),
+                windows_gc=dict(q10=float(np.nanpercentile(wgc, 10)), median=float(np.nanmedian(wgc)), q90=float(np.nanpercentile(wgc, 90))),
+                unit=dict(mid_kb=[round((s + 125) / 1000, 3) for s, k in zip(e["start"], keep) if k],
+                          anchor_kb=[round((s + 125) / 1000, 3) for s, k, an in zip(e["start"], keep, e["anchor"]) if k and an],
+                          raw=dict(median=q(R, 50), q10=q(R, 10), q90=q(R, 90)), cal=dict(median=q(C, 50), q10=q(C, 10), q90=q(C, 90)),
+                          n_windows=len(keep), n_retained=int(keep.sum())),
+                features=[dict(name=n, start=s, end=t) for n, s, t in (features or {}).get("rDNA45S", [])])
+
+
 def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
     """The same cohort layer and the same trio test on the fetch-mode counts alone, independently of
     the scan: does the targeted fetch give the same estimate for every genome, and does it carry the
@@ -751,7 +798,14 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     # the cohort layer on the primary mode's estimates (streamed from the cache)
     prim_samples = sorted(s for s in S if primary in S[s])
     est_paths = [cache / primary / f"{s}.estimate.json.gz" for s in prim_samples]
-    rows, eff, info = cohort.cohort_table((load_result(p) for p in est_paths), res.anchors(), log=log)
+    grab: list[dict] = []                         # what the Methods figures need, taken as the estimates stream past (read once)
+
+    def stream():
+        for p in est_paths:
+            r = load_result(p)
+            grab.append(dict(sample=r.get("sample"), gc_rel=r.get("gc_rel"), windows=((r.get("classes") or {}).get("rDNA45S") or {}).get("windows")))
+            yield r
+    rows, eff, info = cohort.cohort_table(stream(), res.anchors(), log=log)
     for r in rows:
         r.update({k: v for k, v in S[r["sample"]][primary].items() if k not in r})
         r["mode_used"] = primary
@@ -799,6 +853,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     data["rdna"]["by_superpop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "superpop")
     data["rdna"]["by_pop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "pop")
     data["biology"] = biology(rows)
+    data["methods"] = method_profiles(grab, rows, eff, res.features())
     data["trios"] = trio_analysis(rows, trio_list, population, TRIO_COLUMNS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[], values=[])
     if trio_list:
         data["trios"]["by_sex"] = transmission_by_sex(rows, trio_list, population, TRIO_COLUMNS)

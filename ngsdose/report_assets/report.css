@@ -65,6 +65,7 @@ figure figcaption .src { display: block; margin-top: 6px; font-size: 12px; color
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
 .legend i.line { width: 16px; height: 2px; border-radius: 1px; }
+.legend i.tick { width: 3px; height: 11px; border-radius: 1px; }
 .tip { position: absolute; pointer-events: none; background: var(--card); color: var(--ink); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 9px; font-size: 13px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); z-index: 20; display: none; max-width: 280px; }
 .tip b { font-weight: 600; }

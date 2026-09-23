@@ -91,7 +91,7 @@
     var d = document.createElement("div"); d.className = "legend";
     items.forEach(function (it) { var s = document.createElement("span"); var i = document.createElement("i");
       i.style.background = it.dash ? "repeating-linear-gradient(90deg, " + it.color + " 0 4px, transparent 4px 7px)" : it.color;
-      if (it.line) i.className = "line"; s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
+      if (it.line) i.className = "line"; if (it.tick) i.className = "tick"; s.appendChild(i); s.appendChild(document.createTextNode(it.label)); d.appendChild(s); });
     container.insertBefore(d, container.firstChild);
   }
   function groupsOf(spec) {
@@ -252,32 +252,50 @@
 
   // ---------------- lines with a crosshair (the PC sweep)
   function lines(container, spec) {
+    // options: series[].ci (colour index), bands [{x0, x1, label}] shaded behind, ticks {x: [...], label} marked on the axis, xfmt
     var ser = spec.series.filter(function (s) { return s.y && s.y.length; });
     if (!ser.length) return empty(container);
+    var col = function (s, si) { return COLORS[s.ci !== undefined ? s.ci : si]; };
     var xs0 = [].concat.apply([], ser.map(function (s) { return s.x; })), ys0 = [].concat.apply([], ser.map(function (s) { return s.y.concat(s.lo || [], s.hi || []); })).filter(isFinite);
     var lo = Math.min.apply(null, ys0), hi = Math.max.apply(null, ys0); if (spec.ref !== undefined) { lo = Math.min(lo, spec.ref); hi = Math.max(hi, spec.ref); }
     var pad = (hi - lo || 1) * 0.1;
     var f = frame(container, 640, 280, { l: 56, t: 22, r: 16, b: 44 });
     var xs = scale(Math.min.apply(null, xs0), Math.max.apply(null, xs0), 0, f.W), ys = scale(lo - pad, hi + pad, f.H, 0);
-    axes(f, xs, ys, spec.xlabel, spec.ylabel, function (v) { return fmt(v, 0); });
+    var xd = spec.xfmt === undefined ? 0 : spec.xfmt;
+    var bandLabels = [];
+    (spec.bands || []).forEach(function (bd) {                // shaded x-ranges behind everything, labelled where the label fits
+      var x0 = xs.map(Math.max(bd.x0, xs.lo)), x1 = xs.map(Math.min(bd.x1, xs.hi)); if (!(x1 > x0)) return;
+      el("rect", { x: x0, y: 0, width: x1 - x0, height: f.H, fill: "var(--grid)", opacity: 0.55 }, f.g);
+      if (bd.label && x1 - x0 >= bd.label.length * 6.5 + 6) bandLabels.push([(x0 + x1) / 2, bd.label]);
+    });
+    axes(f, xs, ys, spec.xlabel, spec.ylabel, function (v) { return fmt(v, xd); });
+    bandLabels.forEach(function (l) { text(f.g, l[0], 12, l[1], { "text-anchor": "middle", fill: "var(--ink-2)", "font-size": 11, stroke: "var(--surface)", "stroke-width": 3, "paint-order": "stroke" }); });
     if (spec.ref !== undefined) refLine(f, xs, ys, { y: spec.ref, label: spec.ref_label }, false);
     ser.forEach(function (s, si) {
       if (s.lo && s.hi) { var d = "M" + s.x.map(function (x, i) { return xs.map(x) + "," + ys.map(s.lo[i]); }).join(" L") + " L" + s.x.slice().reverse().map(function (x, i) { var j = s.x.length - 1 - i; return xs.map(x) + "," + ys.map(s.hi[j]); }).join(" L") + " z";
-        el("path", { d: d, fill: COLORS[si], opacity: 0.12 }, f.g); }
-      el("path", { d: "M" + s.x.map(function (x, i) { return xs.map(x) + "," + ys.map(s.y[i]); }).join(" L"), fill: "none", stroke: COLORS[si], "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, f.g);
-      var n = s.x.length - 1; el("circle", { cx: xs.map(s.x[n]), cy: ys.map(s.y[n]), r: 4, fill: COLORS[si], stroke: "var(--surface)", "stroke-width": 2 }, f.g);
+        el("path", { d: d, fill: col(s, si), opacity: 0.14 }, f.g); }
+      el("path", { d: "M" + s.x.map(function (x, i) { return xs.map(x) + "," + ys.map(s.y[i]); }).join(" L"), fill: "none", stroke: col(s, si), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, f.g);
+      var n = s.x.length - 1; el("circle", { cx: xs.map(s.x[n]), cy: ys.map(s.y[n]), r: 4, fill: col(s, si), stroke: "var(--surface)", "stroke-width": 2 }, f.g);
+    });
+    if (spec.ticks) spec.ticks.x.forEach(function (x) {       // e.g. the anchor windows: short marks standing on the x axis
+      el("line", { x1: xs.map(x), x2: xs.map(x), y1: f.H, y2: f.H - 10, stroke: "var(--s1)", "stroke-width": 2 }, f.g);
     });
     var cross = el("line", { y1: 0, y2: f.H, stroke: "var(--ink-2)", "stroke-width": 1, opacity: 0 }, f.g);
     f.svg.addEventListener("pointermove", function (ev) {
       var rect = f.svg.getBoundingClientRect(), k = 640 / rect.width, mx = (ev.clientX - rect.left) * k - f.m.l;
-      var xv = Math.round(xs.lo + (mx / f.W) * (xs.hi - xs.lo)); if (xv < xs.lo || xv > xs.hi) { cross.setAttribute("opacity", 0); hideTip(); return; }
-      cross.setAttribute("x1", xs.map(xv)); cross.setAttribute("x2", xs.map(xv)); cross.setAttribute("opacity", 0.6);
-      var out = [{ b: spec.xlabel + " " + xv }];
-      ser.forEach(function (s) { var i = s.x.indexOf(xv); if (i >= 0) out.push({ b: fmt(s.y[i], 3) + (s.lo ? " (" + fmt(s.lo[i], 2) + " to " + fmt(s.hi[i], 2) + ")" : ""), k: s.name }); });
+      var xv = xs.lo + (mx / f.W) * (xs.hi - xs.lo); if (xv < xs.lo || xv > xs.hi) { cross.setAttribute("opacity", 0); hideTip(); return; }
+      var out = [], shown = null;
+      ser.forEach(function (s) {                             // each series' nearest point to the pointer
+        var best = 0; for (var i = 1; i < s.x.length; i++) if (Math.abs(s.x[i] - xv) < Math.abs(s.x[best] - xv)) best = i;
+        if (shown === null) { shown = s.x[best]; out.push({ b: spec.xlabel + " " + fmt(shown, xd + 1) }); }
+        out.push({ b: fmt(s.y[best], 3) + (s.lo ? " (" + fmt(s.lo[best], 2) + " to " + fmt(s.hi[best], 2) + ")" : ""), k: s.name });
+      });
+      cross.setAttribute("x1", xs.map(shown)); cross.setAttribute("x2", xs.map(shown)); cross.setAttribute("opacity", 0.6);
       showTip(ev, out);
     });
     f.svg.addEventListener("pointerleave", function () { cross.setAttribute("opacity", 0); hideTip(); });
-    legend(container, ser.map(function (s, i) { return { color: COLORS[i], label: s.name, line: true }; }));
+    legend(container, ser.map(function (s, i) { return { color: col(s, i), label: s.name, line: true }; })
+      .concat(spec.ticks && spec.ticks.label ? [{ color: "var(--s1)", label: spec.ticks.label, tick: true }] : []), !!spec.ticks);
   }
 
   // ---------------- meters: done of total per category
