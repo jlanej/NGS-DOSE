@@ -68,5 +68,17 @@
     "chrX": 156040895,
     "chrY": 57227415,
     "chrM": 16569
-  }
+  },
+  "sinks_history": [
+    {
+      "sha256": "9dd52ba142d3011df4c430ce7fb0e0eff81c2f82d635f7b864fe98677392e803",
+      "until": "2026-09-22",
+      "classes": [
+        "rDNA45S",
+        "rDNA5S",
+        "DJ"
+      ],
+      "change": "the telomeric repeat's intervals were added on 2026-09-22; the rows of the classes listed are unchanged (the file without the TEL rows hashes to this value), so fetch counts that record this hash are complete for them and lack only the TEL class"
+    }
+  ]
 }

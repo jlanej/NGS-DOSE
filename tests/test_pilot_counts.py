@@ -55,10 +55,18 @@ def test_both_libraries_were_counted_with_the_shipped_bundle_and_carry_the_cultu
     cultures of a line differ severalfold in both - are present for every sample."""
     import hashlib
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
-    want = ([sha(BUNDLE.panel)], sha(BUNDLE.controls), sha(BUNDLE.sinks))
+    want_panel, want_controls, want_sinks = [sha(BUNDLE.panel)], sha(BUNDLE.controls), sha(BUNDLE.sinks)
+    # the sinks file may grow (a class's intervals added); counts made with an earlier version record its hash,
+    # the bundle lists that hash, and the earlier file must be exactly the current one without the added classes
+    history = {}
+    for h in BUNDLE.meta.get("sinks_history", []):
+        kept = "".join(line for line in open(BUNDLE.sinks) if line.rstrip("\n").split("\t")[3] in h["classes"])
+        assert hashlib.sha256(kept.encode()).hexdigest() == h["sha256"], "sinks_history does not reconstruct the earlier file"
+        history[h["sha256"]] = h["classes"]
     for f in nygc + reps:
         c = io.load_counts(f)
-        assert (c["panel_sha256"], c["controls_sha256"], c["sinks_sha256"]) == want, f.name
+        assert (c["panel_sha256"], c["controls_sha256"]) == (want_panel, want_controls), f.name
+        assert c["sinks_sha256"] == want_sinks or c["sinks_sha256"] in history, f.name
         assert c["eof_marker"] == "present" and c["mode"] == "fetch"
     older = run(reps)
     for res in (ny, older):
