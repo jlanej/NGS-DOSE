@@ -119,6 +119,18 @@ across the six people with r ≥ 0.97 (HSat1A, HSat1B, HSat3, β-satellite, α-s
 CER; the last three by a constant factor, their k-mer recall). **What it rules out:** that the
 k-mer path only appears to work because nothing independent has been held against it. *Panel g.*
 
+*Update, 2026-09-23, 52 people.* Six people flattered the correlations. With the annotations of
+all 200 cohort members that have an HPRC assembly now in the results repository, 52 of the 620
+genomes counted so far can be compared, and only HSat1B (r = 0.99) and ACRO (0.97) keep r ≥ 0.95.
+Per genome the two measurements still agree closely for most families (robust SD of the log ratio
+3.1% for α-satellite HORs and CER, 3.5% ACRO, 5.5% β-satellite, 6–7% HSat1A, HSat1B and HSat3),
+but r also depends on how much people differ: α-satellite HOR mass differs between people by only
+4%, so its r is 0.71. All 17 outlying comparisons, in the four HSat families, are genomes whose
+assembly holds less than the reads show (by 1.25–1.87×), as where part of an array is missing from
+an assembly without a marked gap. HSat2 compares poorly (r = 0.29 in 33 gap-free assemblies), and
+for SST1 and SATR the two measurements disagree per genome by more than people differ. The page's
+section 3.8 carries the current figures.
+
 ## 8. The one-minute fetch equals the whole-file scan
 
 Fetch mode reads the control regions and the few intervals where the aligner puts class reads —

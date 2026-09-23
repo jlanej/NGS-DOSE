@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import glob
+import gzip
 import os
 
 import numpy as np
@@ -48,13 +49,27 @@ def labels_of(name: str) -> list[str]:
     return labels
 
 
+def annotation_files(sample: str, censat_dir: str) -> list[str]:
+    """The sample's haplotype annotations, plain (`.cenSat.bed`) or gzipped (`.cenSat.bed.gz`), one
+    file per haplotype if both forms are present."""
+    found: dict[str, str] = {}
+    for path in sorted(glob.glob(os.path.join(censat_dir, f"{sample}_*cenSat.bed*"))):
+        if path.endswith((".bed", ".bed.gz")):
+            found.setdefault(path.removesuffix(".gz"), path)
+    return sorted(found.values())
+
+
+def _open(path: str):
+    return gzip.open(path, "rt") if path.endswith(".gz") else open(path)
+
+
 def assembly_mass(sample: str, censat_dir: str):
     """Per class: bp in arrays the assembly spans, and bp in arrays annotated with a gap, over
     all haplotype annotations of one sample; and the number of annotation files found."""
-    files = sorted(glob.glob(os.path.join(censat_dir, f"{sample}_*cenSat.bed")))
+    files = annotation_files(sample, censat_dir)
     mass, gapped = collections.Counter(), collections.Counter()
     for path in files:
-        with open(path) as fh:
+        with _open(path) as fh:
             for line in fh:
                 if line.startswith(("track", "#")) or not line.strip():
                     continue
@@ -71,11 +86,11 @@ def rdna_in_assembly(sample: str, censat_dir: str, merge_bp: int = 1000):
     stretch (records on one contig less than `merge_bp` apart are one stretch), and the number of
     annotation files. Assemblies do not close the rDNA arrays, so this is what an assembly holds of
     them, not a copy number; records annotated with a gap are not sequence and are not counted."""
-    files = sorted(glob.glob(os.path.join(censat_dir, f"{sample}_*cenSat.bed")))
+    files = annotation_files(sample, censat_dir)
     total = longest = 0
     for path in files:
         by_contig = collections.defaultdict(list)
-        with open(path) as fh:
+        with _open(path) as fh:
             for line in fh:
                 if line.startswith(("track", "#")) or not line.strip():
                     continue
@@ -121,8 +136,14 @@ def compare(estimates: list[dict], censat_dir: str) -> tuple[list[dict], dict[st
             x = np.array([c["assembly_Mb"] for c in clean])
             y = np.array([c["ngsdose_Mb"] for c in clean])
             lr = np.log(y / x)
-            st.update(ratio_median=float(np.exp(np.median(lr))), sd_log=float(lr.std(ddof=1)), assembly_median=float(np.median(x)),
-                      assembly_min=float(x.min()), assembly_max=float(x.max()))
+            med = float(np.median(lr))
+            st.update(ratio_median=float(np.exp(med)), sd_log=float(lr.std(ddof=1)), assembly_median=float(np.median(x)),
+                      assembly_min=float(x.min()), assembly_max=float(x.max()),
+                      # per-genome agreement without the few outliers, and how much people differ: r means little when the two are alike
+                      sd_log_robust=float(1.4826 * np.median(np.abs(lr - med))), cv_assembly=float(x.std(ddof=1) / x.mean()))
+            # the genomes far from the family's median, and how many of them have less in the assembly than in the reads
+            far = lr[np.abs(lr - med) > 3 * st["sd_log_robust"]] if st["sd_log_robust"] > 0 else lr[:0]
+            st.update(n_far=int(len(far)), n_far_assembly_short=int((far > med).sum()))
             if len(clean) >= 3:
                 rank = lambda v: np.argsort(np.argsort(v))
                 st.update(pearson=float(np.corrcoef(x, y)[0, 1]), spearman=float(np.corrcoef(rank(x), rank(y))[0, 1]))
