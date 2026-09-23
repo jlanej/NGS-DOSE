@@ -146,6 +146,6 @@ trait; for rDNA copy number the GC model and the calibration do the work.
 ## Reproduce
 
 ```bash
-ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021.txt --censat hprc_censat/ -o docs/
+ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021.txt --pilot example/1000G/pilot --censat hprc_censat/ -o docs/
 python example/1000G/evidence_figure.py --report docs/report.json --pilot example/1000G/pilot -o evidence.png
 ```

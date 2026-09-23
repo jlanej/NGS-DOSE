@@ -131,7 +131,7 @@
   // ---------------- scatter with nearest-point hover
   function scatter(container, spec) {
     var groups = groupsOf(spec), pts = [];
-    if (spec.points) spec.points.forEach(function (p) { pts.push({ x: p.x, y: p.y, label: p.label, si: 0, extra: p.extra }); });
+    if (spec.points) spec.points.forEach(function (p) { pts.push({ x: p.x, y: p.y, label: p.label, si: p.si || 0, extra: p.extra }); });
     else groups.forEach(function (g, si) {
       var sp = Object.assign({}, spec, { where: Object.assign({}, spec.where || {}, g.where) });
       values(sp, spec.x).forEach(function (o) { var y = o.r[spec.y]; if (typeof y === "number" && isFinite(y)) pts.push({ x: o.v, y: y, label: o.r.sample, si: si, r: o.r }); });
@@ -166,13 +166,14 @@
       if (hot !== null) dots[hot].setAttribute("r", 4);
       if (best < 0) { hot = null; hideTip(); return; }
       hot = best; dots[best].setAttribute("r", 6);
-      var p = pts[best], lines = [{ b: p.label || "", k: groups[p.si] && groups[p.si].label }, { b: fmt(p.y), k: spec.ylabel }, { b: fmt(p.x), k: spec.xlabel }];
+      var p = pts[best], lines = [{ b: p.label || "", k: spec.legend ? spec.legend[p.si] : (groups[p.si] && groups[p.si].label) }, { b: fmt(p.y), k: spec.ylabel }, { b: fmt(p.x), k: spec.xlabel }];
       if (p.extra) p.extra.forEach(function (e) { lines.push({ k: e }); });
       if (p.r && p.r.pop) lines.push({ k: p.r.pop + (p.r.sex_inferred ? ", " + p.r.sex_inferred : "") });
       showTip(ev, lines);
     });
     f.svg.addEventListener("pointerleave", function () { if (hot !== null) dots[hot].setAttribute("r", 4); hot = null; hideTip(); });
-    legend(container, groups.map(function (g, i) { return { color: COLORS[i], label: g.label }; }).filter(function (g) { return g.label; }));
+    legend(container, spec.legend ? spec.legend.map(function (l, i) { return { color: COLORS[i], label: l }; })
+      : groups.map(function (g, i) { return { color: COLORS[i], label: g.label }; }).filter(function (g) { return g.label; }));
   }
 
   // ---------------- strip: values by group, with the median
