@@ -14,6 +14,7 @@ import re
 
 from .hprc import MAX_GAPPED
 from .report import ASSETS, fmt
+from .tables import num as num_
 
 esc = lambda x: html.escape(str(x))
 SUPERPOPS = ["AFR", "AMR", "EAS", "EUR", "SAS"]
@@ -327,11 +328,12 @@ control regions (10.1 Mb) for the library model. <em>Scan</em> mode reads the wh
 regions and 80 sink intervals (3.3 Mb) where the NYGC pipeline places class reads, learned from whole-file scans of two genomes.</dd>
 <dt>Library model</dt><dd>A Poisson spline of fragment-end density on fragment GC content is fitted per sample on the control regions. The
 expected count of any sequence follows from its fragment-GC composition; the copy number of each 250-bp window of a unit is
-2 × observed / expected.</dd>
+2 × observed / expected (<a href="#fig-m_gc">figure</a>).</dd>
 <dt>Calibration</dt><dd>Windows of the 45S unit drop out beyond what the GC curve predicts, by amounts that depend on the sequencing
 chemistry. Per-window efficiencies are learned across the cohort by median polish; the absolute scale is set by anchor windows on which
 three Illumina chemistries agreed in the pilot. Beside it the page carries NGS-DOSE's single-sample variant, from the anchor windows
-alone, and, as the comparator, the 18S read-depth ratio of published studies, with no GC model and no calibration: not NGS-DOSE's estimate.</dd>
+alone, and, as the comparator, the 18S read-depth ratio of published studies, with no GC model and no calibration: not NGS-DOSE's estimate
+(<a href="#fig-m_unit">figure</a>).</dd>
 <dt>Estimators</dt><dd>Three 45S estimates travel through every table, two of them NGS-DOSE's. <em>45S, NGS-DOSE calibrated</em> (<code>rDNA45S.cn</code>): the cohort
 model log C<sub>iw</sub> = c<sub>i</sub> + a<sub>w</sub> + e<sub>iw</sub> over every retained 250-bp window w of the unit, fitted by
 median polish across samples i, with the window efficiencies a<sub>w</sub> pinned to a median of zero over the anchor windows; the estimate
@@ -339,7 +341,7 @@ is exp(c<sub>i</sub>), so every window contributes precision and the anchors set
 (<code>rDNA45S.cn_single</code>): 2 × observed / expected fragment ends summed over the anchor windows alone, under the sample's own
 fragment-GC model, with no information from any other sample. <em>45S, 18S depth ratio (published)</em> (<code>rDNA45S.18S.flat</code>): 2 × fragment
 ends in the 18S gene / (positions × the control regions' mean rate), with no GC model and no calibration: the read-depth ratio of published
-studies, computed from the same reads as the comparator. The 5S and distal-junction estimates are calibrated the same way as the 45S; the satellite masses are diploid megabases from the
+studies, computed from the same reads as the comparator (<a href="#fig-m_est">figure</a>). The 5S and distal-junction estimates are calibrated the same way as the 45S; the satellite masses are diploid megabases from the
 class's read count under the GC model.</dd>
 <dt>Known-truth controls</dt><dd>80 held-out autosomal regions (two copies), 60 chrX regions (one in men, two in women) and 40 X-degenerate
 chrY regions (one, none), measured by the alignment-position path; and the distal junction, present once on each of the ten acrocentric
@@ -368,6 +370,61 @@ controls {", ".join(esc(x) for x in m["controls_sha"]) or "–"}{(", sinks " + "
 {", ".join(qc["placement_bins"])} bp. {(f'<strong>{len(m["eof_absent"])} file(s) lacked an end-of-file marker</strong>: ' + ", ".join(esc(x) for x in m["eof_absent"]) + ".") if m["eof_absent"] else "Every input carried its end-of-file marker."}
 {'<strong>More than one resource set is in play: these samples should not be analysed as one cohort until that is resolved.</strong>' if len(m["panel_sha"]) > 1 or len(m["controls_sha"]) > 1 else ""}</dd>
 </dl>''')
+    # ---- the method, step by step, on this cohort's data
+    mp = data.get("methods") or {}
+    if mp:
+        g, wg, u = mp["gc"], mp["windows_gc"], mp["unit"]
+        i65 = g["x"].index(65) if 65 in g["x"] else None
+        P.h("<h3>The method, step by step, on this cohort's data</h3>")
+        P.chart("m_gc", dict(type="lines", series=[dict(name="median library, with the middle 80%", x=g["x"], y=g["median"], lo=g["q10"], hi=g["q90"], ci=0)],
+                             xlabel="fragment GC, %", ylabel="rate relative to the library's mean", ref=1,
+                             bands=[dict(x0=100 * wg["q10"], x1=100 * wg["q90"], label="45S unit")]),
+                "Library model: how each library's sequencing rate depends on fragment GC",
+                f"The per-library Poisson spline of fragment-end density on fragment GC content, fitted on the 800 single-copy control regions, in each "
+                f"of {mp['n_gc']:,} genomes of the 1000 Genomes 30× cohort: the rate at each fragment GC relative to the library's mean. Line: the "
+                f"cohort's median library; shaded: the middle 80% of libraries; grey band: the fragment GC of the middle 80% of the 45S unit's windows "
+                f"({fmt(100 * wg['q10'], 0)}–{fmt(100 * wg['q90'], 0)}%)."
+                + (f" These libraries sequence 65%-GC fragments at {fmt(g['median'][i65], 2)}× their mean rate (middle 80% {fmt(g['q10'][i65], 2)}–"
+                   f"{fmt(g['q90'][i65], 2)}×), so a count of GC-rich sequence taken without this model reads high, by a different amount in each "
+                   "library." if i65 is not None else ""))
+        rr = [v for v in u["raw"]["median"] if v == v]
+        feats = [f_ for f_ in mp.get("features", []) if f_["name"] in ("18S", "5.8S", "28S")]
+        P.chart("m_unit", dict(type="lines", series=[dict(name="GC model alone", x=u["mid_kb"], y=u["raw"]["median"], lo=u["raw"]["q10"], hi=u["raw"]["q90"], ci=2),
+                                                     dict(name="after the window efficiencies", x=u["mid_kb"], y=u["cal"]["median"], lo=u["cal"]["q10"], hi=u["cal"]["q90"], ci=0)],
+                               xlabel="position in the 45S unit, kb", ylabel="window copy number / the genome's estimate", ref=1,
+                               bands=[dict(x0=f_["start"] / 1000, x1=f_["end"] / 1000, label=f_["name"]) for f_ in feats],
+                               ticks=dict(x=u["anchor_kb"], label="anchor windows")),
+                "Calibration: the windows of the 45S unit before and after the window efficiencies",
+                f"Each of the {u['n_retained']} retained 250-bp windows of the 45S unit (KY962518.1; {u['n_windows'] - u['n_retained']} masked windows left "
+                f"out), in each of {mp['n_unit']:,} genomes: the window's copy number under the library's GC model divided by the genome's calibrated "
+                f"estimate. Lines: the cohort's median; shaded: the middle 80%. Aqua, the GC model alone: windows still read from "
+                f"{fmt(min(rr), 2)}× to {fmt(max(rr), 2)}× the genome's level, by amounts that depend on the sequencing chemistry, which the GC curve "
+                f"does not predict. Blue, after dividing by the window efficiencies learned across the cohort by median polish: the median is 1 at "
+                f"every window by construction, and the band is what remains, each genome's scatter about its own level. Grey bands: the {', '.join(f_['name'] for f_ in feats)} genes; blue ticks: the {len(u['anchor_kb'])} anchor windows, "
+                f"on which three Illumina chemistries agreed in the pilot, which set the absolute scale.")
+        pts_e = [dict(x=num_(r, "rDNA45S.cn"), y=num_(r, k), label=r["sample"], si=si) for si, k in enumerate(("rDNA45S.cn_single", "rDNA45S.18S.flat"))
+                 for r in rows if num_(r, "rDNA45S.cn") > 0 and num_(r, k) > 0]
+        est = {}
+        for si, k in enumerate(("rDNA45S.cn_single", "rDNA45S.18S.flat")):
+            xy = [(p_["x"], p_["y"]) for p_ in pts_e if p_["si"] == si]
+            if len(xy) >= 3:
+                xv, yv = [x for x, _ in xy], [y for _, y in xy]
+                mx, my = sum(xv) / len(xv), sum(yv) / len(yv)
+                sxy = sum((x - mx) * (y - my) for x, y in xy)
+                est[k] = dict(n=len(xy), ratio=sorted(y / x for x, y in xy)[len(xy) // 2],
+                              r=sxy / math.sqrt(sum((x - mx) ** 2 for x in xv) * sum((y - my) ** 2 for y in yv)))
+        if len(est) == 2:
+            e1, e2 = est["rDNA45S.cn_single"], est["rDNA45S.18S.flat"]
+            P.chart("m_est", dict(type="scatter", points=pts_e, legend=["45S, NGS-DOSE single-sample", "45S, 18S depth ratio (published)"],
+                                  xlabel="45S, NGS-DOSE calibrated, copies", ylabel="the other estimate, copies", identity=True, fit=True,
+                                  fit_labels=["NGS-DOSE single-sample", "published 18S ratio"]),
+                    "Estimators: the three 45S estimates of every genome",
+                    f"Each of {e1['n']:,} genomes of the 1000 Genomes 30× cohort twice, against its NGS-DOSE calibrated estimate (x). Blue: NGS-DOSE's "
+                    f"single-sample estimate, from the anchor windows alone under the genome's own GC model (median ratio {fmt(e1['ratio'], 2)}, "
+                    f"r = {fmt(e1['r'], 3)}). Orange: the 18S read-depth ratio of published studies, with no GC model and no calibration, computed from "
+                    f"the same reads (median ratio {fmt(e2['ratio'], 2)}, r = {fmt(e2['r'], 3)}). Grey diagonal: equality; lines: least-squares fits."
+                    + (" Within this one chemistry the three agree on who carries more rDNA and differ in level; across technologies only NGS-DOSE's "
+                       "holds its level (3.4)." if min(e1["r"], e2["r"]) > 0.95 else ""))
     P.h("<h3>The run so far</h3>")
     P.tiles([("Genomes scanned", f"{m['n_scan']:,}", f"of {total:,}"), ("Fetched as well", f"{m['n_fetch']:,}", "targeted mode, same files"),
              ("Complete trios", f"{tr['n_complete']:,}", f"of {tr['n_total']:,}"),
