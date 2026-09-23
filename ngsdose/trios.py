@@ -72,6 +72,59 @@ def centre_within(values: dict[str, float], group: dict[str, str], min_n: int = 
     return {s: v - mean[group.get(s, "")] + grand for s, v in values.items() if np.isfinite(v)}
 
 
+def centre_within_sex(values: dict[str, float], population: dict[str, str], sex: dict[str, str], min_n: int = 5) -> dict[str, float]:
+    """Subtract the mean of each sample's population and sex (of its sex alone where that group has fewer than
+    `min_n`), so that a difference between men and women is not read as transmission."""
+    by, by_sex = {}, {}
+    for s, v in values.items():
+        if np.isfinite(v):
+            by.setdefault((population.get(s, ""), sex.get(s, "")), []).append(v)
+            by_sex.setdefault(sex.get(s, ""), []).append(v)
+    mean = {g: float(np.mean(vs)) for g, vs in by.items() if len(vs) >= min_n}
+    sex_mean = {g: float(np.mean(vs)) for g, vs in by_sex.items()}
+    return {s: v - mean.get((population.get(s, ""), sex.get(s, "")), sex_mean[sex.get(s, "")]) for s, v in values.items() if np.isfinite(v)}
+
+
+# parent -> child pairings by sex: (key, the parent, the child's sex)
+PAIRS = (("father_son", "father", "M"), ("father_daughter", "father", "F"), ("mother_son", "mother", "M"), ("mother_daughter", "mother", "F"))
+
+
+def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None, sex: dict[str, str], min_pairs: int = 10) -> dict:
+    """Parent-to-child transmission split by the sex of parent and child.
+
+    An autosomal quantity passes half of each parent's deviation to every child (single-parent slope
+    (R + rho) / 2, as above); a Y-linked one all of the father's to his sons and none to his daughters; an
+    X-linked one all of the father's to his daughters, none to his sons, and half of the mother's to every
+    child. Values are centred within population and sex. Per pairing: pairs, the slope of child on parent
+    with its robust standard error, and Pearson r with a Fisher 95% interval. The correlation is the one to
+    compare between pairings: a slope also carries the ratio of the child's spread to the parent's, which
+    differs between the sexes for a sex-linked quantity. `father_contrast` compares the father-son with the
+    father-daughter correlation (independent groups, Fisher z): near 0 for an autosomal quantity, large and
+    positive for a Y-linked one, large and negative for an X-linked one; `father_slope_contrast` does the
+    same with the slopes."""
+    v = centre_within_sex(values, population or {}, sex)
+    out = {}
+    for key, who, child_sex in PAIRS:
+        xy = [(v[getattr(t, who)], v[t.child]) for t in trios if sex.get(t.child) == child_sex and getattr(t, who) in v and t.child in v]
+        if len(xy) < min_pairs:
+            continue
+        x, y = np.array([a for a, _ in xy]), np.array([b for _, b in xy])
+        if np.std(x) == 0 or np.std(y) == 0:
+            continue
+        b, se = _ols(x, y)
+        r = float(np.corrcoef(x, y)[0, 1])
+        z, h = float(np.arctanh(np.clip(r, -0.999999, 0.999999))), 1.96 / np.sqrt(max(len(xy) - 3, 1))
+        out[key] = dict(n=len(xy), slope=b, slope_se=se, r=r, r_lo=float(np.tanh(z - h)), r_hi=float(np.tanh(z + h)))
+    if "father_son" in out and "father_daughter" in out:
+        a, d = out["father_son"], out["father_daughter"]
+        fz = lambda r: float(np.arctanh(np.clip(r, -0.999999, 0.999999)))
+        se_z = float(np.sqrt(1 / max(a["n"] - 3, 1) + 1 / max(d["n"] - 3, 1)))
+        out["father_contrast"] = dict(diff=a["r"] - d["r"], z=(fz(a["r"]) - fz(d["r"])) / se_z)
+        diff, se = a["slope"] - d["slope"], float(np.hypot(a["slope_se"], d["slope_se"]))
+        out["father_slope_contrast"] = dict(diff=diff, se=se, z=diff / se if se > 0 else float("nan"))
+    return out
+
+
 def _estimators(c, f, m) -> dict:
     mid = (f + m) / 2
     rho = float(np.corrcoef(f, m)[0, 1])

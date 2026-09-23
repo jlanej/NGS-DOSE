@@ -35,8 +35,10 @@ def test_outputs_exist_and_are_reproducible(report):
         assert must in html
     # every figure stands alone in a screenshot: numbered, captioned, with its source; the 18S ratio is named as the published method
     n_fig = html.count('<figure id="fig-')
+    n_supp = html.count('<div class="title">Figure S')
     assert n_fig >= 5 and html.count("<figcaption>") == n_fig and html.count('<span class="src">') == n_fig
-    assert all(f'<div class="title">Figure {i}. ' in html for i in range(1, n_fig + 1))
+    assert all(f'<div class="title">Figure {i}. ' in html for i in range(1, n_fig - n_supp + 1))
+    assert all(f'<div class="title">Figure S{i}. ' in html for i in range(1, n_supp + 1))
     assert "18S depth ratio (published" in html and "18S depth ratio (literature)" not in html
     visible = html.split('<script id="report-data"')[0]                # the prose and tables, not the code
     assert "NaN" not in visible and "None" not in visible.replace("None of", "") and "nan" not in visible.split("<style>")[1].split("</style>")[0]

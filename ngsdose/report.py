@@ -404,6 +404,38 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
     return out
 
 
+def transmission_by_sex(rows, trio_list, population, columns) -> dict:
+    """Every trio metric's transmission split by the sex of parent and child (`trios.by_sex`): the four
+    pairings' slopes and correlations on values centred within population and sex, and the father-to-son
+    minus father-to-daughter contrast, which a Y-linked quantity makes large and positive. The child's sex is
+    the pedigree's, or the one the reads show where the pedigree has none."""
+    sex = {r["sample"]: r.get("sex") or r.get("sex_inferred") or "" for r in rows}
+    have = {r["sample"] for r in rows}
+    complete = [t for t in trio_list if {t.child, t.father, t.mother} <= have and sex.get(t.child) in ("M", "F")]
+    table = {}
+    for col, label in columns:
+        vals = {r["sample"]: num(r, col) for r in rows if np.isfinite(num(r, col))}
+        res = T.by_sex(vals, complete, population, sex)
+        if res:
+            table[col] = dict(label=label, group=TRIO_GROUP_OF.get(col, ""), **res)
+    return dict(n_sons=sum(sex[t.child] == "M" for t in complete), n_daughters=sum(sex[t.child] == "F" for t in complete), table=table)
+
+
+def trio_points(values: list[dict], rows, columns) -> dict:
+    """For the page's child-against-midparent figures: per metric, one [child, midparent, child value, father, mother,
+    child's sex] per complete trio, on the natural scale."""
+    sex = {r["sample"]: r.get("sex") or r.get("sex_inferred") or "" for r in rows}
+    fin_ = lambda x: isinstance(x, (int, float)) and np.isfinite(x)
+    out = {}
+    for col, _ in columns:
+        pts = [[t["child"], round((t[f"{col}.father"] + t[f"{col}.mother"]) / 2, 4), round(t[f"{col}.child"], 4), round(t[f"{col}.father"], 4),
+                round(t[f"{col}.mother"], 4), sex.get(t["child"], "")]
+               for t in values if all(fin_(t.get(f"{col}.{w}")) for w in ("child", "father", "mother"))]
+        if len(pts) >= 10:
+            out[col] = pts
+    return out
+
+
 def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
     """The same cohort layer and the same trio test on the fetch-mode counts alone, independently of
     the scan: does the targeted fetch give the same estimate for every genome, and does it carry the
@@ -768,6 +800,9 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     data["rdna"]["by_pop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "pop")
     data["biology"] = biology(rows)
     data["trios"] = trio_analysis(rows, trio_list, population, TRIO_COLUMNS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[], values=[])
+    if trio_list:
+        data["trios"]["by_sex"] = transmission_by_sex(rows, trio_list, population, TRIO_COLUMNS)
+        data["trios"]["points"] = trio_points(data["trios"].get("values") or [], rows, TRIO_COLUMNS)
     data["fetch_check"] = fetch_check(rows, S, cache, res, trio_list, population) if primary == "scan" and "fetch" in counts else None
     data["pcs"] = pc_analysis(rows, info, trio_list, population, a.pcs, log)
     if data["pcs"].get("adjusted") and data["trios"]["n_complete"] >= 3:
@@ -795,6 +830,13 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         write_table(data["trios"]["table"] + data.get("trios_adjusted", {}).get("table", []), out / "data" / "transmission.tsv")
     if data["trios"].get("values"):
         write_table(data["trios"]["values"], out / "data" / "trios.tsv")
+    bs = (data["trios"].get("by_sex") or {}).get("table") or {}
+    if bs:
+        write_table([dict(metric=col, label=d["label"], group=d["group"],
+                          **{f"{k}.{f}": d[k][f] for k, _, _ in T.PAIRS if k in d for f in ("n", "slope", "slope_se", "r", "r_lo", "r_hi")},
+                          **{f"father_contrast.{f}": v for f, v in (d.get("father_contrast") or {}).items()},
+                          **{f"father_slope_contrast.{f}": v for f, v in (d.get("father_slope_contrast") or {}).items()}) for col, d in bs.items()],
+                    out / "data" / "transmission_by_sex.tsv")
     if data.get("fetch_check"):
         fc, R_s, R_f = data["fetch_check"], {t["column"]: t for t in data["trios"]["table"]}, {t["column"]: t for t in data["fetch_check"]["trios"]["table"]}
         write_table([dict(metric=col, **{k: v for k, v in d.items() if k != "label"}, label=d["label"],
