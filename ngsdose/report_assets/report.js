@@ -265,7 +265,32 @@
     });
   }
 
-  var TYPES = { hist: hist, scatter: scatter, strip: strip, lines: lines, meters: meters };
+  // ---------------- heatmap: metrics by statistics, grouped rows, values printed in the cells
+  function heatmap(container, spec) {
+    var rows = spec.rows || [], cols = spec.cols || []; if (!rows.length || !cols.length) return empty(container);
+    var longest = Math.max.apply(null, rows.map(function (r) { return r.length; })), rowH = 22, groupH = 26, lo = spec.lo === undefined ? 0 : spec.lo, hi = spec.hi === undefined ? 1 : spec.hi;
+    var order = [], last = null;                        // a header row wherever the group changes
+    rows.forEach(function (r, i) { var g = spec.groups ? spec.groups[i] : null; if (g !== last) { order.push({ header: g }); last = g; } order.push({ i: i }); });
+    var f = frame(container, 640, order.reduce(function (a, o) { return a + (o.header !== undefined ? groupH : rowH); }, 0) + 40, { l: Math.min(230, 12 + longest * 6.6), t: 34, r: 8, b: 6 });
+    var cw = f.W / cols.length;
+    cols.forEach(function (c, j) { text(f.g, j * cw + cw / 2, -10, c, { "text-anchor": "middle", "font-size": 11 }); });
+    var y = 0;
+    order.forEach(function (o) {
+      if (o.header !== undefined) { text(f.g, -f.m.l + 4, y + 18, o.header, { "font-weight": 600, "font-size": 11.5, fill: "var(--ink)" }); y += groupH; return; }
+      var i = o.i; text(f.g, -8, y + rowH / 2 + 4, rows[i], { "text-anchor": "end" });
+      cols.forEach(function (c, j) {
+        var v = spec.values[i][j], ok = typeof v === "number" && isFinite(v), a = ok ? Math.max(0, Math.min(1, (v - lo) / (hi - lo || 1))) : 0;
+        var cell = el("rect", { x: j * cw + 1, y: y + 1, width: cw - 2, height: rowH - 2, rx: 3, fill: "var(--s1)", opacity: ok ? 0.06 + 0.94 * a : 0.03 }, f.g);
+        if (ok) text(f.g, j * cw + cw / 2, y + rowH / 2 + 4, fmt(v, spec.nd === undefined ? 2 : spec.nd), { "text-anchor": "middle", fill: a > 0.55 ? "#ffffff" : "var(--ink)", "font-size": 11.5, "pointer-events": "none" });
+        var lines = [{ b: rows[i] }, { b: ok ? fmt(v, 3) : "–", k: spec.col_titles ? spec.col_titles[j] : c }]; if (spec.extra && spec.extra[i] && spec.extra[i][j]) lines.push({ k: spec.extra[i][j] });
+        cell.addEventListener("pointermove", function (ev) { cell.setAttribute("stroke", "var(--ink)"); showTip(ev, lines); });
+        cell.addEventListener("pointerleave", function () { cell.removeAttribute("stroke"); hideTip(); });
+      });
+      y += rowH;
+    });
+  }
+
+  var TYPES = { hist: hist, scatter: scatter, strip: strip, lines: lines, meters: meters, heatmap: heatmap };
   Object.keys(DATA.charts || {}).forEach(function (id) {
     var c = document.getElementById("chart-" + id); if (!c) return;
     try { TYPES[DATA.charts[id].type](c, DATA.charts[id]); } catch (e) { empty(c, "chart failed: " + e.message); }

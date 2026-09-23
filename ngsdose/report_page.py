@@ -145,6 +145,10 @@ def page(data: dict, rows: list[dict]) -> str:
         r_.append(t + ".")
     if md["n_both"]:
         r_.append(f'The targeted fetch returns {fmt(modes45.get("median"), 4)} of the whole-file scan\'s 45S estimate ({md["n_both"]:,} genomes; range {fmt(modes45.get("min"), 4)}–{fmt(modes45.get("max"), 4)}).')
+    fc = data.get("fetch_check") or {}
+    fR = {t["column"]: t for t in (fc.get("trios") or {}).get("table", [])}
+    if fc and t45 and "rDNA45S.cn" in fR and "R_lo" in fR["rDNA45S.cn"]:
+        r_.append(f'Run on the fetch counts alone, the cohort layer and the trio test give the same answer: 45S reliability {fmt(min(fR["rDNA45S.cn"]["R"], 1.0), 2)} ({fmt(fR["rDNA45S.cn"]["R_lo"], 2)}–{fmt(fR["rDNA45S.cn"]["R_hi"], 2)}) against {fmt(min(t45["R"], 1.0), 2)} from the scans.')
     r_.append("</p><p>")
     if t45 and have_ci:
         neg = {t["column"]: t for t in tr["table"]}
@@ -283,14 +287,26 @@ expected count of any sequence follows from its fragment-GC composition; the cop
 chemistry. Per-window efficiencies are learned across the cohort by median polish; the absolute scale is set by anchor windows on which
 three Illumina chemistries agreed in the pilot. Two comparators are carried alongside: a single-sample estimate from the anchor windows
 alone, and the 18S read-depth ratio used in the literature, with no GC model and no calibration.</dd>
+<dt>Estimators</dt><dd>Three 45S estimates travel through every table. <em>45S, calibrated</em> (<code>rDNA45S.cn</code>): the cohort
+model log C<sub>iw</sub> = c<sub>i</sub> + a<sub>w</sub> + e<sub>iw</sub> over every retained 250-bp window w of the unit, fitted by
+median polish across samples i, with the window efficiencies a<sub>w</sub> pinned to a median of zero over the anchor windows; the estimate
+is exp(c<sub>i</sub>), so every window contributes precision and the anchors set the level. <em>45S, single-sample anchor</em>
+(<code>rDNA45S.cn_single</code>): 2 × observed / expected fragment ends summed over the anchor windows alone, under the sample's own
+fragment-GC model, with no information from any other sample. <em>45S, 18S depth ratio</em> (<code>rDNA45S.18S.flat</code>): 2 × fragment
+ends in the 18S gene / (positions × the control regions' mean rate), with no GC model and no calibration: the read-depth ratio the literature
+uses. The 5S and distal-junction estimates are calibrated the same way as the 45S; the satellite masses are diploid megabases from the
+class's read count under the GC model.</dd>
 <dt>Known-truth controls</dt><dd>80 held-out autosomal regions (two copies), 60 chrX regions (one in men, two in women) and 40 X-degenerate
 chrY regions (one, none), measured by the alignment-position path; and the distal junction, present once on each of the ten acrocentric
 short arms, measured by the k-mer path with its class restricted to k-mers that occur exactly once in each of the five CHM13 junctions.
 Mitochondrial genomes and EBV episomes per cell are measured as covariates of the culture.</dd>
-<dt>Transmission</dt><dd>For each estimator, the regression of child on midparent in complete trios. Reliability R = b − ρ(1 − b), with
-b the midparent slope and ρ the spousal correlation after centring within population; 95% intervals by family bootstrap at 20 trios or
-more; paired bootstrap for differences between estimators. Held-out autosomal sequence (no true variance) and mitochondrial and EBV
-content (not in the nuclear genome) are the negative controls.</dd>
+<dt>Transmission</dt><dd>For each metric, values on the natural scale with the population mean subtracted; then, over the complete trios,
+the Pearson correlations of child with father, mother and midparent, the spousal (father–mother) correlation ρ, and the least-squares slope b
+of child on midparent. Reliability R = b − ρ(1 − b) estimates the share of the metric's variance that is transmitted (σ²<sub>T</sub> /
+(σ²<sub>T</sub> + σ²<sub>e</sub>)): 1 for a perfectly measured heritable trait, 0 for pure error. 95% intervals by family bootstrap at 20
+trios or more; a one-sided p-value for the slope from 1,000 permutations of children among families; paired bootstrap for differences
+between estimators. Held-out autosomal sequence (no true variance) and mitochondrial and EBV content (not in the nuclear genome) are the
+negative controls.</dd>
 <dt>Technical structure</dt><dd>Principal components of the control regions' residual depth after the GC model. The number retained is
 chosen at the Marchenko–Pastur edge of the noise bulk and checked by a cross-validated sweep against the known truths and the trios.
 NGS-PCA's genome-wide coverage PCs are applied where available.</dd>
@@ -392,6 +408,20 @@ known-truth and dosage columns are made from the same reads in both modes and ag
         P.chart("fetch45", dict(type="hist", col="fetch_ratio.rDNA45S", xlabel="fetch / scan, 45S copies", ref=[dict(x=1, label="1")], xfmt=4), "45S: targeted fetch against the whole-file scan, per genome")
     else:
         P.h("<p>No genome has been counted in both modes yet; this section fills in when the per-sample jobs, which do both, land.</p>")
+    if fc and fc.get("agreement"):
+        S_ = {t["column"]: t for t in tr["table"]}
+        cls_rows = [(col, d) for col, d in fc["agreement"].items() if not d.get("identical")]
+        P.h(f"""<h3>Does the fetch carry the same information?</h3>
+<p>The cohort layer (window calibration, control-region PCs) and the trio test were run a second time on the fetch counts of the
+{fc["n"]:,} genomes alone, without reference to the scans. Columns made from the same reads in both modes (the known truths, the
+dosage regions, the library's properties) come out identical and are not listed; the classes differ by what the sinks miss and by a
+calibration learned twice.</p>""")
+        P.table([[d["label"], d["n"], f'{fmt(d["ratio_median"], 4)} ({fmt(d["q10"], 4)}–{fmt(d["q90"], 4)})', fmt(d.get("r"), 4),
+                  (fmt(min(S_[col]["R"], 1.0), 2) + (f' ({fmt(S_[col]["R_lo"], 2)}–{fmt(S_[col]["R_hi"], 2)})' if "R_lo" in S_[col] else "")) if col in S_ else "–",
+                  (fmt(min(fR[col]["R"], 1.0), 2) + (f' ({fmt(fR[col]["R_lo"], 2)}–{fmt(fR[col]["R_hi"], 2)})' if "R_lo" in fR[col] else "")) if col in fR else "–"]
+                 for col, d in cls_rows],
+                ["metric", "genomes", "fetch / scan, median (10–90%)", "r across genomes", "reliability from scan (95% CI)", "reliability from fetch (95% CI)"], numeric={1, 2, 3, 4, 5})
+        P.h('<p class="small">The full comparison, every column: <code>data/fetch_check.tsv</code>.</p>')
     cap = md["capture"]
     if any(c.get("n") for c in cap.values()):
         P.h("<p>Share of each class's reads that fell inside the sink intervals, in every whole-file scan of this run:</p>")
@@ -456,16 +486,61 @@ that are not transmitted run beside them as negative controls: held-out autosoma
 mitochondrial and EBV content of the culture, which vary but are not in the nuclear genome.</p>''')
     if tr["n_complete"] >= 3 and tr["table"]:
         P.h(f'<p><strong>{tr["n_complete"]:,} complete trios.</strong>' + ("" if have_ci else f" Bootstrap intervals and paired comparisons appear at 20 trios; slopes at n = {tr['n_complete']} are indicative only.") + "</p>")
+        P.h(f"""<p><strong>How to read the numbers.</strong> Correlations are Pearson's, on values centred within population. The child–midparent
+correlation cannot reach 1 even for a perfectly measured heritable trait: half of a child's variance is segregation, which the midparent does
+not predict, so r is bounded by about √((1 + ρ)/2) — {fmt((0.5 * (1 + t45["spousal_r"])) ** 0.5, 2) if t45 else "0.71"} at the 45S's spousal
+correlation of {fmt(t45["spousal_r"], 2) if t45 else "0"}. The midparent <em>slope</em> b has no such ceiling (it is 1 when every unit of
+parental variance reappears in the children), which is why the slope, corrected for the spousal correlation to R = b − ρ(1 − b), is the
+number that answers "what share of the measured variance is real". Inference rests on the family-bootstrap interval of R; the permutation
+p-value (children shuffled among families) says whether a slope of that size arises by chance.</p>""")
         P.chart("trio", dict(type="scatter", points=[dict(x=p["mid"], y=p["c"], label=p["child"], extra=[f"father {fmt(p['f'], 0)}, mother {fmt(p['m'], 0)}", p["pop"]]) for p in tr["scatter"]],
                              xlabel="midparent copies", ylabel="child copies", identity=True, fit=True), f"Child against midparent: {esc(tr['scatter_column'])}",
                 "Grey diagonal: child equals midparent. Fitted line: the midparent slope.")
+        # the heatmap: every metric the trios were asked about, grouped by what the answer must be
+        from .report import TRIO_GROUPS
+        by_col = {t["column"]: t for t in tr["table"]}
+        stats = [("r_father", "r father"), ("r_mother", "r mother"), ("r_mid", "r midparent"), ("spousal_r", "spousal r"), ("slope", "slope"), ("R", "R")]
+        titles = ["child–father correlation", "child–mother correlation", "child–midparent correlation", "spousal correlation", "midparent slope", "reliability R = b − ρ(1 − b)"]
+        hm_rows, hm_groups, hm_vals, hm_extra = [], [], [], []
+        for key, gl, cols in TRIO_GROUPS:
+            for col, label in cols:
+                t = by_col.get(col)
+                if not t:
+                    continue
+                hm_rows.append(label); hm_groups.append(gl)
+                v = [t.get(k) for k, _ in stats]
+                pp = t.get("perm_p")
+                x = [f"n = {t['n_trios']}"] * 4 + [f"± {fmt(t['slope_se'], 2)} (SE)" + (f"; permutation p {'< 0.001' if pp < 0.001 else fmt(pp, 3)}" if pp is not None else ""),
+                                                   (f"{fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)} (95%)" if "R_lo" in t else "")]
+                if fR:
+                    f_ = fR.get(col)
+                    v.append(f_["R"] if f_ else None)
+                    x.append((f"{fmt(f_['R_lo'], 2)} to {fmt(f_['R_hi'], 2)} (95%)" if f_ and "R_lo" in f_ else "") + (f"; n = {f_['n_trios']}" if f_ else ""))
+                hm_vals.append(v); hm_extra.append(x)
+        cols_hm = [l for _, l in stats] + (["R, fetch"] if fR else [])
+        titles += ["reliability R from the fetch counts alone"] if fR else []
+        P.h('''<p>Every metric the cohort measures was put to the same test, in four groups: the rDNA estimators, whose transmission is
+the claim; the satellite arrays, whose mass is a property of the genome and must be inherited (positive controls); sequence of known
+copy number, which has nothing to inherit except the distal junction's whole-copy steps (3.2); and the culture's and the library's properties,
+which are not in the nuclear genome (negative controls). A method that measured library artefacts would light up the last group; one that measured nothing would light up
+none. HSat1B lives mostly on Yq and passes from father to son only, so its midparent statistics are diluted by design.'''
+            + (" The last column repeats the reliability with the cohort layer and the trio test run on the fetch counts alone (3.3).</p>" if fR else "</p>"))
+        P.chart("heat", dict(type="heatmap", rows=hm_rows, groups=hm_groups, cols=cols_hm, col_titles=titles, values=hm_vals, extra=hm_extra, lo=0, hi=1, nd=2),
+                "Transmission of every metric, at a glance", "Colour from 0 (white) to 1 (blue); values are printed in the cells. Pearson correlations within population; hover a cell for n, the standard error, the permutation p and the interval.")
         rows_t = []
         for t in tr["table"]:
             r_ci = f" ({fmt(t['R_lo'], 2)} to {fmt(t['R_hi'], 2)})" if "R_lo" in t else ""
             err = ("≤ " + fmt(t["error_cv_max"], 1, pct=True)) if "error_cv_max" in t else fmt(t["error_cv"], 1, pct=True)
-            rows_t.append([t["label"], t["n_trios"], fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
-                           fmt(min(t["R_single"], 1.0), 3), fmt(min(t["R_mendel"], 1.0), 3), err])
-        P.table(rows_t, ["estimator", "trios", "midparent slope", "spousal r", "reliability (95% CI)", "single-parent R", "Mendelian R", "error CV the interval allows"], numeric={1, 2, 3, 4, 5, 6, 7})
+            pp = t.get("perm_p")
+            rows_t.append([t["label"], t.get("group", ""), t["n_trios"], fmt(t["r_mid"], 3), fmt(t["slope"], 3) + " ± " + fmt(t["slope_se"], 3), fmt(t["spousal_r"], 3), fmt(min(t["R"], 1.0), 3) + r_ci,
+                           ("< 0.001" if pp is not None and pp < 0.001 else fmt(pp, 3)), fmt(min(t["R_single"], 1.0), 3), fmt(min(t["R_mendel"], 1.0), 3), err])
+        heads = ["metric", "trios", "child–midparent r (Pearson)", "midparent slope b", "spousal r", "reliability R (95% CI)", "permutation p", "single-parent R", "Mendelian R", "error CV the interval allows"]
+        main_rows = [r for r in rows_t if r[1] in ("rDNA", "truth", "culture")]
+        P.table([r[:1] + r[2:] for r in main_rows], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8, 9})
+        if len(rows_t) > len(main_rows):
+            P.h("<details><summary>The same for the satellite arrays (the full table is <code>data/transmission.tsv</code>)</summary>")
+            P.table([r[:1] + r[2:] for r in rows_t if r[1] == "satellites"], heads, numeric={1, 2, 3, 4, 5, 6, 7, 8, 9})
+            P.h("</details>")
         P.h('<p class="small">Reliability is capped at 1; a slope above 1 is noise around 1, and the interval says how much. A spousal correlation far from zero means members of a family share something other than DNA (a batch), and every reliability in the table is inflated by about as much. The negative-control rows should read near zero.</p>')
         if t45 and have_ci:
             cv = bio.get("cn45_cv")
@@ -482,6 +557,7 @@ across technologies in the pilot (3.4); the full cohort decides.</p>''')
             P.h("<p>Paired family bootstrap of the reliability difference against the 18S depth ratio:</p>")
             P.table([[c["label"], fmt(c["delta"], 3), f"{fmt(c['lo'], 3)} to {fmt(c['hi'], 3)}", fmt(c["p_better"], 3)] for c in tr["compare"]],
                     ["estimator", "ΔR vs 18S ratio", "95% CI", "P(better)"], numeric={1, 2, 3})
+        P.h('<p class="small">A printable assessment built from these tables, with a child-against-midparent scatter for every metric, the fetch check and the assembly comparison: <a href="trio_report.pdf">trio_report.pdf</a>. Every trio\'s values: <code>data/trios.tsv</code>.</p>')
         if data.get("trios_adjusted", {}).get("table"):
             ta = data["trios_adjusted"]
             P.h(f'<details><summary>The same, after regressing out {pcs["adjusted"]["k"]} control-region PCs</summary>')
@@ -675,8 +751,9 @@ landed.</li>
 <pre>pip install ngsdose        # or: apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
 ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall hall2021_MOESM1.txt --pilot pilot/ --qc ngspca_sample_qc.tsv -o docs/</pre>
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
-<code>data/transmission.tsv</code>, <code>data/pcsweep.tsv</code>, <code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
-in the prose, <code>report.json</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
+<code>data/transmission.tsv</code> and <code>data/trios.tsv</code> (every trio's values), <code>data/fetch_check.tsv</code>, <code>data/pcsweep.tsv</code>,
+<code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
+in the prose, <code>report.json</code>; the trio assessment as a document, <code>trio_report.pdf</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
 (Byrska-Bishop et al., <em>Cell</em> 2022; AWS Open Data) with the {esc(m.get("bundle"))} resource bundle. Method, design document and
 audit: <a href="https://github.com/jlanej/NGS-DOSE">github.com/jlanej/NGS-DOSE</a>.</p>''')
     P.end()

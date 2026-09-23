@@ -41,6 +41,19 @@ ESTIMATORS = [("rDNA45S.cn", "45S, calibrated"), ("rDNA45S.cn_single", "45S, sin
               ("rDNA45S.18S.flat", "45S, 18S depth ratio (literature)"), ("rDNA5S.cn", "5S, calibrated"), ("DJ.cn", "distal junction, calibrated")]
 NEGATIVE_CONTROLS = [("truth.auto", "held-out autosomal (no variance but error)"), ("chrM.copies", "mitochondrial genomes per cell (culture)"),
                      ("chrEBV.copies", "EBV episomes per cell (culture)")]
+# every metric the trios are asked about, in the groups a sceptic would want to see side by side: what is claimed to be
+# inherited, what must be inherited (the satellite arrays are genomic), what has no variation to inherit, and what is
+# not in the nuclear genome at all
+TRIO_GROUPS = [
+    ("rDNA", "rDNA copy number (the claim)", [e for e in ESTIMATORS if e[0] != "DJ.cn"]),
+    ("satellites", "satellite arrays, mass (genomic: positive controls)", [(f"{c}.mass_Mb", f"{c} array") for c in hprc.CLASSES] + [("TEL.mass_Mb", "telomeric repeat")]),
+    ("truth", "known copy number (nothing to inherit but the distal junction's whole-copy steps)", [("truth.auto", "held-out autosomal (2)"), ("DJ.cn", "distal junction (10)")]),
+    ("culture", "culture and library (not in the nuclear genome)", [("chrM.copies", "mitochondrial genomes per cell"), ("chrEBV.copies", "EBV episomes per cell"),
+                                                                    ("depth", "sequencing depth"), ("ctrl_dup_frac", "duplicate-flagged fraction"),
+                                                                    ("gc_rel_65", "library GC bias"), ("insert_median", "insert size")]),
+]
+TRIO_COLUMNS = [(col, label) for _, _, cols in TRIO_GROUPS for col, label in cols]
+TRIO_GROUP_OF = {col: key for key, _, cols in TRIO_GROUPS for col, _ in cols}
 ASSETS = Path(__file__).parent / "report_assets"
 
 
@@ -352,17 +365,19 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
             t = T.transmission(vals[col], complete, population, n_perm=1000 if n >= 10 else 0, n_boot=1000 if n >= 20 else 0)
         except ValueError:
             continue
-        row = dict(column=col, label=label, n_trios=t["n_trios"], R=t["reliability_midparent"], R_single=t["reliability_single_parent"],
-                   R_mendel=t["reliability_mendel"], spousal_r=t["spousal_r"], slope=t["midparent_slope"], slope_se=t["midparent_slope_se"],
-                   error_cv=t["error_cv"], perm_null_sd=t.get("perm_null_sd"))
+        row = dict(column=col, label=label, group=TRIO_GROUP_OF.get(col.split(".adj")[0], ""), n_trios=t["n_trios"], R=t["reliability_midparent"],
+                   R_single=t["reliability_single_parent"], R_mendel=t["reliability_mendel"], spousal_r=t["spousal_r"], slope=t["midparent_slope"],
+                   slope_se=t["midparent_slope_se"], r_mid=t["r_midparent"], r_father=t["r_father"], r_mother=t["r_mother"],
+                   error_cv=t["error_cv"], perm_null_sd=t.get("perm_null_sd"), perm_p=t.get("perm_p"))
         if "reliability_midparent_ci95" in t:
             row["R_lo"], row["R_hi"] = t["reliability_midparent_ci95"]
             row["spousal_lo"], row["spousal_hi"] = t["spousal_r_ci95"]
+            row["r_mid_lo"], row["r_mid_hi"] = t["r_midparent_ci95"]
             # the error the interval allows: from its lower bound (a slope above 1 is noise around 1)
             row["error_cv_max"] = float(np.sqrt(max(0.0, 1 - row["R_lo"]) * t["parent_sd"] ** 2) / t["parent_mean"])
         row["parent_sd"], row["child_minus_midparent_sd"], row["parent_mean"] = t["parent_sd"], t["child_minus_midparent_sd"], t["parent_mean"]
         out["table"].append(row)
-        if n >= 20 and col != base and base in vals:
+        if n >= 20 and col != base and base in vals and col.split(".adj")[0] in {c for c, _ in ESTIMATORS}:
             try:
                 c = T.compare(vals[col], vals[base], complete, population, n_boot=2000)
                 out["compare"].append(dict(column=col, label=label, delta=c["delta"], lo=c["ci95"][0], hi=c["ci95"][1], p_better=c["p_a_better"]))
@@ -376,7 +391,44 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
         if all(s in v for s in (t.child, t.father, t.mother)):
             out["scatter"].append(dict(child=t.child, mid=(v[t.father] + v[t.mother]) / 2, c=v[t.child], f=v[t.father], m=v[t.mother], pop=t.population))
     out["scatter_column"] = col
+    out["values"] = []                                    # one row per complete trio: every column's child, father and mother values
+    for t in complete:
+        row = dict(child=t.child, father=t.father, mother=t.mother, population=t.population)
+        for c, _ in columns:
+            v = vals.get(c, {})
+            row[f"{c}.child"], row[f"{c}.father"], row[f"{c}.mother"] = v.get(t.child), v.get(t.father), v.get(t.mother)
+        out["values"].append(row)
     return out
+
+
+def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
+    """The same cohort layer and the same trio test on the fetch-mode counts alone, independently of
+    the scan: does the targeted fetch give the same estimate for every genome, and does it carry the
+    same inherited variation (reliability from fetch beside reliability from scan)? Columns made
+    from the same reads in both modes (controls, dosage regions, library properties) come out
+    identical; the classes differ by what the sinks miss and by a calibration learned twice."""
+    f_samples = sorted(s for s in S if "fetch" in S[s])
+    if len(f_samples) < 10:
+        return None
+    rows_f, _, _ = cohort.cohort_table((load_result(cache / "fetch" / f"{s}.estimate.json.gz") for s in f_samples), res.anchors(), log=lambda m: None)
+    for r in rows_f:
+        r.update({k: v for k, v in S[r["sample"]]["fetch"].items() if k not in r})
+    by_scan = {r["sample"]: r for r in rows}
+    agree = {}
+    for col, label in TRIO_COLUMNS + [("truth.chrX", "chrX"), ("truth.chrY", "chrY")]:
+        x = np.array([num(by_scan[r["sample"]], col) if r["sample"] in by_scan else np.nan for r in rows_f])
+        y = np.array([num(r, col) for r in rows_f])
+        ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+        if ok.sum() >= 10:
+            q = y[ok] / x[ok]
+            d = corr(x[ok], y[ok])
+            d.update(label=label, n=int(ok.sum()), ratio_median=float(np.median(q)), q10=float(np.percentile(q, 10)), q90=float(np.percentile(q, 90)),
+                     sd_log=float(np.log(q).std(ddof=1)), identical=bool(np.all(np.abs(q - 1) < 1e-9)))
+            agree[col] = d
+    trios_f = trio_analysis(rows_f, trio_list, population, TRIO_COLUMNS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[], values=[])
+    trios_f.pop("values", None)
+    trios_f.pop("scatter", None)
+    return dict(n=len(rows_f), agreement=agree, trios=trios_f)
 
 
 def pc_analysis(rows, info, trio_list, population, pcs_file, log) -> dict:
@@ -710,7 +762,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     data["rdna"]["by_superpop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "superpop")
     data["rdna"]["by_pop"] = by_group(rows, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", "pop")
     data["biology"] = biology(rows)
-    data["trios"] = trio_analysis(rows, trio_list, population, ESTIMATORS + NEGATIVE_CONTROLS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[])
+    data["trios"] = trio_analysis(rows, trio_list, population, TRIO_COLUMNS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[], values=[])
+    data["fetch_check"] = fetch_check(rows, S, cache, res, trio_list, population) if primary == "scan" and "fetch" in counts else None
     data["pcs"] = pc_analysis(rows, info, trio_list, population, a.pcs, log)
     if data["pcs"].get("adjusted") and data["trios"]["n_complete"] >= 3:
         adj_cols = [(f"{c}.adj", f"{l}, adjusted") for c, l in ESTIMATORS + NEGATIVE_CONTROLS if any(np.isfinite(num(r, f"{c}.adj")) for r in rows)]
@@ -735,6 +788,16 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
                      for s in sorted(S) if "scan" in S[s] and "fetch" in S[s]], out / "data" / "modes.tsv")
     if data["trios"]["table"]:
         write_table(data["trios"]["table"] + data.get("trios_adjusted", {}).get("table", []), out / "data" / "transmission.tsv")
+    if data["trios"].get("values"):
+        write_table(data["trios"]["values"], out / "data" / "trios.tsv")
+    if data.get("fetch_check"):
+        fc, R_s, R_f = data["fetch_check"], {t["column"]: t for t in data["trios"]["table"]}, {t["column"]: t for t in data["fetch_check"]["trios"]["table"]}
+        write_table([dict(metric=col, **{k: v for k, v in d.items() if k != "label"}, label=d["label"],
+                          R_scan=R_s.get(col, {}).get("R"), R_scan_lo=R_s.get(col, {}).get("R_lo"), R_scan_hi=R_s.get(col, {}).get("R_hi"),
+                          R_fetch=R_f.get(col, {}).get("R"), R_fetch_lo=R_f.get(col, {}).get("R_lo"), R_fetch_hi=R_f.get(col, {}).get("R_hi"),
+                          r_mid_scan=R_s.get(col, {}).get("r_mid"), r_mid_fetch=R_f.get(col, {}).get("r_mid")) for col, d in fc["agreement"].items()],
+                    out / "data" / "fetch_check.tsv")
+    data["trios"].pop("values", None)                     # on disk, not in the page
     if data["pcs"].get("sweep"):
         write_table(data["pcs"]["sweep"]["rows"], out / "data" / "pcsweep.tsv")
     if data["satellites"].get("hprc"):
