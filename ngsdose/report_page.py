@@ -11,11 +11,21 @@ import html
 import json
 import math
 
+from .hprc import MAX_GAPPED
 from .report import ASSETS, fmt
 
 esc = lambda x: html.escape(str(x))
 SUPERPOPS = ["AFR", "AMR", "EAS", "EUR", "SAS"]
 SUPERPOP_NAMES = {"AFR": "African", "AMR": "American", "EAS": "East Asian", "EUR": "European", "SAS": "South Asian"}
+# the satellite families of the experimental panel: what each is, and the panel's recall on CHM13, the genome it was built from
+# (resources/experimental/README.md: the share of 150-bp reads from the family's own CHM13 arrays that the panel can assign)
+SAT_FAMILY = {"HSat1A": ("human satellite 1A", 0.998), "HSat1B": ("human satellite 1B", 0.992), "HSat2": ("human satellite 2", 0.990),
+              "HSat3": ("human satellite 3", 0.973), "aSatHOR": ("α-satellite higher-order repeats", 0.999), "bSat": ("β-satellite", 0.69),
+              "ACRO": ("ACRO1 composites of the acrocentric short arms", 0.90), "SST1": ("SST1 arrays", 0.61), "CER": ("centromeric repeat", 0.42),
+              "SATR": ("SATR1/2 satellite", 0.50)}
+SAT_NOTE = {"HSat1B": " Most HSat1B lies on the long arm of chrY, so men form the upper cluster.",
+            "SST1": " The HPRC annotation labels several times more sequence as SST1 than the CHM13 annotation the panel was built from, so the ratio is not a recall.",
+            "SATR": " The HPRC annotation labels several times more sequence as SATR than the CHM13 annotation the panel was built from, so the ratio is not a recall."}
 
 
 def pm(d: dict, nd=3, key="mean") -> str:
@@ -730,9 +740,33 @@ depth (r = {fmt(nq["mtdna_ratio_vs_depth"].get("r"), 2)}).</p>''')
     if hp:
         st = hp["stats"]
         good = [cls for cls, st_ in st.items() if st_.get("n", 0) >= 4 and st_.get("pearson", 0) >= 0.95]
-        P.h(f'''<p>Assemblies collapse the rDNA and are no truth for it (<a href="#why">section 1</a>), but {hp["n_samples"]} of these genomes have HPRC release-2 assemblies whose CenSat
-annotation gives the size of every satellite array: the same kind of sequence, measured by the same k-mer machinery. A genome is compared in a
-class only when the arrays its assembly did not close are immaterial.{" " + ", ".join(good) + " track the assemblies across people with r ≥ 0.95." if good else ""}</p>''')
+        and_ = lambda xs: ", ".join(xs[:-1]) + (" and " if len(xs) > 1 else "") + xs[-1]
+        relative = [cls for cls in st if SAT_FAMILY.get(cls, ("", 1.0))[1] < 0.8]
+        P.h(f'''<p>The satellite arrays are measured by the same k-mer machinery as the rDNA, and unlike the rDNA they have a truth:
+{hp["n_samples"]} of the genomes counted so far belong to people with an HPRC release-2 assembly, built from long reads for both haplotypes,
+whose CenSat annotation gives the length of every satellite array. Summed over the two haplotypes, that is the person's array mass for each
+family, in megabases. NGS-DOSE estimates the same mass from the short reads, from the reads that carry the family's k-mers. The rDNA itself
+cannot be compared this way: the assemblies do not close its arrays (<a href="#why">section 1</a>).</p>
+<p>If both measurements are right, a person's two values are equal. Where the k-mer panel sees only part of a family, NGS-DOSE reads the
+family low by about the same share in everyone, and the people lie on a line below equality. The panel's <em>recall</em> is the share of a
+family's reads it can assign in CHM13, the genome it was built from{(": " + and_(relative) + " have a recall well below 1 and are relative measures, comparable between people but not in absolute megabases") if relative else ""}.
+What tests the method is how closely each person sits on their family's line.</p>''')
+        P.h(f'''<dl class="methods">
+<dt>genomes</dt><dd>People compared in the family: counted here, with an HPRC release-2 assembly, and not left out.</dd>
+<dt>left out (gaps)</dt><dd>An assembly does not always finish an array. Where it stops, the annotation marks a gap of unknown length
+labelled with the family (for example GAP,HSat2), and the assembly's mass for that family is then only a lower bound. A person is left out of
+a family's comparison when such gaps amount to more than {fmt(MAX_GAPPED, 0, pct=True)} of the family's annotated mass in their assembly. An
+array the assembler collapsed or lost without leaving a gap cannot be seen this way.</dd>
+<dt>median estimate / assembly</dt><dd>The typical ratio of NGS-DOSE's mass to the assembly's: near 1 for a family the panel sees fully,
+lower for a relative one.</dd>
+<dt>SD of log ratio, robust SD</dt><dd>How far individual people scatter around that ratio, roughly the per-person disagreement as a
+fraction (0.05 is about 5%). The robust version, 1.4826 × the median absolute deviation, is not moved by a few outliers.</dd>
+<dt>between-person CV, assembly</dt><dd>How much people differ in the family, by the assembly's measure: the variation the comparison has
+to reproduce.</dd>
+<dt>Pearson r, Spearman</dt><dd>How well the order and spacing of people is reproduced (Spearman: the order only). r can be high only
+where people differ by much more than the two measurements disagree. <strong>r ≥ 0.95</strong> is the mark the summary uses to say that a
+family <em>tracks</em> the assemblies: a round threshold set when six people could be compared, not a statistical test.{(" By it, " + and_(good) + " track the assemblies.") if good else " No family reaches it yet."}</dd>
+</dl>''')
         P.table([[cls, s_["n"], s_.get("n_gapped", 0), fmt(s_.get("ratio_median"), 2), fmt(s_.get("sd_log"), 3), fmt(s_.get("sd_log_robust"), 3), fmt(s_.get("cv_assembly"), 1, pct=True),
                   fmt(s_.get("pearson"), 2), fmt(s_.get("spearman"), 2)] for cls, s_ in st.items() if s_.get("n")],
                 ["class", "genomes", "left out (gaps)", "median estimate / assembly", "SD of log ratio", "robust SD of log ratio", "between-person CV, assembly",
@@ -741,7 +775,6 @@ class only when the arrays its assembly did not close are immaterial.{" " + ", "
         judged = {cls: s_ for cls, s_ in st.items() if s_.get("n", 0) >= 10 and s_.get("sd_log_robust") and s_.get("cv_assembly") is not None}
         narrow = [cls for cls, s_ in judged.items() if s_["sd_log_robust"] <= 0.08 and s_["sd_log_robust"] <= s_["cv_assembly"] < 2 * s_["sd_log_robust"]
                   and (s_.get("pearson") or 0) < 0.9]
-        and_ = lambda xs: ", ".join(xs[:-1]) + (" and " if len(xs) > 1 else "") + xs[-1]
         untestable = [cls for cls, s_ in judged.items() if s_["cv_assembly"] < s_["sd_log_robust"]]
         n_far = sum(s_.get("n_far", 0) for s_ in st.values())
         n_short = sum(s_.get("n_far_assembly_short", 0) for s_ in st.values())
@@ -761,15 +794,40 @@ class only when the arrays its assembly did not close are immaterial.{" " + ", "
                                                                              "without a marked gap." if n_short > n_far / 2 else "."))
         if notes:
             P.h('<p class="small">' + " ".join(notes) + "</p>")
-        pts = [dict(x=r["assembly_Mb"], y=r["ngsdose_Mb"], label=r["sample"], extra=[r["cls"]]) for r in hp["rows"] if r["assembly_gapped_Mb"] <= 0.02 * (r["assembly_Mb"] + r["assembly_gapped_Mb"]) and r["assembly_Mb"] > 0 and r["ngsdose_Mb"] > 0]
-        P.chart("hprc", dict(type="scatter", points=pts, xlabel="assembly, Mb (both haplotypes)", ylabel="NGS-DOSE, Mb", identity=True, log="xy"),
-                "Satellite arrays: NGS-DOSE from short reads against long-read assemblies of the same people",
-                f"Each dot is one satellite family in one of {hp['n_samples']} genomes of the 1000 Genomes 30× cohort that also have an HPRC release-2 "
-                f"assembly. x: the family's array mass in the assembly (both haplotypes, CenSat annotation); y: NGS-DOSE's estimate from the short "
-                f"reads. Log scales; diagonal: agreement; arrays the assembly did not close are left out. "
-                + (f"{', '.join(good)} track the assemblies across people with r ≥ 0.95. " if good else "")
-                + "β-satellite (bSat), CER and ACRO are relative measures and sit below the diagonal by a constant factor, their k-mer recall. The rDNA is "
-                  "not in this comparison: the assemblies do not close its arrays (section 1).")
+        # one clean scatter per family: equality, the family's median ratio, and the people far from it
+        P.h('<div class="grid2">')
+        for cls, s_ in st.items():
+            k, rsd = s_.get("ratio_median"), s_.get("sd_log_robust") or 0.0
+            if s_.get("n", 0) < 3 or not k:
+                continue
+            desc, recall = SAT_FAMILY.get(cls, (cls, 1.0))
+            pts_c = [r for r in hp["rows"] if r["cls"] == cls and r["assembly_Mb"] > 0 and r["ngsdose_Mb"] > 0
+                     and r["assembly_gapped_Mb"] <= MAX_GAPPED * (r["assembly_Mb"] + r["assembly_gapped_Mb"])]
+            far = [rsd > 0 and abs(math.log(r["ngsdose_Mb"] / r["assembly_Mb"] / k)) > 3 * rsd for r in pts_c]
+            n_out = sum(far)
+            n_out_short = sum(1 for r, f in zip(pts_c, far) if f and r["ngsdose_Mb"] / r["assembly_Mb"] > k)
+            spec = dict(type="scatter", points=[dict(x=r["assembly_Mb"], y=r["ngsdose_Mb"], label=r["sample"], si=int(f)) for r, f in zip(pts_c, far)],
+                        xlabel="assembly, Mb (both haplotypes)", ylabel="NGS-DOSE, Mb", diagonal=True, slope_ref=dict(k=k, label=f"median ratio {fmt(k, 2)}"))
+            if n_out:
+                spec["legend"] = ["person", "more than 3 robust SDs from the median ratio"]
+            # whether the equality line falls inside the plot, by the renderer's own padding (6% of the x range, 8% of the y range)
+            xv, yv = [r["assembly_Mb"] for r in pts_c], [r["ngsdose_Mb"] for r in pts_c]
+            px, py = (max(xv) - min(xv) or 1) * 0.06, (max(yv) - min(yv) or 1) * 0.08
+            eq_shown = max(min(xv) - px, min(yv) - py) < min(max(xv) + px, max(yv) + py)
+            cap = (f"Each dot is one of {s_['n']} people of the 1000 Genomes 30× cohort with an HPRC release-2 assembly"
+                   + (f" ({s_['n_gapped']} more left out: their assembly leaves part of the array as a gap)" if s_.get("n_gapped") else "")
+                   + f": x the {cls} array mass in the assembly (both haplotypes), y NGS-DOSE's estimate from the short reads. "
+                   + ("Solid grey line: equality. " if eq_shown else "")
+                   + f"Dashed line: the median ratio, {fmt(k, 2)}"
+                   + (f" (the panel's recall for this family in CHM13 is {fmt(recall, 0, pct=True)})" if recall < 0.95 else "")
+                   + ("" if eq_shown else "; equality lies off the plot")
+                   + f". People differ by {fmt(s_.get('cv_assembly'), 1, pct=True)} (CV of the assembly mass); per person the two measurements agree to "
+                     f"{fmt(rsd, 1, pct=True)} (robust SD of the log ratio); Pearson r = {fmt(s_.get('pearson'), 2)}."
+                   + ((f" Orange: {n_out} {'person' if n_out == 1 else 'people'} more than three robust SDs from the median ratio"
+                       + (", all with less in the assembly than in the reads." if n_out_short == n_out else ".")) if n_out else "")
+                   + SAT_NOTE.get(cls, ""))
+            P.chart(f"sat_{cls}", spec, f"{cls}, {desc}: NGS-DOSE against the assemblies", cap)
+        P.h("</div>")
     else:
         P.h('<p class="small">Appears when HPRC CenSat annotations are given (<code>--censat</code>); 200 genomes of the cohort have an assembly.</p>')
     P.end()
