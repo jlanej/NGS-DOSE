@@ -46,7 +46,9 @@ if ! valid "$SCAN_OUT"; then
   for x in $EXTRA_PANELS; do have_file "$x" || { echo "ERROR: extra panel $x not found" >&2; exit 1; }; scan+=(-p "$x"); done
   ngsdose_engine count "${scan[@]}" -o "$SCAN_OUT"
 fi
-valid "$FETCH_OUT" || ngsdose_engine count "${common[@]}" -m fetch --sinks "$BUNDLE/sinks.bed" -o "$FETCH_OUT"
+fetch=("${common[@]}" -m fetch --sinks "$BUNDLE/sinks.bed")
+for x in ${FETCH_PANELS:-}; do have_file "$x" || { echo "ERROR: fetch panel $x not found" >&2; exit 1; }; fetch+=(-p "$x"); done
+valid "$FETCH_OUT" || ngsdose_engine count "${fetch[@]}" -o "$FETCH_OUT"
 valid "$SCAN_OUT" && valid "$FETCH_OUT" || { echo "ERROR: counts missing or damaged for $SAMPLE; the CRAM is kept" >&2; exit 1; }
 tidy
 echo "== $SAMPLE complete, $(date)"

@@ -1,10 +1,12 @@
 # Experimental resources: dispersed sequence
 
 A positional class (rDNA, the distal junction) has a unit, its reads land in a few places, and a
-targeted fetch finds them. What is here has neither property: satellite families and the
-telomeric repeat are spread over centromere models, decoys and everything else in an alignment,
-so **only a whole-file scan measures them** — which is why a cohort that is scanned once should
-be scanned with these loaded (`example/1000G` does; `EXTRA_PANELS` in its `config.sh`).
+targeted fetch finds them. The satellite families have neither property: they are spread over
+centromere models, decoys and everything else in an alignment, so **only a whole-file scan
+measures them** — which is why a cohort that is scanned once should be scanned with these loaded
+(`example/1000G` does; `EXTRA_PANELS` in its `config.sh`). The telomeric repeat is the exception:
+the aligner concentrates its reads at the chromosome ends, the bundle's `sinks.bed` carries the
+intervals, and a fetch with `-p telomere.k31.panel.tsv.gz` measures it (`FETCH_PANELS`).
 
 ```bash
 ngs-dose count -m scan -i sample.cram -T ref.fa -c ../GRCh38/controls.fa.gz -p ../GRCh38/panel.k31.tsv.gz \
@@ -94,3 +96,19 @@ is that every class's counts come with the histogram of the share of each read's
 (`hit_frac`, eleven bins), so a threshold can be chosen — and calibrated against TelSeq on a few
 samples — after the cohort has been scanned, not before. Like the mitochondrial and EBV dosages it
 is first of all a covariate of the state of a cell line.
+
+**Telomeric reads are not dispersed.** Across the first 372 NYGC scans of the 1000 Genomes cohort,
+92% of `TEL` reads (85.8–94.9% per genome) were placed within 25 kb of a chromosome end — the 48
+windows an NGS-TL/TelSeq-style targeted query retrieves — and 60% in the single bin
+chr5:10,000–20,000, where bwa-mem puts pure telomeric reads; essentially none on unplaced or decoy
+contigs; the remaining 8% at a fixed set of interstitial loci (chr4:190.12 Mb, chr18:80.26 Mb,
+chr2:32.91 Mb, chr1:180 kb, …). Normalised by the controls, the count inside the 48 end windows
+and the whole-file count agree at r = 0.9997 across genomes (SD of the log ratio 0.019), so a
+targeted query measures the same thing as the scan. Sinks learned from 40 scans
+(`ngsdose sinks --classes TEL`, 10-kb bins holding ≥ 1e-5 of the class and ≥ 25 reads, padded 1 kb)
+captured ≥ 99.87% of the class in each of the other 332; the bundle's `sinks.bed` now carries the
+set learned from all 372. Two caveats travel with the number: the engine skips unmapped records in
+both modes, so a fully unmapped telomeric read is counted by neither (TelSeq counts it); and the
+implied length is 4.4 kb per chromosome end counting whole reads or 1.7 kb weighting each read by
+its telomeric k-mer share, an under-read that a calibration against TelSeq or NGS-TL on the same
+genomes will size.

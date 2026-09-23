@@ -99,11 +99,12 @@ def test_features_anchors_and_sinks_are_inside_their_coordinate_systems():
     # the anchors include the gene itself, not only spacer
     assert any(3657 <= s and e <= 5526 for s, e in anchors["rDNA45S"])
     classes = set()
+    lengths = B.meta["contig_lengths"]
     for line in open(B.sinks):
         c, s, e, cls = line.rstrip("\n").split("\t")
-        assert int(s) < int(e)
+        assert int(s) < int(e) and (c not in lengths or int(e) <= lengths[c]), line
         classes.add(cls)
-    assert classes == {"rDNA45S", "rDNA5S", "DJ"}
+    assert classes == {"rDNA45S", "rDNA5S", "DJ", "TEL"}                 # the telomeric repeat is fetchable; the satellites are not
     assert B.meta["expected_copies"] == {"DJ": 10}
 
 

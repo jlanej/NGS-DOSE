@@ -20,6 +20,10 @@ BUNDLE="${BUNDLE:-$IMAGE_ROOT/resources/GRCh38}"
 # satellite families and the telomeric repeat (resources/experimental/README.md). EXTRA_PANELS=""
 # scans with the bundle's classes only.
 EXTRA_PANELS="${EXTRA_PANELS-$IMAGE_ROOT/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz $IMAGE_ROOT/resources/experimental/telomere.k31.panel.tsv.gz}"
+# Panels loaded in fetch mode as well: classes whose reads the aligner concentrates, so that the bundle's
+# sinks retrieve them (the telomeric repeat; 92% of its reads lie within 25 kb of a chromosome end). The
+# satellite families are dispersed and stay scan-only. FETCH_PANELS="" fetches the bundle's classes alone.
+FETCH_PANELS="${FETCH_PANELS-$IMAGE_ROOT/resources/experimental/telomere.k31.panel.tsv.gz}"
 # staged CRAMs for the full-accuracy path (01b_dose_sample.sh): $CRAM_DIR/<sample>.cram(.crai)
 CRAM_DIR="${CRAM_DIR:-$WORK_DIR/crams}"
 

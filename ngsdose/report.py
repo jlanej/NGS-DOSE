@@ -32,8 +32,10 @@ from . import __version__, cohort, estimate, hprc, io, pcselect, resources, sink
 from . import trios as T
 from .tables import dump, load_result, num, summary_row, write_table
 
-REPORT_VERSION = 3
+REPORT_VERSION = 4
 POSITIONAL = ("rDNA45S", "rDNA5S", "DJ")
+# the classes fetch mode retrieves through the sinks, and the column their two modes are compared on
+FETCHABLE = [("rDNA45S", "rDNA45S.cn_single"), ("rDNA5S", "rDNA5S.cn_single"), ("DJ", "DJ.cn_single"), ("TEL", "TEL.mass_Mb")]
 SATELLITES = hprc.CLASSES + ("TEL",)
 ESTIMATORS = [("rDNA45S.cn", "45S, calibrated"), ("rDNA45S.cn_single", "45S, single-sample anchor"),
               ("rDNA45S.18S.flat", "45S, 18S depth ratio (literature)"), ("rDNA5S.cn", "5S, calibrated"), ("DJ.cn", "distal junction, calibrated")]
@@ -84,7 +86,8 @@ def _one(job):
              panel_sha256=",".join(h[:8] for h in counts.get("panel_sha256", [])), controls_sha256=(counts.get("controls_sha256") or "")[:8],
              sinks_sha256=(counts.get("sinks_sha256") or "")[:8])
     if counts["mode"] == "scan":
-        x["capture"] = {cls: round(inside / max(tot, 1), 6) for cls, (tot, inside) in sinks.capture(counts, _E["sinks"]).items() if cls in POSITIONAL}
+        sunk = {b[3] for b in _E["sinks"]}
+        x["capture"] = {cls: round(inside / max(tot, 1), 6) for cls, (tot, inside) in sinks.capture(counts, _E["sinks"]).items() if cls in sunk}
         rate = r["ctrl_rate"]
         x["flat_copies"] = {c["name"]: round(c["reads"] / (c["len"] * rate), 3) for c in counts.get("contigs", [])
                             if c.get("reads") is not None and c["name"] in ("chrM", "chrEBV", "chrX", "chrY", "chr1") and rate > 0}
@@ -315,7 +318,7 @@ def dj_steps(rows, ped) -> dict:
 def mode_agreement(S: dict) -> dict:
     """fetch / scan for the samples counted both ways, and the sink capture of every scan."""
     cols = [("rDNA45S.cn_single", "45S"), ("rDNA5S.cn_single", "5S"), ("DJ.cn_single", "distal junction"), ("truth.auto", "held-out autosomal"),
-            ("chrM.copies", "chrM")]
+            ("chrM.copies", "chrM"), ("TEL.mass_Mb", "telomeric repeat, mass")]
     both = [s for s, d in S.items() if "fetch" in d and "scan" in d]
     out = dict(n_both=len(both), columns={})
     for col, label in cols:
@@ -327,7 +330,7 @@ def mode_agreement(S: dict) -> dict:
             d["label"] = label
         out["columns"][col] = d
     out["capture"] = {}
-    for cls in POSITIONAL:
+    for cls, _ in FETCHABLE:
         v = [num(S[s]["scan"], f"capture.{cls}") for s in S if "scan" in S[s]]
         d = describe(v)
         d["below_99"] = [s for s in S if "scan" in S[s] and num(S[s]["scan"], f"capture.{cls}") < 0.99]
@@ -597,6 +600,10 @@ def biology(rows) -> dict:
     return out
 
 
+def _ratio(a, b) -> float:
+    return a / b if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b > 0 else float("nan")
+
+
 def by_group(rows, col, key) -> list[dict]:
     groups = {}
     for r in rows:
@@ -641,8 +648,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         r["sex_inferred"] = inferred_sex(r)
         f = S[r["sample"]].get("fetch")
         if f is not None and primary == "scan":
-            for cls in POSITIONAL:
-                sv, fv = num(r, f"{cls}.cn_single"), num(f, f"{cls}.cn_single")
+            for cls, col in FETCHABLE:
+                sv, fv = num(r, col), num(f, col)
                 r[f"fetch_ratio.{cls}"] = round(fv / sv, 6) if sv > 0 and np.isfinite(fv) else None
     dj = dj_steps(rows, ped)
     engines = {}
@@ -698,8 +705,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
     if "fetch" in summaries:
         write_table(summaries["fetch"], out / "data" / "fetch.tsv")
     if data["modes"]["n_both"]:
-        write_table([dict(sample=s, **{f"fetch_over_scan.{cls}": S[s]["fetch"].get(f"{cls}.cn_single", np.nan) / max(S[s]["scan"].get(f"{cls}.cn_single") or np.nan, 1e-9) for cls in POSITIONAL},
-                          **{f"capture.{cls}": S[s]["scan"].get(f"capture.{cls}") for cls in POSITIONAL})
+        write_table([dict(sample=s, **{f"fetch_over_scan.{cls}": _ratio(S[s]["fetch"].get(col), S[s]["scan"].get(col)) for cls, col in FETCHABLE},
+                          **{f"capture.{cls}": S[s]["scan"].get(f"capture.{cls}") for cls, _ in FETCHABLE})
                      for s in sorted(S) if "scan" in S[s] and "fetch" in S[s]], out / "data" / "modes.tsv")
     if data["trios"]["table"]:
         write_table(data["trios"]["table"] + data.get("trios_adjusted", {}).get("table", []), out / "data" / "transmission.tsv")
@@ -722,7 +729,7 @@ SAMPLE_COLUMNS = ["sample", "sex", "sex_inferred", "pop", "superpop", "mode_used
                   "gc_curve_max_se", "truth.auto", "truth.chrX", "truth.chrY", "chrM.copies", "chrEBV.copies", "rDNA45S.cn", "rDNA45S.cn_single",
                   "rDNA45S.18S.flat", "rDNA5S.cn", "rDNA5S.cn_single", "DJ.cn", "DJ.cn_single", "rDNA45S.cn.adj", "rDNA45S.cn.adj_ngspca",
                   "elapsed_sec", "flags", "DJ.step", "gc_rel_65", "rDNA45S.18S.flat_over_cn", "rDNA45S.18S_over_cn", "flat.chrM",
-                  "ngspca.MTDNA_CN", "ngspca.chrX", "ngspca.chrY", "ngspca.depth", "ngspca.batch"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c in POSITIONAL] + [f"capture.{c}" for c in POSITIONAL]
+                  "ngspca.MTDNA_CN", "ngspca.chrX", "ngspca.chrY", "ngspca.depth", "ngspca.batch"] + [f"{c}.mass_Mb" for c in SATELLITES] + [f"fetch_ratio.{c}" for c, _ in FETCHABLE] + [f"capture.{c}" for c, _ in FETCHABLE]
 
 
 def sample_record(r: dict) -> dict:

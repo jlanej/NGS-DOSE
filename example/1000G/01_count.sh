@@ -31,6 +31,7 @@ while IFS=$'\t' read -r sample cram _; do
     args+=(-m scan)
   else
     args+=(-m fetch --sinks "$BUNDLE/sinks.bed")
+    for x in ${FETCH_PANELS:-}; do have_file "$x" || { echo "ERROR: fetch panel $x not found" >&2; exit 1; }; args+=(-p "$x"); done
     case "$cram" in
       *://*) crai="$WORK_DIR/crai/$sample.crai"
              [ -s "$crai" ] || { curl -sSL --fail --retry 5 -o "$crai.part" "$cram.crai" && mv "$crai.part" "$crai"; }
