@@ -53,7 +53,8 @@ class Doc:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
-        self.plt, self.pdf, self.n, self.png_dir = plt, PdfPages(out), 0, Path(png_dir) if png_dir else None
+        # no creation date: the same report.json gives the same bytes, so a regeneration that changes nothing commits nothing
+        self.plt, self.pdf, self.n, self.png_dir = plt, PdfPages(out, metadata={"CreationDate": None}), 0, Path(png_dir) if png_dir else None
         plt.rcParams.update({"font.family": "sans-serif", "font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED, "ytick.color": MUTED,
                              "axes.spines.top": False, "axes.spines.right": False, "axes.titleweight": "bold", "axes.titlesize": 9.5, "pdf.fonttype": 42})
 
