@@ -6,6 +6,9 @@ assembly is a truth only for the arrays it spans: an array the assembly did not 
 annotated together with its gap ("GAP,HSat2"), is a lower bound on something larger, and is
 tallied separately here - a sample with a material share of a class in such arrays is left out
 of that class's comparison.
+
+The same annotation labels the rDNA the assemblies hold. They are no truth for it (the arrays are
+not closed), but how much of it they hold is the answer to why the rDNA is measured from reads.
 """
 from __future__ import annotations
 
@@ -61,6 +64,36 @@ def assembly_mass(sample: str, censat_dir: str):
                 if cls:
                     (gapped if "GAP" in labels else mass)[cls] += int(p[2]) - int(p[1])
     return mass, gapped, len(files)
+
+
+def rdna_in_assembly(sample: str, censat_dir: str, merge_bp: int = 1000):
+    """Sequence annotated as rDNA in the haplotype assemblies of one sample: total bp, the longest
+    stretch (records on one contig less than `merge_bp` apart are one stretch), and the number of
+    annotation files. Assemblies do not close the rDNA arrays, so this is what an assembly holds of
+    them, not a copy number; records annotated with a gap are not sequence and are not counted."""
+    files = sorted(glob.glob(os.path.join(censat_dir, f"{sample}_*cenSat.bed")))
+    total = longest = 0
+    for path in files:
+        by_contig = collections.defaultdict(list)
+        with open(path) as fh:
+            for line in fh:
+                if line.startswith(("track", "#")) or not line.strip():
+                    continue
+                p = line.rstrip("\n").split("\t")
+                labels = labels_of(p[3])
+                if "rDNA" in labels and "GAP" not in labels:
+                    by_contig[p[0]].append((int(p[1]), int(p[2])))
+        for ivs in by_contig.values():
+            ivs.sort()
+            s, e = ivs[0]
+            for a, b in ivs[1:] + [(1 << 62, 1 << 62)]:
+                if a - e < merge_bp:
+                    e = max(e, b)
+                else:
+                    total += e - s
+                    longest = max(longest, e - s)
+                    s, e = a, b
+    return total, longest, len(files)
 
 
 def compare(estimates: list[dict], censat_dir: str) -> tuple[list[dict], dict[str, dict]]:

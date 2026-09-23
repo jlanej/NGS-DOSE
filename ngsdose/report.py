@@ -456,6 +456,29 @@ def satellite_analysis(rows, censat_dir) -> dict:
     return out
 
 
+def rdna_assemblies(rows, censat_dir, col: str, unit_bp: int) -> dict | None:
+    """What long-read assemblies hold of the rDNA: sequence annotated as rDNA in the HPRC assemblies of
+    the counted genomes that have one, against the 45S copy number measured here times the unit length.
+    The ten arrays of a diploid genome (five acrocentrics, two homologues) give the mean array size."""
+    if not censat_dir or not unit_bp:
+        return None
+    out = []
+    for r in rows:
+        cn = num(r, col)
+        if not np.isfinite(cn) or cn <= 0:
+            continue
+        bp, longest, n_files = hprc.rdna_in_assembly(r["sample"], censat_dir)
+        if n_files != 2:
+            continue
+        implied = cn * unit_bp
+        out.append(dict(sample=r["sample"], assembly_rDNA_Mb=round(bp / 1e6, 3), longest_stretch_Mb=round(longest / 1e6, 3), cn45=round(cn, 1),
+                        implied_Mb=round(implied / 1e6, 2), fraction=round(bp / implied, 3), mean_array_Mb=round(implied / 10 / 1e6, 2)))
+    if not out:
+        return None
+    return dict(rows=out, n=len(out), column=col, unit_bp=unit_bp, fraction=describe([x["fraction"] for x in out]),
+                longest_stretch_Mb=describe([x["longest_stretch_Mb"] for x in out]), mean_array_Mb=describe([x["mean_array_Mb"] for x in out]))
+
+
 def hall_comparison(rows, hall_path) -> dict | None:
     if not hall_path or not Path(hall_path).exists():
         return None
@@ -693,6 +716,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         adj_cols = [(f"{c}.adj", f"{l}, adjusted") for c, l in ESTIMATORS + NEGATIVE_CONTROLS if any(np.isfinite(num(r, f"{c}.adj")) for r in rows)]
         data["trios_adjusted"] = trio_analysis(rows, trio_list, population, adj_cols)
     data["satellites"] = satellite_analysis(rows, a.censat)
+    unit45 = len(res.units().get("rDNA45S", "")) if a.censat else 0
+    data["rdna"]["assemblies"] = rdna_assemblies(rows, a.censat, "rDNA45S.cn" if data["rdna"]["rDNA45S.cn"]["n"] else "rDNA45S.cn_single", unit45)
     data["hall"] = hall_comparison(rows, a.hall)
     data["replicates"] = replicate_analysis(a.pilot)
     data["ngspca_qc"] = ngspca_qc_comparison(rows, a.qc)
@@ -714,6 +739,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         write_table(data["pcs"]["sweep"]["rows"], out / "data" / "pcsweep.tsv")
     if data["satellites"].get("hprc"):
         write_table(data["satellites"]["hprc"]["rows"], out / "data" / "satellites_hprc.tsv")
+    if data["rdna"]["assemblies"]:
+        write_table(data["rdna"]["assemblies"]["rows"], out / "data" / "rdna_hprc.tsv")
     write_table([dict(sample=s, flags=f) for s, f in data["flags"]], out / "data" / "flags.tsv")
     Path(out / "data" / "efficiencies.json").write_text(json.dumps(eff))
     data["efficiencies"] = {cls: dict(start=e["start"], a=e["a"], anchor=e["anchor"], gc=e["gc"]) for cls, e in eff.items()}

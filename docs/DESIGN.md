@@ -639,13 +639,26 @@ Gibbons et al. (2014, 2015) introduced rDNA dosage from WGS depth. Hall, Turner 
 (*Sci Rep* 2021) analysed the same 1000 Genomes CRAMs used here, showed how library and batch
 drive such estimates, and published the per-sample table this project is checked against.
 Rodriguez-Algarra, Evans & Rakyan (*Cell Genomics* 2024) measured an 18S read-count ratio in UK
-Biobank and demonstrated phenotypic signal; `18S.flat` is our counterpart of their estimator. A
-2026 medRxiv preprint (Raj et al., Calico) is described as fitting a fragment-GC Poisson model
-on length-matched control loci for 490,000 UK Biobank genomes — if so, the closest relative of
-section 6, arrived at independently. We know it only from a literature summary and have seen
-neither its text in full nor its code; verify before citing. T2T (Nurk et al. 2022) and
+Biobank and demonstrated phenotypic signal; `18S.flat` is our counterpart of their estimator.
+They also report that its mean differs between the two UK Biobank sequencing centres and adjust
+for centre. Raj et al. (medRxiv, 13 January 2026, doi:10.64898/2026.01.09.26343685, Calico)
+estimated 45S and 5S copy number in 490,383 UK Biobank genomes and report associations with
+metabolic disease, adiposity and blood traits; that much is checked against its abstract (2026-09-22).
+Its method is described in a literature summary as a fragment-GC Poisson model on length-matched
+control loci, which would make it the closest relative of section 6, arrived at independently.
+We have not read the method in full, and its code (github.com/calico/rDNA_CN) was not public on
+2026-09-22, so the method description is unverified and not cited. T2T (Nurk et al. 2022) and
 CONKORD (Potapova et al.) estimate rDNA from 18S k-mers in reads against GC-matched windows.
 Benjamini & Speed (*NAR* 2012) is the source of the fragment-GC model.
+
+Long reads do not yet replace a short-read measurement. In T2T-CHM13 three of the five rDNA
+arrays are model sequences, because ultra-long nanopore reads could not order their units (Nurk
+et al. 2022); in 156 acrocentric short arms assembled from HiFi, ultra-long nanopore and Hi-C
+data the array collapsed in every one (Lin et al., *Cell* 2026); per-array size and activity have
+been measured in fifteen genomes with long reads and imaging (Potapova et al., *Cell Genomics*
+2025). The HPRC release-2 assemblies of cohort members hold about a third of the rDNA their
+measured copy number implies, in pieces of at most about a megabase (`ngsdose report --censat`,
+`data/rdna_hprc.tsv`). The cohort page's section 1 sets this out with the references.
 
 What is specific to NGS-DOSE: placement-independent read assignment with learned sinks, so that
 the same counts come from a full scan or a one-minute targeted retrieval; a per-position
