@@ -108,8 +108,8 @@ def main():
     x2, y2 = np.array([num(r, "nygc_18S_flat") for r in heldout]), np.array([num(r, "replicate_18S_flat") for r in heldout])
     lo, hi = 0.9 * min(x1.min(), y1.min(), x2.min(), y2.min()), 1.05 * max(x1.max(), y1.max(), x2.max(), y2.max())
     D.plot([lo, hi], [lo, hi], color=GRID, lw=1, zorder=0)
-    D.scatter(x2, y2, s=22, color=ORANGE, edgecolor="white", linewidth=0.8, label=f"18S depth ratio: {np.exp(np.mean(np.log(y2 / x2))) - 1:+.0%}, pair SD {np.std(np.log(y2 / x2), ddof=1):.0%}")
-    D.scatter(x1, y1, s=22, color=BLUE, edgecolor="white", linewidth=0.8, label=f"calibrated, anchors held out: {np.exp(np.mean(np.log(y1 / x1))) - 1:+.0%}, pair SD {np.std(np.log(y1 / x1), ddof=1):.1%}")
+    D.scatter(x2, y2, s=22, color=ORANGE, edgecolor="white", linewidth=0.8, label=f"18S depth ratio (published)\n{np.exp(np.mean(np.log(y2 / x2))) - 1:+.0%}, pair SD {np.std(np.log(y2 / x2), ddof=1):.0%}")
+    D.scatter(x1, y1, s=22, color=BLUE, edgecolor="white", linewidth=0.8, label=f"NGS-DOSE, anchors held out\n{np.exp(np.mean(np.log(y1 / x1))) - 1:+.0%}, pair SD {np.std(np.log(y1 / x1), ddof=1):.1%}")
     D.legend(fontsize=7, frameon=False, loc="upper left")
     D.set_xlabel("45S copies, NovaSeq 2×150 (2019)")
     D.set_ylabel("45S copies, HiSeq 2×100 / 2×126 (2012–15)")
@@ -121,11 +121,11 @@ def main():
     f = np.array([s["rDNA45S.18S.flat_over_cn"] for s in S if s.get("gc_rel_65") and s.get("rDNA45S.18S.flat_over_cn")])
     m = np.array([s["rDNA45S.18S_over_cn"] for s in S if s.get("gc_rel_65") and s.get("rDNA45S.18S.flat_over_cn")])
     gb = d["biology"]["gc_bias"]
-    E.scatter(g, f, s=9, color=ORANGE, alpha=0.6, linewidths=0, label=f"18S depth ratio, no GC model: r = {gb['flat_vs_gc']['r']:.2f}")
-    E.scatter(g, m, s=9, color=BLUE, alpha=0.6, linewidths=0, label=f"18S under the fragment-GC model: r = {gb['modelled_vs_gc']['r']:.2f}")
+    E.scatter(g, f, s=9, color=ORANGE, alpha=0.6, linewidths=0, label=f"18S depth ratio (published): r = {gb['flat_vs_gc']['r']:.2f}")
+    E.scatter(g, m, s=9, color=BLUE, alpha=0.6, linewidths=0, label=f"18S under NGS-DOSE's GC model: r = {gb['modelled_vs_gc']['r']:.2f}")
     E.legend(fontsize=7, frameon=False, loc="upper left")
     E.set_xlabel("the library's rate at 65% GC, relative to its mean")
-    E.set_ylabel("18S estimate / calibrated 45S estimate")
+    E.set_ylabel("18S estimate / NGS-DOSE 45S estimate")
     E.set_title("e  The model removes the library's GC bias")
 
     # f. another pipeline, the same files -------------------------------------------------------
@@ -137,7 +137,7 @@ def main():
         F.plot([lo, hi], [lo, hi], color=GRID, lw=1, zorder=0)
         F.scatter(xs, ys, s=9, color=BLUE, alpha=0.6, linewidths=0)
         F.text(0.03, 0.96, f"{h['n']:,} shared samples: r = {h['flat']['r']:.3f}\ntheirs / ours {h['flat_ratio']:.3f}; {h['dup_corrected_ratio']:.3f} after their duplicate exclusion", transform=F.transAxes, fontsize=8, va="top", bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=2))
-    F.set_xlabel("NGS-DOSE, 18S depth ratio / 2")
+    F.set_xlabel("18S depth ratio (published method)\nfrom NGS-DOSE's counts, / 2")
     F.set_ylabel("Hall et al. 2021, 18S")
     F.set_title("f  Another pipeline, the same CRAMs")
 

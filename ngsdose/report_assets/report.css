@@ -55,6 +55,7 @@ section p { max-width: 760px; }
 figure { margin: 18px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px 8px; }
 figure figcaption { font-size: 14px; color: var(--ink-2); margin-top: 6px; max-width: 900px; }
 figure .title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+figure figcaption .src { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .chart { width: 100%; min-height: 60px; position: relative; }
 .chart svg { width: 100%; height: auto; display: block; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; }
 .chart .empty { color: var(--muted); font-size: 14px; padding: 12px 0; }

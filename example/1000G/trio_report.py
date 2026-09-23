@@ -119,11 +119,12 @@ def summary_blocks(d, tr, fc):
             "the 45S unit are calibrated across the cohort with the scale set by anchor windows on which three Illumina chemistries agreed. "
             "Two counting modes: scan reads the whole CRAM, fetch retrieves only the controls and the intervals where the aligner places class "
             "reads. Cohort: the 1000 Genomes 30× CRAMs (NYGC, NovaSeq 2×150, GRCh38), all lymphoblastoid cell lines.\n\n"
-            "Three 45S estimators travel through every table. '45S, calibrated': the cohort model log C(i,w) = c(i) + a(w) + e(i,w) over every "
+            "Three 45S estimators travel through every table, two of them NGS-DOSE's. '45S, NGS-DOSE calibrated': the cohort model log C(i,w) = c(i) + a(w) + e(i,w) over every "
             "retained 250-bp window w of the unit, fitted by median polish across samples i with the window efficiencies a(w) pinned to a median of "
-            "zero over the anchor windows; the estimate is exp(c(i)). '45S, single-sample anchor': 2 × observed / expected fragment ends over the "
-            "anchor windows alone, under the sample's own GC model, with no information from any other sample. '45S, 18S depth ratio': 2 × fragment "
-            "ends in the 18S gene / (positions × the control regions' mean rate), no GC model, no calibration — the literature's estimator.")
+            "zero over the anchor windows; the estimate is exp(c(i)). '45S, NGS-DOSE single-sample': 2 × observed / expected fragment ends over the "
+            "anchor windows alone, under the sample's own GC model, with no information from any other sample. '45S, 18S depth ratio (published)': "
+            "2 × fragment ends in the 18S gene / (positions × the control regions' mean rate), no GC model, no calibration — the estimator of published "
+            "studies, computed from the same reads for comparison; it is not NGS-DOSE's estimate.")
     test = ("In a trio, a child's copy number is the mean of the parents' plus segregation; measurement error is not inherited. Values are centred "
             "within population; the correlations are Pearson's. The child–midparent correlation cannot reach 1 even for a perfectly measured heritable "
             "trait, because half of a child's variance is segregation, which the midparent does not predict (r is bounded by about √((1 + ρ)/2), 0.71 "

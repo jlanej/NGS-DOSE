@@ -69,8 +69,8 @@
       text(f.g, -8, y + 4, (yfmt || fmt)(t), { "text-anchor": "end", fill: "var(--muted)" }); });
     el("line", { x1: 0, x2: f.W, y1: f.H, y2: f.H, stroke: "var(--axis)", "stroke-width": 1 }, f.g);
     ticks.forEach(function (t) { if (t < xs.lo - 1e-9 || t > xs.hi + 1e-9) return; var x = xs.map(t);
-      text(f.g, x, f.H + 16, (xfmt || fmt)(t), { "text-anchor": "middle", fill: "var(--muted)" }); });
-    if (xlabel) text(f.g, f.W / 2, f.H + 34, xlabel, { "text-anchor": "middle" });
+      text(f.g, x, f.H + 18, (xfmt || fmt)(t), { "text-anchor": "middle", fill: "var(--muted)" }); });     // clear of the y axis's lowest label
+    if (xlabel) text(f.g, f.W / 2, f.H + 36, xlabel, { "text-anchor": "middle" });
     if (ylabel) text(f.g, -f.m.l + 12, -8, ylabel, { "text-anchor": "start" });
   }
   function scale(lo, hi, a, b) { var s = { lo: lo, hi: hi }; s.map = function (v) { return a + (v - lo) / (hi - lo || 1) * (b - a); }; return s; }
@@ -152,13 +152,25 @@
     if (spec.identity) el("line", { x1: xs.map(xlo - px), y1: ys.map(xlo - px), x2: xs.map(xhi + px), y2: ys.map(xhi + px), stroke: "var(--axis)", "stroke-width": 1 }, f.g);
     if (spec.xref !== undefined) refLine(f, xs, ys, { x: tx(spec.xref) }, true);
     if (spec.yref !== undefined) refLine(f, xs, ys, { y: tx(spec.yref), label: spec.yref_label }, false);
-    if (spec.fit && pts.length >= 10) {                     // least squares on the (transformed) values; a line through a handful of points misleads
-      var n = pts.length, mx = xv.reduce(function (a, b) { return a + b; }, 0) / n, my = yv.reduce(function (a, b) { return a + b; }, 0) / n, sxy = 0, sxx = 0;
-      for (var i = 0; i < n; i++) { sxy += (xv[i] - mx) * (yv[i] - my); sxx += (xv[i] - mx) * (xv[i] - mx); }
-      var b = sxy / (sxx || 1), a0 = my - b * mx;
-      el("line", { x1: xs.map(xlo), y1: ys.map(a0 + b * xlo), x2: xs.map(xhi), y2: ys.map(a0 + b * xhi), stroke: "var(--ink-2)", "stroke-width": 2, "stroke-linecap": "round", opacity: 0.6 }, f.g);
+    var fitLabels = [];
+    if (spec.fit) {                                         // least squares on the (transformed) values, one line per series; a line through a handful of points misleads
+      var nser = Math.max.apply(null, pts.map(function (p) { return p.si; })) + 1;
+      for (var s = 0; s < nser; s++) {
+        var sx = [], sy = [];
+        pts.forEach(function (p, i) { if (p.si === s) { sx.push(xv[i]); sy.push(yv[i]); } });
+        if (sx.length < 10) continue;
+        var n = sx.length, mx = sx.reduce(function (a, b) { return a + b; }, 0) / n, my = sy.reduce(function (a, b) { return a + b; }, 0) / n, sxy = 0, sxx = 0;
+        for (var i = 0; i < n; i++) { sxy += (sx[i] - mx) * (sy[i] - my); sxx += (sx[i] - mx) * (sx[i] - mx); }
+        var b = sxy / (sxx || 1), a0 = my - b * mx, x1 = Math.min.apply(null, sx), x2 = Math.max.apply(null, sx);   // over the data, never past it
+        el("line", { x1: xs.map(x1), y1: ys.map(a0 + b * x1), x2: xs.map(x2), y2: ys.map(a0 + b * x2), stroke: nser > 1 ? COLORS[s] : "var(--ink-2)", "stroke-width": 2, "stroke-linecap": "round", opacity: nser > 1 ? 0.9 : 0.6 }, f.g);
+        if (spec.fit_labels && spec.fit_labels[s]) fitLabels.push({ x: xs.map(x2), y: ys.map(a0 + b * x2), s: spec.fit_labels[s] });
+      }
     }
     var dots = pts.map(function (p) { p.cx = xs.map(tx(p.x)); p.cy = ys.map(tx(p.y)); return el("circle", { cx: p.cx, cy: p.cy, r: 4, fill: COLORS[p.si], stroke: "var(--surface)", "stroke-width": 2 }, f.g); });
+    fitLabels.sort(function (a, b) { return a.y - b.y; }).forEach(function (l, i, all) {   // at the line's end, above it, kept apart, on a halo
+      var y = Math.max(12, l.y - 8); if (i > 0) y = Math.max(y, all[i - 1].ty + 15); l.ty = y;
+      text(f.g, l.x, y, l.s, { "text-anchor": "end", fill: "var(--ink)", "font-weight": 600, stroke: "var(--surface)", "stroke-width": 4, "paint-order": "stroke" });
+    });
     var hot = null;
     f.svg.addEventListener("pointermove", function (ev) {
       var rect = f.svg.getBoundingClientRect(), k = 640 / rect.width, mx2 = (ev.clientX - rect.left) * k - f.m.l, my2 = (ev.clientY - rect.top) * k - f.m.t, best = -1, bd = 24 * 24;
