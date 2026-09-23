@@ -36,6 +36,8 @@ REPORT_VERSION = 4
 POSITIONAL = ("rDNA45S", "rDNA5S", "DJ")
 # the classes fetch mode retrieves through the sinks, and the column their two modes are compared on
 FETCHABLE = [("rDNA45S", "rDNA45S.cn_single"), ("rDNA5S", "rDNA5S.cn_single"), ("DJ", "DJ.cn_single"), ("TEL", "TEL.mass_Mb")]
+# the reported estimate of each fetchable class, plotted per genome against the scan once the whole pipeline has run on each mode
+FETCH_SCATTER = ("rDNA45S.cn", "rDNA5S.cn", "DJ.cn", "TEL.mass_Mb")
 SATELLITES = hprc.CLASSES + ("TEL",)
 # NGS-DOSE's estimators, and the 18S depth ratio of published studies computed from the same reads as the comparator (not NGS-DOSE's)
 ESTIMATORS = [("rDNA45S.cn", "45S, NGS-DOSE calibrated"), ("rDNA45S.cn_single", "45S, NGS-DOSE single-sample"),
@@ -415,7 +417,7 @@ def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
     for r in rows_f:
         r.update({k: v for k, v in S[r["sample"]]["fetch"].items() if k not in r})
     by_scan = {r["sample"]: r for r in rows}
-    agree = {}
+    agree, points = {}, {}
     for col, label in TRIO_COLUMNS + [("truth.chrX", "chrX"), ("truth.chrY", "chrY")]:
         x = np.array([num(by_scan[r["sample"]], col) if r["sample"] in by_scan else np.nan for r in rows_f])
         y = np.array([num(r, col) for r in rows_f])
@@ -426,10 +428,12 @@ def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
             d.update(label=label, n=int(ok.sum()), ratio_median=float(np.median(q)), q10=float(np.percentile(q, 10)), q90=float(np.percentile(q, 90)),
                      sd_log=float(np.log(q).std(ddof=1)), identical=bool(np.all(np.abs(q - 1) < 1e-9)))
             agree[col] = d
+            if col in FETCH_SCATTER and not d["identical"]:          # every genome's pair, for the page's fetch-against-scan scatters
+                points[col] = [[r["sample"], round(float(a), 4), round(float(b), 4)] for r, a, b, k in zip(rows_f, x, y, ok) if k]
     trios_f = trio_analysis(rows_f, trio_list, population, TRIO_COLUMNS) if trio_list else dict(n_complete=0, n_total=0, table=[], compare=[], scatter=[], values=[])
     trios_f.pop("values", None)
     trios_f.pop("scatter", None)
-    return dict(n=len(rows_f), agreement=agree, trios=trios_f)
+    return dict(n=len(rows_f), agreement=agree, points=points, trios=trios_f)
 
 
 def pc_analysis(rows, info, trio_list, population, pcs_file, log) -> dict:

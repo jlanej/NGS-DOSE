@@ -61,8 +61,14 @@
     var svg = el("svg", { viewBox: "0 0 " + w + " " + h, role: "img" }, container);
     return { svg: svg, g: el("g", { transform: "translate(" + m.l + "," + m.t + ")" }, svg), W: w - m.l - m.r, H: h - m.t - m.b, m: m };
   }
+  function stepFmt(ticks) {                          // one number of decimals per axis, from the tick step: 9.5, 10.0, 10.5
+    if (ticks.length < 2) return fmt;
+    var d = Math.max(0, Math.ceil(-Math.log10(Math.abs(ticks[1] - ticks[0])) - 1e-9));
+    return function (v) { return fmt(v, d); };
+  }
   function axes(f, xs, ys, xlabel, ylabel, xfmt, yfmt, integerY) {
     var ticks = nice(xs.lo, xs.hi, 6), yt = nice(ys.lo, ys.hi, 5);
+    xfmt = xfmt || stepFmt(ticks); yfmt = yfmt || stepFmt(yt);
     if (integerY) { yt = yt.filter(function (t) { return Number.isInteger(t); }); if (yt.length < 2) yt = [0, Math.ceil(ys.hi)]; }
     yt.forEach(function (t) { if (t < ys.lo - 1e-9 || t > ys.hi + 1e-9) return; var y = ys.map(t);
       el("line", { x1: 0, x2: f.W, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, f.g);

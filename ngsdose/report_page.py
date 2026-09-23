@@ -463,6 +463,25 @@ calibration learned twice.</p>""")
                  for col, d in cls_rows],
                 ["metric", "genomes", "fetch / scan, median (10–90%)", "r across genomes", "reliability from scan (95% CI)", "reliability from fetch (95% CI)"], numeric={1, 2, 3, 4, 5})
         P.h('<p class="small">The full comparison, every column: <code>data/fetch_check.tsv</code>.</p>')
+        # every genome's estimate both ways, one figure per fetchable class
+        what = {"rDNA45S.cn": ("45S rDNA copy number", "copies", "45S rDNA"), "rDNA5S.cn": ("5S rDNA copy number", "copies", "5S rDNA"),
+                "DJ.cn": ("Distal-junction copy number", "copies", "distal-junction"), "TEL.mass_Mb": ("Telomeric-repeat mass", "Mb", "telomeric")}
+        fpts = {col: p for col, p in (fc.get("points") or {}).items() if col in what and col in fc["agreement"]}
+        if fpts:
+            P.h('<div class="grid2">')
+            for col, pts in fpts.items():
+                d, (name, unit, reads) = fc["agreement"][col], what[col]
+                rel = (f"; reliability in {S_[col]['n_trios']} trios {fmt(min(S_[col]['R'], 1.0), 2)} from the scan and {fmt(min(fR[col]['R'], 1.0), 2)} from the fetch"
+                       + (" (capped at 1)" if max(S_[col]["R"], fR[col]["R"]) > 1 else "") if col in S_ and col in fR else "")
+                r_txt = "r > 0.99999" if d.get("r", 0) >= 0.999995 else f"r = {fmt(d.get('r'), 5)}"
+                P.chart(f"fs_{col.split('.')[0]}", dict(type="scatter", points=[dict(x=x, y=y, label=s) for s, x, y in pts], xlabel=f"whole-file scan, {unit}",
+                                                        ylabel=f"targeted fetch, {unit}", identity=True),
+                        f"{name}, NGS-DOSE: targeted fetch against whole-file scan, per genome",
+                        f"Each dot is one of {d['n']:,} genomes of the 1000 Genomes 30× cohort, counted twice from the same CRAM: by reading the whole "
+                        f"file (x) and by the targeted fetch (y), which reads only the control regions and the intervals where the aligner places "
+                        f"{reads} reads, about 0.5 GB of a 15-GB file. The whole NGS-DOSE pipeline was run separately on each set of counts. Diagonal: "
+                        f"agreement. {r_txt}; fetch / scan median {fmt(d['ratio_median'], 4)} (10–90% {fmt(d['q10'], 4)}–{fmt(d['q90'], 4)}){rel}.")
+            P.h("</div>")
     cap = md["capture"]
     if any(c.get("n") for c in cap.values()):
         P.h("<p>Share of each class's reads that fell inside the sink intervals, in every whole-file scan of this run:</p>")
