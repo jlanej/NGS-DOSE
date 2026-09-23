@@ -358,7 +358,10 @@ def trio_analysis(rows, trio_list, population, columns) -> dict:
     vals = {col: {r["sample"]: num(r, col) for r in rows if np.isfinite(num(r, col))} for col, _ in columns}
     have = set(r["sample"] for r in rows)
     complete = [t for t in trio_list if {t.child, t.father, t.mother} <= have]
-    out = dict(n_complete=len(complete), n_total=len(trio_list), table=[], compare=[], scatter=[])
+    # the trios that can be completed: all three people among the pedigree's sequenced samples (one 1000 Genomes pedigree row names a
+    # father who was not sequenced, so the release has 602 trios, not the 603 rows with two parents)
+    n_total = sum(all(s in population for s in (t.child, t.father, t.mother)) for t in trio_list) if population else len(trio_list)
+    out = dict(n_complete=len(complete), n_total=n_total, table=[], compare=[], scatter=[])
     if len(complete) < 3:
         return out
     n = len(complete)
