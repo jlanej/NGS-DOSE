@@ -1045,7 +1045,7 @@ their parents{" and sequenced in the later batch" if apart else ""}, read {level
                 above = [t for t in cul if t["R_lo"] > 0]
                 below = [t for t in cul if t["R_hi"] < 0]
                 P.h("<p><strong>Culture and library.</strong> "
-                    + ("None is inherited" if not above else "Only " + " and ".join(nm(t["column"]) for t in above) + " read above zero")
+                    + ("No property of the culture or the library is inherited" if not above else "Only " + " and ".join(nm(t["column"]) for t in above) + " read above zero")
                     + f": R runs from {sg(min(t['R'] for t in cul))} to {sg(max(t['R'] for t in cul))}"
                     + (", and every interval includes zero." if not above and not below else
                        ", and every interval but " + " and ".join(f"that of {nm(t['column'])} ({iv(t, 'R')})" for t in above + below) + " includes zero"
