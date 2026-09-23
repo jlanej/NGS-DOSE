@@ -733,8 +733,34 @@ depth (r = {fmt(nq["mtdna_ratio_vs_depth"].get("r"), 2)}).</p>''')
         P.h(f'''<p>Assemblies collapse the rDNA and are no truth for it (<a href="#why">section 1</a>), but {hp["n_samples"]} of these genomes have HPRC release-2 assemblies whose CenSat
 annotation gives the size of every satellite array: the same kind of sequence, measured by the same k-mer machinery. A genome is compared in a
 class only when the arrays its assembly did not close are immaterial.{" " + ", ".join(good) + " track the assemblies across people with r ≥ 0.95." if good else ""}</p>''')
-        P.table([[cls, s_["n"], s_.get("n_gapped", 0), fmt(s_.get("ratio_median"), 2), fmt(s_.get("sd_log"), 3), fmt(s_.get("pearson"), 2), fmt(s_.get("spearman"), 2)] for cls, s_ in st.items() if s_.get("n")],
-                ["class", "genomes", "left out (gaps)", "median estimate / assembly", "SD of log ratio", "Pearson r", "Spearman"], numeric={1, 2, 3, 4, 5, 6})
+        P.table([[cls, s_["n"], s_.get("n_gapped", 0), fmt(s_.get("ratio_median"), 2), fmt(s_.get("sd_log"), 3), fmt(s_.get("sd_log_robust"), 3), fmt(s_.get("cv_assembly"), 1, pct=True),
+                  fmt(s_.get("pearson"), 2), fmt(s_.get("spearman"), 2)] for cls, s_ in st.items() if s_.get("n")],
+                ["class", "genomes", "left out (gaps)", "median estimate / assembly", "SD of log ratio", "robust SD of log ratio", "between-person CV, assembly",
+                 "Pearson r", "Spearman"], numeric={1, 2, 3, 4, 5, 6, 7, 8})
+        # what r can say depends on how much people differ against how far the two measurements disagree per genome; and the outliers' direction
+        judged = {cls: s_ for cls, s_ in st.items() if s_.get("n", 0) >= 10 and s_.get("sd_log_robust") and s_.get("cv_assembly") is not None}
+        narrow = [cls for cls, s_ in judged.items() if s_["sd_log_robust"] <= 0.08 and s_["sd_log_robust"] <= s_["cv_assembly"] < 2 * s_["sd_log_robust"]
+                  and (s_.get("pearson") or 0) < 0.9]
+        and_ = lambda xs: ", ".join(xs[:-1]) + (" and " if len(xs) > 1 else "") + xs[-1]
+        untestable = [cls for cls, s_ in judged.items() if s_["cv_assembly"] < s_["sd_log_robust"]]
+        n_far = sum(s_.get("n_far", 0) for s_ in st.values())
+        n_short = sum(s_.get("n_far_assembly_short", 0) for s_ in st.values())
+        far_in = [cls for cls, s_ in st.items() if s_.get("n_far")]
+        notes = []
+        if narrow:
+            notes.append("A modest r does not mean poor agreement where people barely differ: " + "; ".join(
+                f"{cls} arrays differ between people by {fmt(st[cls]['cv_assembly'], 1, pct=True)} and the two measurements agree per genome to "
+                f"{fmt(st[cls]['sd_log_robust'], 1, pct=True)} (robust SD), so with so little to separate people r stays at {fmt(st[cls].get('pearson'), 2)}"
+                for cls in narrow) + ".")
+        if untestable:
+            notes.append(f"For {and_(untestable)} the two measurements disagree per genome by more than people differ, so this comparison cannot test "
+                         f"{'that panel' if len(untestable) == 1 else 'those panels'}.")
+        if n_far:
+            notes.append(f"Of the {n_far} comparisons more than three robust SDs from their family's median (in {and_(far_in)}), {n_short} are genomes "
+                         "whose assembly holds less than the reads show" + (", the direction expected where part of an array is missing from an assembly "
+                                                                             "without a marked gap." if n_short > n_far / 2 else "."))
+        if notes:
+            P.h('<p class="small">' + " ".join(notes) + "</p>")
         pts = [dict(x=r["assembly_Mb"], y=r["ngsdose_Mb"], label=r["sample"], extra=[r["cls"]]) for r in hp["rows"] if r["assembly_gapped_Mb"] <= 0.02 * (r["assembly_Mb"] + r["assembly_gapped_Mb"]) and r["assembly_Mb"] > 0 and r["ngsdose_Mb"] > 0]
         P.chart("hprc", dict(type="scatter", points=pts, xlabel="assembly, Mb (both haplotypes)", ylabel="NGS-DOSE, Mb", identity=True, log="xy"),
                 "Satellite arrays: NGS-DOSE from short reads against long-read assemblies of the same people",
@@ -914,6 +940,10 @@ panel can see was measured on the genome it was built from (four families are re
     P.end()
 
     # ---------------------------------------------------------------- 5. limitations
+    h2 = hpst.get("HSat2") or {}
+    hsat2_limit = (f"HSat2, compared in the {h2['n']} assemblies that close its arrays, gives r = {fmt(h2.get('pearson'), 2)} (SD of the log ratio "
+                   f"{fmt(h2.get('sd_log'), 2)}){' and is not yet a usable measure' if (h2.get('pearson') or 0) < 0.8 else ''}." if h2.get("n", 0) >= 10
+                   else "HSat2 is unjudged until assemblies without gaps in it have been compared.")
     P.section("limitations", "5. Limitations", "Limitations")
     P.h(f'''<ul>
 <li><strong>No absolute calibration.</strong> No orthogonal assay of rDNA copy number exists for these samples. The absolute level rests on unit
@@ -925,8 +955,8 @@ Because the rDNA varies far more between people than any estimator errs, trios s
 measures it best.</li>
 <li><strong>One chemistry, one pipeline.</strong> The cohort is NovaSeq 2×150 aligned by one pipeline; the cross-technology evidence is twelve
 genomes. DRAGEN alignments and other chemistries are untested.</li>
-<li><strong>The satellite panels</strong> were built from one genome (CHM13). Four of the ten families are relative measures; HSat2 is unjudged
-until assemblies without gaps in it have been compared. The telomere class is a relative measure of (TTAGGG)n content, not a telomere length.</li>
+<li><strong>The satellite panels</strong> were built from one genome (CHM13). Four of the ten families are relative measures; {hsat2_limit}
+The telomere class is a relative measure of (TTAGGG)n content, not a telomere length.</li>
 <li><strong>Partial cohort.</strong> {n:,} of {total:,}: population comparisons and the number of complete trios depend on which genomes have
 landed.</li>
 </ul>''')
