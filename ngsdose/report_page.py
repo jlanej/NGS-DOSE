@@ -171,9 +171,9 @@ def page(data: dict, rows: list[dict]) -> str:
          'long-read assemblies leave the arrays in pieces, and read-depth ratios measure the library along with the person (<a href="#why">section 1</a>). '
          'Reads are assigned to a sequence class by class-specific 31-mers and counted as fragment ends; a '
          'per-library model of fragment-GC bias, fitted on 800 single-copy control regions, gives the expected count of any sequence, and the windows '
-         'of the rDNA unit are calibrated across the cohort. No orthogonal assay of rDNA copy number exists for these samples, so the measurement is '
+         'of the rDNA unit are calibrated across the cohort. An assay of rDNA copy number (ddPCR) exists for only a dozen of these lines, so the measurement is '
          'validated against sequence of known copy number in every genome, inheritance in trios, the same individuals sequenced on two technologies, '
-         'and independent measurements of the same files.</p><p>']
+         'independent measurements of the same files, and the assay where it exists.</p><p>']
     r_ = []
     if a.get("n"):
         r_.append(f'In {n:,} genomes, held-out autosomal sequence reads {pm(a)} copies (expected 2)')
@@ -207,6 +207,10 @@ def page(data: dict, rows: list[dict]) -> str:
                   f'and {fmt(rf["icc"], 2)} for the 18S depth ratio of published studies, computed from the same reads for comparison ({fmt(rfc["icc"], 2)} after removing its offset between technologies).')
     if gcb.get("flat_vs_gc", {}).get("n", 0) >= 10:
         r_.append(f'Within one chemistry the published depth ratio follows each library\'s GC bias (r = {fmt(gcb["flat_vs_gc"]["r"], 2)}); under NGS-DOSE\'s fragment-GC model it does not (r = {fmt(gcb["modelled_vs_gc"]["r"], 2)}).')
+    dd = data.get("ddpcr") or {}
+    dd_ok = dd.get("n", 0) >= 3 and dd.get("ngsdose", {}).get("r") is not None
+    if dd_ok:
+        r_.append(f'Against ddPCR (Potapova et al. 2025) on {dd["n"]} lymphoblastoid lines, NGS-DOSE reads {fmt(dd["ngsdose"]["median_ratio"], 2)}× the assay (r = {fmt(dd["ngsdose"]["r"], 2)}); CONKORD, the authors\' k-mer estimate from their own reads, {fmt(dd["conkord"].get("median_ratio"), 2)}× (r = {fmt(dd["conkord"].get("r"), 2)}); the 18S depth ratio {fmt(dd["flat"].get("median_ratio"), 2)}× (r = {fmt(dd["flat"].get("r"), 2)}).')
     if hall.get("n", 0) >= 3:
         r_.append(f'Against the published estimates of Hall et al. (2021) for the same files, r = {fmt(hall["flat"].get("r"), 3)} on {hall["n"]:,} shared samples; their exclusion of duplicate-flagged reads accounts for the offset.')
     if qc_ok:
@@ -233,6 +237,8 @@ def page(data: dict, rows: list[dict]) -> str:
         case.append(("Inherited", fmt(min(t45["R"], 1.0), 2), f"45S transmission reliability ({fmt(t45['R_lo'], 2)}–{fmt(t45['R_hi'], 2)}), {t45['n_trios']} trios", "#trios"))
     if gcb.get("flat_vs_gc", {}).get("n"):
         case.append(("What the GC model removes", f'r {fmt(gcb["flat_vs_gc"].get("r"), 2)} → {fmt(gcb["modelled_vs_gc"].get("r"), 2)}', "how much the 18S estimate follows the library's GC bias: published depth ratio → NGS-DOSE's GC model", "#gcmodel"))
+    if dd_ok:
+        case.append(("Against ddPCR", f'{fmt(dd["ngsdose"]["median_ratio"], 2)}× (r {fmt(dd["ngsdose"]["r"], 2)})', f"Potapova et al. 2025, {dd['n']} cell lines; the 18S depth ratio {fmt(dd['flat'].get('median_ratio'), 2)}×", "#published"))
     if hall.get("n", 0) >= 3:
         case.append(("Another pipeline, same files", f'r = {fmt(hall["flat"].get("r"), 3)}', f"Hall et al. 2021, {hall['n']:,} shared samples; offset explained by the duplicate flag", "#published"))
     if qc_ok:
@@ -484,9 +490,11 @@ chrY reads <strong>{pm(sx["men_intact_Y"])}</strong> in men with an intact Y and
             f"the rDNA{' and calibrated the same way' if kt['DJ_col'] == 'DJ.cn' else ''}, in each of {DJ.get('n', 0):,} {cohort_}. Bars count genomes; "
             f"the line marks 10. Mean ± SD {pm(DJ)}; genomes a whole copy away carry a structural variant of a short arm (section 3.2).")
     P.h("</div>")
+    _byrow = {r["sample"]: r for r in rows}
+    nq_sex_same = bool(sx.get("mismatch")) and all(_byrow.get(x, {}).get("ngspca.sex") and _byrow[x].get("ngspca.sex") == _byrow[x].get("sex_inferred") for x in sx["mismatch"])
     if sx["n_pedigree"]:
         P.h(f'<p>Sex inferred from the reads (a Y above 0.1 copies) agrees with the pedigree in {sx["n_inferred"] - len(sx["mismatch"]):,} of {sx["n_inferred"]:,} samples'
-            + (f'; it does not in <strong>{", ".join(esc(x) for x in sx["mismatch"][:20])}{" and " + str(len(sx["mismatch"]) - 20) + " more" if len(sx["mismatch"]) > 20 else ""}</strong> (a swapped sample, or a line that has lost its Y).' if sx["mismatch"] else ".") + "</p>")
+            + (f'; it does not in <strong>{", ".join(esc(x) for x in sx["mismatch"][:20])}{" and " + str(len(sx["mismatch"]) - 20) + " more" if len(sx["mismatch"]) > 20 else ""}</strong> (a swapped sample, or a line that has lost its Y)' + ("; NGS-PCA\'s coverage ratios read " + ("it" if len(sx["mismatch"]) == 1 else "them") + " the same way, so the discrepancy is in the sample or its record, not in this measurement." if nq_sex_same else ".") if sx["mismatch"] else ".") + "</p>")
     outl = [(s_, f) for s_, f in data["flags"] if "chrX" in f or "chrY" in f or "autosomal" in f]
     if outl:
         P.h(f'<details><summary>{len(outl)} sample(s) off the expected value</summary>')
@@ -1089,7 +1097,25 @@ their parents{" and sequenced in the later batch" if apart else ""}, read {level
     P.end()
 
     # ---------------------------------------------------------------- 3.7 published values
-    P.section("published", "3.7 An independent pipeline on the same files", "Published values")
+    P.section("published", "3.7 Independent measurements: ddPCR, a published pipeline, coverage QC", "Published values")
+    if dd_ok:
+        dn, dc, df = dd["ngsdose"], dd["conkord"], dd["flat"]
+        P.h(f"""<h3>An orthogonal assay: ddPCR</h3>
+<p>Potapova et al. (<em>Cell Genomics</em> 2025) measured 45S copy number by droplet digital PCR in lymphoblastoid lines, {dd["n"]} of them
+1000 Genomes or Genome in a Bottle lines with a NovaSeq genome ({dd["n_here"]} counted in this run; the rest fetched from the same CRAMs and
+calibrated with this cohort's saved efficiencies, or counted from a second NovaSeq pipeline, by the results repository's
+<code>assembly_rdna</code> study). The assay's own precision: median CV {fmt(dd.get("ddpcr_cv_median"), 1, pct=True)} between replicates.
+NGS-DOSE reads <strong>{fmt(dn["median_ratio"], 3)}×</strong> the assay (mean absolute difference {fmt(dn["mean_abs_pct"], 1)}%), r = {ci(dn)},
+Spearman {fmt(dn.get("spearman"), 2)}; the authors' own k-mer estimate, CONKORD, {fmt(dc.get("median_ratio"), 3)}× (r = {fmt(dc.get("r"), 2)}); the 18S depth
+ratio {fmt(df.get("median_ratio"), 3)}× (r = {fmt(df.get("r"), 2)}). The level is the first external check of the anchor windows: NGS-DOSE sits
+{fmt(abs(dn["bias_pct"]), 1)}% {"below" if dn["bias_pct"] < 0 else "above"} the assay, within what a dozen lines can resolve.</p>""")
+        P.table([[lab, x.get("n", 0), fmt(x.get("median_ratio"), 3), fmt(x.get("mean_abs_pct"), 1), fmt(x.get("r"), 3), fmt(x.get("spearman"), 3)]
+                 for lab, x in (("NGS-DOSE, calibrated 45S", dn), ("CONKORD (Potapova et al., their reads)", dc), ("18S depth ratio (published estimator)", df))],
+                ["estimate", "lines", "median estimate / ddPCR", "mean |difference| %", "Pearson r", "Spearman"], numeric={1, 2, 3, 4, 5})
+        pts = [dict(x=q["ddpcr"], y=q["ngsdose"], label=q["sample"], si=0, extra=[f"ddPCR {fmt(q['ddpcr'], 0)} ± {fmt(q['ddpcr_sd'], 0)}", f"CONKORD {fmt(q['conkord'], 0)}", q["source"]]) for q in dd["points"] if isinstance(q["ngsdose"], (int, float)) and math.isfinite(q["ngsdose"])]
+        pts += [dict(x=q["ddpcr"], y=q["flat"], label=q["sample"], si=1, extra=["18S depth ratio", q["source"]]) for q in dd["points"] if isinstance(q["flat"], (int, float)) and math.isfinite(q["flat"])]
+        P.chart("ddpcr", dict(type="scatter", points=pts, legend=["NGS-DOSE, calibrated 45S", "18S depth ratio (published estimator)"], xlabel="ddPCR, 45S copies per diploid genome", ylabel="estimate from the genome", identity=True),
+                "45S copy number against ddPCR", "Diagonal: agreement. Every line's values: data/ddpcr.tsv.")
     if hall.get("n", 0) >= 3:
         P.h(f'''<p>On the {hall["n"]:,} genomes shared so far with Hall, Turner &amp; Queitsch (2021), their 18S value against the same 18S depth ratio computed
 from NGS-DOSE's counts (no GC model), halved to their per-haploid scale: r = <strong>{fmt(hall["flat"].get("r"), 3)}</strong>, their values {fmt(hall["flat_ratio"], 3)}× ours. Re-applying
@@ -1431,8 +1457,10 @@ panel can see was measured on the genome it was built from (four families are re
                   "<strong>Trios bound reliability from above</strong> where members of a family were prepared together; the spousal correlation is the check.")
     P.section("limitations", "5. Limitations", "Limitations")
     P.h(f'''<ul>
-<li><strong>No absolute calibration.</strong> No orthogonal assay of rDNA copy number exists for these samples. The absolute level rests on unit
-windows on which three Illumina chemistries agree; the known truths test the model and the k-mer path, not the absolute scale of the rDNA.</li>
+<li>{(f'<strong>Absolute scale on a dozen lines.</strong> The one assay, ddPCR on {dd["n"]} lines, reads NGS-DOSE {fmt(dd["ngsdose"]["median_ratio"], 2)}× its value, '
+      f'{fmt(abs(dd["ngsdose"]["bias_pct"]), 1)}% {"low" if dd["ngsdose"]["bias_pct"] < 0 else "high"}; beyond those lines the level rests on unit windows on which three Illumina chemistries agree. '
+      'The known truths test the model and the k-mer path, not the absolute scale of the rDNA.') if dd_ok else
+      '<strong>No absolute calibration.</strong> No orthogonal assay of rDNA copy number exists for these samples. The absolute level rests on unit windows on which three Illumina chemistries agree; the known truths test the model and the k-mer path, not the absolute scale of the rDNA.'}</li>
 <li><strong>Cell-line DNA.</strong> Every sample is a lymphoblastoid line; its replication state, EBV load and mitochondrial content are measured
 but not removed. Blood-derived genomes will not carry the first of these.</li>
 <li>{trio_limit}
@@ -1456,7 +1484,7 @@ ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt --hall 
 <p>Tables behind every figure: <code>data/cohort.tsv</code> (one row per genome, every column), <code>data/modes.tsv</code>,
 <code>data/transmission.tsv</code>, <code>data/transmission_by_sex.tsv</code> and <code>data/trios.tsv</code> (every trio's values), <code>data/fetch_check.tsv</code>, <code>data/pcsweep.tsv</code>,
 <code>data/satellites_hprc.tsv</code>,{" <code>data/rdna_hprc.tsv</code>," if rd.get("assemblies") else ""} <code>data/flags.tsv</code>; the numbers
-in the prose, <code>report.json</code>; the trio assessment as a document, <code>trio_report.pdf</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
+in the prose, <code>report.json</code>; the ddPCR lines, <code>data/ddpcr.tsv</code>; the trio assessment as a document, <code>trio_report.pdf</code>. The counts were made by <code>ngs-dose count</code> ({eng}) from the 1000 Genomes 30× CRAMs
 (Byrska-Bishop et al., <em>Cell</em> 2022; AWS Open Data) with the {esc(m.get("bundle"))} resource bundle. Method, design document and
 audit: <a href="https://github.com/jlanej/NGS-DOSE">github.com/jlanej/NGS-DOSE</a>.</p>''')
     P.end()

@@ -80,6 +80,8 @@ def centre_within(values: dict[str, float], group: dict[str, str], min_n: int = 
     for s, v in values.items():
         if np.isfinite(v):
             by.setdefault(group.get(s, ""), []).append(v)
+    if not by:                                             # nothing to centre (a column absent from these rows)
+        return {}
     grand = np.mean([v for vs in by.values() for v in vs])
     mean = {g: (np.mean(vs) if len(vs) >= min_n else grand) for g, vs in by.items()}
     return {s: v - mean[group.get(s, "")] + grand for s, v in values.items() if np.isfinite(v)}

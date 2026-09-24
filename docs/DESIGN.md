@@ -566,9 +566,10 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
 ## 12. What it does not do, and known limits
 
 - **Absolute scale of rDNA** rests on the anchors: windows on which three Illumina chemistries
-  agree after their own GC corrections. That is evidence, not proof, of being unbiased; an
-  orthogonal assay (ddPCR, or sequencing CHM13/HG002, whose arrays have been characterised) has
-  not been compared. Relative dosage within a library type does not depend on it.
+  agree after their own GC corrections. That is evidence, not proof, of being unbiased. The one
+  orthogonal check so far is ddPCR on twelve lymphoblastoid lines (Potapova et al. 2025; the
+  results repository's `assembly_rdna` study, `ngsdose report --ddpcr`): NGS-DOSE reads about
+  0.97× the assay. Relative dosage within a library type does not depend on it.
 - **A new chemistry** (DNBSEQ, Element, Ultima, a future Illumina) has unknown dropout zones.
   Window efficiencies must be re-learned on it, and its absolute level is provisional until it
   has been compared with a known one on the same samples.
@@ -647,7 +648,7 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
 2. Assemblies collapse rDNA, so for rDNA the external anchors remain CHM13 (ddPCR 409 ± 9) and
    HG002; HPRC assemblies are a truth for the satellite classes only (item 1).
 3. Sinks for DRAGEN-aligned CRAMs (UK Biobank, All of Us).
-4. An orthogonal rDNA calibration.
+4. An orthogonal rDNA calibration wider than the twelve ddPCR lines.
 
 ## 14. Relation to prior work
 
@@ -722,4 +723,4 @@ held.
 | The experimental satellite panel measures array mass | whole-file scans of two 1000 Genomes samples that have HPRC release-2 assemblies (HG02258, ACB male; HG01884, ACB female) | HSat3 0.97, 0.98 of the assembly; HSat1A 0.93, 0.97; α-satellite HORs 0.97, 1.03; HSat1B 0.90, 0.83; β-satellite 0.69, 0.76 - and its k-mer recall on CHM13 itself is 0.69. **My first reading of HSat2 (1.52, 1.73: "not usable") was wrong**: the comparison script dropped arrays annotated together with an assembly gap ("GAP,HSat2": 17 and 9 Mb), and an array with a gap in it is no truth | the script tallies gap-containing arrays separately and compares a class only where it has none; HSat2 is undecided until gap-free samples are compared; each class's recall is measured and documented (`resources/build/panel_recall.py`); 200 samples of the cohort have assemblies: `04_hprc_satellites.sh` |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
-DRAGEN alignments; an orthogonal assay for the absolute rDNA scale.
+DRAGEN alignments; an orthogonal assay for the absolute rDNA scale beyond the twelve ddPCR lines.
