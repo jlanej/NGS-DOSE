@@ -74,18 +74,25 @@ class Doc:
         self.plt.close(fig)
 
     def text_page(self, title, blocks, subtitle=None):
-        """blocks: list of (heading or None, text) laid out top to bottom; overflow starts a new page."""
-        fig, y = self.page(title), 0.92
+        """blocks: list of (heading or None, text) laid out top to bottom; the font shrinks a little
+        before the page overflows, and overflow beyond that starts a new page."""
+        top = 0.90 if subtitle else 0.92
+        for fs in (8.1, 7.8, 7.5, 7.2, 6.9):
+            width, lh = int(124 * 8.1 / fs), 0.0136 * fs / 8.1
+            need = sum(lh * (wrap(body, width).count("\n") + 1) + (0.028 if head else 0.010) for head, body in blocks)
+            if need <= top - 0.06:
+                break
+        fig, y = self.page(title), top
         if subtitle:
-            fig.text(0.07, 0.93, subtitle, fontsize=8.5, color=MUTED, va="top"); y = 0.90
+            fig.text(0.07, 0.93, subtitle, fontsize=8.5, color=MUTED, va="top")
         for head, body in blocks:
-            lines = wrap(body).count("\n") + 1
-            need = 0.0136 * lines + (0.028 if head else 0.010)
+            lines = wrap(body, width).count("\n") + 1
+            need = lh * lines + (0.028 if head else 0.010)
             if y - need < 0.06:
                 self.close(fig); fig, y = self.page(title + " (continued)"), 0.92
             if head:
                 fig.text(0.07, y, head, fontsize=10, fontweight="bold", va="top"); y -= 0.022
-            fig.text(0.07, y, wrap(body), fontsize=8.1, va="top", linespacing=1.3); y -= need - (0.022 if head else 0)
+            fig.text(0.07, y, wrap(body, width), fontsize=fs, va="top", linespacing=1.3); y -= need - (0.022 if head else 0)
         self.close(fig)
 
     def done(self):
@@ -111,9 +118,9 @@ def summary_blocks(d, tr, fc):
     tru_R = [num(r["R"]) for r in tr if r["group"] == "truth" and np.isfinite(num(r["R"]))]
     fR = {r["metric"]: num(r["R_fetch"]) for r in fc} if fc else {}
     q = ("Can the copy number of a sequence that a reference genome collapses — the ribosomal DNA arrays, several hundred copies per genome — "
-         "be measured from ordinary short-read whole-genome sequencing? No assay of rDNA copy number exists for these samples, so the answer has to "
-         "come from things that are known: sequence of known copy number in every genome, Mendelian transmission in trios, the same genome counted "
-         "two ways, and long-read assemblies of the same people for the satellite arrays that the same machinery measures.")
+         "be measured from ordinary short-read whole-genome sequencing? An assay of rDNA copy number (ddPCR) exists for only a dozen of these lines, so the "
+         "answer has to come mostly from things that are known: sequence of known copy number in every genome, Mendelian transmission in trios, the same "
+         "genome counted two ways, long-read assemblies of the same people for the satellite arrays that the same machinery measures, and the assay where it exists.")
     meth = ("Reads are assigned to a class (45S rDNA, 5S rDNA, the distal junction, ten satellite families, the telomeric repeat) by 31-mers "
             "that occur in the class and nowhere else in GRCh38 or CHM13; where the aligner put a read is not used. Fragment 5′ ends are counted "
             "on the unit and in 800 single-copy control regions. A per-library Poisson spline of fragment-end density on fragment GC content, fitted "
@@ -170,11 +177,21 @@ def summary_blocks(d, tr, fc):
                        + (": " + "; ".join(f"{r['label']} spreads {num(r['sd_ratio']):.2f}× as much in the children as in their parents and reads R "
                                            f"{num(r['R']):.2f}, or {num(r['R_rescaled']):.2f} with the children on their parents' scale" for r in moved) if moved else "")
                        + ".")
+    dd = d.get("ddpcr") or {}
+    if dd.get("n", 0) >= 3 and dd.get("ngsdose", {}).get("r") is not None:
+        res.append(f"Against ddPCR (Potapova et al. 2025) on {dd['n']} lymphoblastoid lines: NGS-DOSE {f(dd['ngsdose']['median_ratio'])}× the assay, r {f(dd['ngsdose']['r'])}; "
+                   f"CONKORD {f(dd['conkord'].get('median_ratio'))}×, r {f(dd['conkord'].get('r'))}; the 18S depth ratio {f(dd['flat'].get('median_ratio'))}×, r {f(dd['flat'].get('r'))}.")
     hp = (d["satellites"].get("hprc") or {})
     if hp:
-        good = [c for c, s_ in hp["stats"].items() if s_.get("n", 0) >= 4 and s_.get("pearson", 0) >= 0.95]
-        res.append(f"Assemblies: {len(good)} of {len(hp['stats'])} satellite families track HPRC assemblies of {hp['n_samples']} of these genomes with r ≥ 0.95 ({', '.join(good)}).")
-    caveat = ("What this does not show: an absolute calibration of rDNA copy number (none exists for these samples; the scale rests on unit windows "
+        st = hp["stats"]
+        close = [(c, s_) for c, s_ in st.items() if s_.get("n", 0) >= 4 and s_.get("n_gapped", 0) <= s_["n"] / 4 and s_.get("sd_log_robust") is not None and s_["sd_log_robust"] <= 0.10]
+        spread = [(c, s_) for c, s_ in close if s_.get("cv_assembly", 0) >= 0.10]
+        res.append(f"Assemblies: {hp['n_samples']} of these genomes have an HPRC release-2 assembly. For {len(close)} of {len(st)} satellite families a person's "
+                   f"estimate and their assembly agree to within a robust SD of {100 * min(s_['sd_log_robust'] for _, s_ in close):.0f}–{100 * max(s_['sd_log_robust'] for _, s_ in close):.0f}% "
+                   f"({', '.join(c for c, _ in close)}); across people the estimates track the assemblies at r "
+                   f"{min(s_['pearson'] for _, s_ in spread):.2f}–{max(s_['pearson'] for _, s_ in spread):.2f} where people differ by 10% or more "
+                   f"({', '.join(c for c, _ in spread)}), and r is bounded by how little they differ where the assembly's between-person CV is a few percent.")
+    caveat = ("What this does not show: an absolute calibration of rDNA copy number beyond the dozen lines with a ddPCR value (elsewhere the scale rests on unit windows "
               "on which three chemistries agree); anything about DNA that is not from a lymphoblastoid cell line or a chemistry other than NovaSeq "
               "2×150; and, because people differ in 45S copy number far more than any competent estimator errs, the trios show that the measured "
               "variation is inherited, not which rDNA estimator is best — that ranking rests on the same people sequenced on two technologies "
@@ -319,17 +336,18 @@ def assembly_page(doc, d, hp_rows):
             ax.scatter(x, y, s=16, color=AQUA, edgecolor="white", linewidth=0.8)
             ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
         s_ = st[cls]
-        ax.set_title(f"{cls}: r {s_.get('pearson', float('nan')):.2f}, ratio {s_.get('ratio_median', float('nan')):.2f}, n {s_.get('n', 0)}", fontsize=7.5)
+        ax.set_title(f"{cls} (n {s_.get('n', 0)})\nratio {s_.get('ratio_median', float('nan')):.2f} · SD {100 * s_.get('sd_log_robust', float('nan')):.0f}% · r {s_.get('pearson', float('nan')):.2f}", fontsize=6.8)
         ax.tick_params(labelsize=6)
         if k % 4 == 0:
             ax.set_ylabel("NGS-DOSE, Mb", fontsize=6.5)
         ax.set_xlabel("assembly, Mb", fontsize=6.5)
-    good = [c for c, s_ in st.items() if s_.get("n", 0) >= 4 and s_.get("pearson", 0) >= 0.95]
     fig.text(0.07, 0.15, wrap(f"{hp['n_samples']} of the genomes have HPRC release-2 assemblies; the CenSat annotation of both haplotypes gives the size of every satellite array, "
                               "the same kind of sequence the k-mer machinery measures. A genome is compared in a class only when the arrays its assembly did not close "
-                              f"are immaterial. Grey diagonal: equality. The relative measures (β-satellite, CER, ACRO) sit below it by a constant factor, their k-mer recall. "
-                              f"Tracking the assemblies across people with r ≥ 0.95: {', '.join(good) if good else 'none yet'}. Assemblies collapse the rDNA itself and are no truth for it.", 120),
-             fontsize=7.8, va="top")
+                              "are immaterial. Grey diagonal: equality. The relative measures (β-satellite, CER, ACRO, SST1, SATR) sit below it by a constant factor, their k-mer "
+                              "recall. Each title gives the median estimate-to-assembly ratio, the robust SD of the log ratio (how far one person's two values disagree) and "
+                              "the correlation across people, which is bounded by how little people differ: where the assembly's between-person CV is a few percent "
+                              "(α-satellite HORs, SATR) r is low although each person agrees to within that SD. Assemblies collapse the rDNA itself and are no truth for it.", 120),
+             fontsize=7.6, va="top")
     doc.close(fig)
 
 
@@ -346,7 +364,7 @@ def truth_page(doc, d):
     for col, dd in md.get("columns", {}).items():
         if dd.get("n"):
             rows.append([f"fetch / scan, {dd['label']}", "1", f"{f(dd['median'], 4)} ({f(dd['min'], 4)}–{f(dd['max'], 4)})", f"{dd['n']:,}"])
-    fig = doc.page("Sequence of known copy number, and fetch against scan")
+    fig = doc.page("Sequence of known copy number, fetch against scan, and ddPCR")
     axt = fig.add_axes([0.07, 0.50, 0.89, 0.40]); axt.axis("off")
     tb = axt.table(cellText=rows, colLabels=["what", "expected", "measured", "n"], loc="upper center", cellLoc="left", colWidths=[0.42, 0.10, 0.34, 0.10])
     tb.auto_set_font_size(False); tb.set_fontsize(7.5); tb.scale(1, 1.3)
@@ -366,6 +384,29 @@ def truth_page(doc, d):
                 f"(robust SD {f(dj['spread'])} copies). A step is a structural variant of an acrocentric short arm; where a carrier parent and a child were both counted it was "
                 f"transmitted in {dj['transmitted']} of {tot}, and {len(dj['de_novo'])} child(ren) carry a step neither counted parent has.")
     fig.text(0.07, 0.44, wrap(txt, 120), fontsize=8.2, va="top", linespacing=1.35)
+    dd = d.get("ddpcr") or {}
+    if dd.get("points"):
+        ax = fig.add_axes([0.10, 0.06, 0.34, 0.24])
+        x = np.array([q["ddpcr"] for q in dd["points"]]); e = np.array([q["ddpcr_sd"] for q in dd["points"]])
+        y1 = np.array([q["ngsdose"] for q in dd["points"]]); y2 = np.array([q["flat"] for q in dd["points"]])
+        lo, hi = 0.9 * np.nanmin(np.r_[x, y1, y2]), 1.06 * np.nanmax(np.r_[x, y1, y2])
+        ax.plot([lo, hi], [lo, hi], color=GRID, lw=1, zorder=0)
+        ax.scatter(x, y2, s=16, color=ORANGE, alpha=0.8, linewidths=0, label="18S depth ratio")
+        ax.errorbar(x, y1, xerr=np.nan_to_num(e), fmt="s", ms=4, color=BLUE, lw=0.7, label="NGS-DOSE, calibrated")
+        ax.set_xlim(lo, hi); ax.set_ylim(lo, hi); ax.set_xlabel("ddPCR, 45S copies per diploid genome", fontsize=7.5); ax.set_ylabel("estimate from the genome", fontsize=7.5)
+        ax.tick_params(labelsize=6.5); ax.legend(fontsize=6.5, frameon=False, loc="upper left"); ax.set_title("Against ddPCR (Potapova et al. 2025)", fontsize=8.5)
+        rows_d = [[lab, v.get("n", 0), f(v.get("median_ratio"), 3), f(v.get("mean_abs_pct"), 1), f(v.get("r"), 3), f(v.get("spearman"), 3)]
+                  for lab, v in (("NGS-DOSE, calibrated 45S", dd["ngsdose"]), ("CONKORD (their reads)", dd["conkord"]), ("18S depth ratio", dd["flat"]))]
+        axd = fig.add_axes([0.50, 0.14, 0.46, 0.12]); axd.axis("off")
+        tb = axd.table(cellText=rows_d, colLabels=["estimate", "lines", "÷ ddPCR", "|diff| %", "r", "Spearman"], loc="upper center", cellLoc="left", colWidths=[0.40, 0.10, 0.14, 0.12, 0.12, 0.14])
+        tb.auto_set_font_size(False); tb.set_fontsize(6.5); tb.scale(1, 1.2)
+        for (i_, j_), c_ in tb.get_celld().items():
+            c_.set_edgecolor(GRID)
+            if i_ == 0:
+                c_.set_text_props(fontweight="bold")
+        fig.text(0.50, 0.165, wrap(f"{dd['n']} lymphoblastoid lines with a NovaSeq genome, {dd['n_here']} counted in this run; the rest fetched from the same CRAMs and calibrated "
+                                   "with the cohort's saved efficiencies, or counted from a second NovaSeq pipeline. Assay replicate CV "
+                                   f"{f(100 * dd['ddpcr_cv_median'], 1) if dd.get('ddpcr_cv_median') is not None else '–'}%. The first external check of the absolute level.", 62), fontsize=6.8, va="top")
     doc.close(fig)
 
 

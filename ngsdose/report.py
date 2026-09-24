@@ -541,6 +541,47 @@ def fetch_check(rows, S, cache, res, trio_list, population) -> dict | None:
     return dict(n=len(rows_f), agreement=agree, points=points, trios=trios_f)
 
 
+def ddpcr_comparison(rows, path) -> dict | None:
+    """ddPCR copy numbers of lymphoblastoid lines (Potapova et al. 2025, Table S1, with CONKORD, their k-mer estimate from
+    their own reads) against the 45S estimates of the same lines. NGS-DOSE and the 18S depth ratio come from this cohort's
+    rows where the line has been counted in the run; for the others the table's values are used and marked (the results
+    repository's assembly_rdna study fetched the 1000 Genomes lines not yet in the run from the same NYGC CRAMs and
+    calibrated them with the cohort's saved efficiencies, and counted the Genome in a Bottle trio from a second NovaSeq
+    pipeline)."""
+    if not path or not Path(path).exists():
+        return None
+    import csv
+    by = {r["sample"]: r for r in rows}
+    pts = []
+    for r in csv.DictReader(open(path), delimiter="\t"):
+        dd = num(r, "ddpcr")
+        if not np.isfinite(dd) or dd <= 0:
+            continue
+        s_ = r["sample"]
+        here = s_ in by and np.isfinite(num(by[s_], "rDNA45S.cn"))
+        ngs = num(by[s_], "rDNA45S.cn") if here else num(r, "ngsdose_any")
+        flat = num(by[s_], "rDNA45S.18S.flat") if here else (num(r, "ratio18S_flat") if np.isfinite(num(r, "ratio18S_flat")) else num(r, "ratio18S_flat_google"))
+        pts.append(dict(sample=s_, ddpcr=dd, ddpcr_sd=num(r, "ddpcr_sd"), conkord=num(r, "conkord"), ngsdose=ngs, flat=flat,
+                        source="this run" if here else (r.get("ngsdose_source") or r.get("pipeline") or "table"), pipeline=r.get("pipeline", "")))
+    if len(pts) < 3:
+        return dict(n=len(pts))
+
+    def against(key):
+        x, y = np.array([q["ddpcr"] for q in pts]), np.array([q[key] for q in pts])
+        ok = np.isfinite(x) & np.isfinite(y) & (y > 0)
+        if ok.sum() < 3:
+            return dict(n=int(ok.sum()))
+        q = y[ok] / x[ok]
+        d = corr(x[ok], y[ok])
+        d.update(median_ratio=float(np.median(q)), mean_abs_pct=float(100 * np.mean(np.abs(q - 1))), sd_log=float(np.log(q).std(ddof=1)),
+                 bias_pct=float(100 * (np.exp(np.log(q).mean()) - 1)))
+        return d
+
+    cv = [q["ddpcr_sd"] / q["ddpcr"] for q in pts if np.isfinite(q["ddpcr_sd"])]
+    return dict(n=len(pts), n_here=sum(q["source"] == "this run" for q in pts), points=pts, ngsdose=against("ngsdose"), conkord=against("conkord"),
+                flat=against("flat"), ddpcr_cv_median=float(np.median(cv)) if cv else None)
+
+
 def pc_analysis(rows, info, trio_list, population, pcs_file, log) -> dict:
     out = dict(control=info or {})
     cols = [c for c, _ in ESTIMATORS + NEGATIVE_CONTROLS if any(np.isfinite(num(r, c)) for r in rows)]
@@ -885,6 +926,7 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
         data["trios"]["by_sex"] = transmission_by_sex(rows, trio_list, population, TRIO_COLUMNS)
         data["trios"]["points"] = trio_points(data["trios"].get("values") or [], rows, TRIO_COLUMNS)
     data["fetch_check"] = fetch_check(rows, S, cache, res, trio_list, population) if primary == "scan" and "fetch" in counts else None
+    data["ddpcr"] = ddpcr_comparison(rows, a.ddpcr)
     data["pcs"] = pc_analysis(rows, info, trio_list, population, a.pcs, log)
     if data["pcs"].get("adjusted") and data["trios"]["n_complete"] >= 3:
         adj_cols = [(f"{c}.adj", f"{l}, adjusted") for c, l in ESTIMATORS + NEGATIVE_CONTROLS if any(np.isfinite(num(r, f"{c}.adj")) for r in rows)]
@@ -921,6 +963,8 @@ def build(a, log=lambda m: print(m, file=sys.stderr)) -> dict:
                           **{f"father_slope_contrast.{f}": v for f, v in (d.get("father_slope_contrast") or {}).items()},
                           **{f"heterogeneity.{f}": v for f, v in (d.get("heterogeneity") or {}).items()}) for col, d in bs.items()],
                     out / "data" / "transmission_by_sex.tsv")
+    if data.get("ddpcr") and data["ddpcr"].get("points"):
+        write_table(data["ddpcr"]["points"], out / "data" / "ddpcr.tsv")
     if data.get("fetch_check"):
         fc, R_s, R_f = data["fetch_check"], {t["column"]: t for t in data["trios"]["table"]}, {t["column"]: t for t in data["fetch_check"]["trios"]["table"]}
         write_table([dict(metric=col, **{k: v for k, v in d.items() if k != "label"}, label=d["label"],
@@ -992,6 +1036,8 @@ def add_arguments(ap):
     ap.add_argument("--pcs", help="NGS-PCA svd.pcs.txt (with svd.singularvalues.txt and svd.bins.txt beside it)")
     ap.add_argument("--censat", help="directory of HPRC CenSat annotations (<sample>_<hap>_...cenSat.bed)")
     ap.add_argument("--hall", help="Hall, Turner & Queitsch 2021 Supplementary Data 1 (per-sample table for the same CRAMs)")
+    ap.add_argument("--ddpcr", help="ddPCR copy numbers of cohort lines (Potapova et al. 2025 Table S1 with CONKORD; NGS-DOSE values for lines outside the run): "
+                    "the results repository's assembly_rdna/tables/potapova_comparison.tsv")
     ap.add_argument("--qc", help="NGS-PCA sample_qc.tsv for the same cohort (mosdepth-based mitochondrial copy number, X/Y coverage ratios, depth, inferred sex)")
     ap.add_argument("--pilot", help="the pilot directory (pilot_heldout.tsv, pilot_replicates.tsv): the same twelve people on two sequencing technologies")
     ap.add_argument("--total", type=int, default=3202, help="samples the run will have when complete")

@@ -176,8 +176,11 @@ copy number the GC model and the calibration do the work.
 
 ## What is not yet shown
 
-- No orthogonal assay of rDNA copy number exists for these samples; the absolute scale rests
-  on unit windows where three Illumina chemistries agree, and one ddPCR value (CHM13).
+- The absolute scale has one external check: ddPCR (Potapova et al. 2025) on twelve
+  lymphoblastoid lines with a NovaSeq genome, nine of them 1000 Genomes lines in this pipeline,
+  where NGS-DOSE reads about 0.97× the assay (r ≈ 0.97; the results repository's
+  `assembly_rdna` study and the page's section 3.7). Beyond those lines the scale rests on unit
+  windows where three Illumina chemistries agree.
 - 5S copy number: reliability 0.78 with an interval from 0.46 to 1.11 at 149 trios — undecided.
 - In these trios generation and batch go together (finding 3): whether children differ from
   their parents in level or spread cannot be told from the sequencing batch.

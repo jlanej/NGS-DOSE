@@ -57,7 +57,7 @@ straight from the public CRAMs.
 ![pilot figure](example/1000G/pilot/pilot_figure.png)
 
 What it does not show: four trios say nothing about transmission reliability (that is what the
-602-trio run is for), no orthogonal assay has calibrated the absolute rDNA scale, and the
+602-trio run is for), the absolute rDNA scale has since been checked against ddPCR on only twelve lines (docs/EVIDENCE.md), and the
 window efficiencies and anchors were established on three Illumina chemistries only.
 
 Full tables: [example/1000G/pilot/pilot_report.md](example/1000G/pilot/pilot_report.md).
@@ -187,7 +187,7 @@ telomeric repeat, which the aligner concentrates and either mode measures - ship
 of the same people (two samples) HSat3, HSat1A and the α-satellite HORs come out within 7% of
 the assembly; the rest are relative measures or undecided, and that README says which and why.
 Not yet done: the cohort run (3,202 samples, 602 trios) and with it the comparison with the 200
-HPRC assemblies, sinks for DRAGEN-aligned data, an orthogonal rDNA calibration. See DESIGN.md §12–13. No licence has been chosen yet.
+HPRC assemblies, sinks for DRAGEN-aligned data, a wider orthogonal rDNA calibration than the twelve ddPCR lines. See DESIGN.md §12–13. No licence has been chosen yet.
 
 ## Provenance and credit
 
