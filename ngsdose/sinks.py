@@ -12,9 +12,25 @@ from __future__ import annotations
 from collections import defaultdict
 
 DECISION_WIDTH = 10_000
+CUT_SHARE = 0.05                                           # control 5' ends / primary reads: about 0.3% in a whole 30x genome
 
 
-def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int = 25, classes=None) -> tuple[list[tuple[str, int, int, str]], dict]:
+def cut_share(counts: dict) -> float:
+    """Control-region 5' ends per mapped primary read: 0.33-0.34% in 50 of the 1000 Genomes 30x
+    scans, 26% in the test fixture (a subsample restricted to the controls and sinks)."""
+    if not counts.get("primary") or not counts.get("ctrl_reads"):
+        return 0.0
+    return counts["ctrl_reads"] / counts["primary"]
+
+
+def looks_cut(counts: dict) -> bool:
+    """A scan-mode counts file made from reads cut out along a fetch plan (`ngs-dose plan`) holds
+    little but control and sink reads. It says `mode: scan`, and to a sink learner or evaluator it
+    would look like a whole file in which every class read lands inside the plan."""
+    return cut_share(counts) > CUT_SHARE
+
+
+def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int = 25, classes=None, allow_cut: bool = False) -> tuple[list[tuple[str, int, int, str]], dict]:
     """Intervals holding >= min_frac of a class's reads (and >= min_reads reads, so that a
     small class does not collect every stray placement) in any sample, merged, padded and
     clipped to the contig.
@@ -26,7 +42,9 @@ def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int =
     dispersed - the aligner concentrates its reads at the chromosome ends (in 372 NYGC scans,
     92% within 25 kb of an end and 60% in one 10-kb bin of chr5p), so it is fetched like a
     positional class. Returns (BED rows, per-class capture: the fraction of each sample's
-    scan-mode class reads that fall inside the learned sinks)."""
+    scan-mode class reads that fall inside the learned sinks). A file that holds only a region
+    subset (`looks_cut`) is refused unless `allow_cut`: the reads it lacks are the ones sinks are
+    for, so it can only confirm what the subset holds."""
     from .io import load_counts
     keep: dict[str, set[tuple[str, int, int]]] = defaultdict(set)      # class -> {(contig, start, end)}
     summaries = []                                         # per sample: class totals and the reads of every bin
@@ -35,6 +53,9 @@ def learn(scan_counts, min_frac: float = 1e-5, pad: int = 1000, min_reads: int =
         c = item if isinstance(item, dict) else load_counts(item)
         if c["mode"] != "scan":
             raise ValueError(f"{c['sample']}: sinks must be learned from scan-mode counts")
+        if looks_cut(c) and not allow_cut:
+            raise ValueError(f"{c['sample']}: {100 * cut_share(c):.0f}% of its primary reads lie in the control regions, where a whole-genome file "
+                             "has well under 1%: this is a cut along a fetch plan, not a whole-file scan, and it can teach nothing about where reads land")
         kinds = {x["name"]: x["kind"] for x in c["classes"]}
         chosen = {n for n, k in kinds.items() if k == "positional"} | ({n for n in (classes or ()) if n in kinds})
         # scans made with different bin widths can be pooled; a compositional class is placed on its own, coarser grid

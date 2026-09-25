@@ -282,10 +282,16 @@ def cmd_sinks(a):
         print("sample\tclass\tscan_reads\tcaptured\tfraction")
         for path in a.counts:                              # one file at a time: a cohort of scans fits
             c = io.load_counts(path)
+            if sinks.looks_cut(c):
+                print(f"# {c['sample']}: {100 * sinks.cut_share(c):.0f}% of its primary reads lie in the control regions - a cut along a fetch plan, "
+                      "not a whole-file scan; its capture says nothing", file=sys.stderr)
             for cls, (tot, inside) in sinks.capture(c, bed).items():
                 print(f"{c['sample']}\t{cls}\t{tot}\t{inside}\t{inside / max(tot, 1):.5f}")
         return
-    rows, stats = sinks.learn(a.counts, a.min_frac, a.pad, a.min_reads, classes=a.classes)
+    try:
+        rows, stats = sinks.learn(a.counts, a.min_frac, a.pad, a.min_reads, classes=a.classes)
+    except ValueError as e:
+        sys.exit(f"ngsdose sinks: {e}")
     with (sys.stdout if a.out == "-" else open(a.out, "w")) as fh:
         for contig, s0, e0, cls in rows:
             fh.write(f"{contig}\t{s0}\t{e0}\t{cls}\n")
