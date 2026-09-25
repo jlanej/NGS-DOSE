@@ -39,42 +39,22 @@ CRAM ──ngs-dose count──▶ counts.json ──ngsdose estimate──▶ p
 The reasoning, and the measurements on real data behind each step, are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-## What the pilot shows
+## Validation on the 1000 Genomes cohort
 
-Twelve 1000 Genomes samples (four trios, NYGC 30×), each also measured in an independent,
-years-older library of the same cell line (HGSVC HiSeq 2500 2×126, or Illumina Platinum HiSeq
-2000 2×101) whose GC behaviour is the reverse of NYGC's. Everything was counted in fetch mode
-straight from the public CRAMs.
-
-| | |
-| --- | --- |
-| **Speed** | 60–100 s per 30× genome over HTTPS from a home connection, reading about 0.5 GB of a 15.8 GB CRAM; 3 s from local disk; a whole-file scan takes 1 min 40 s on 10 threads |
-| **Known truth** | held-out autosomal sequence 1.996 ± 0.006 (truth 2); chrX in males 0.995 ± 0.004 (truth 1); chrY 0.979 ± 0.004 in males and 0.002 in females (truth 1 and 0); distal junction 9.73 ± 0.13 in the NYGC libraries and 9.93 ± 0.17 in the older ones (truth 10) |
-| **Same person, different library** | the 18S depth ratio used in the literature: −27% between library generations, 10% pair-to-pair SD, r = 0.86. NGS-DOSE with anchors chosen out of sample: +2%, 3.2%, r = 0.98 (one sample, no cohort: +0.6%, 4.6%, r = 0.96). These are upper bounds: the two DNA batches come from different cultures |
-| **Same CRAMs, published values** | r = 0.98 with Hall et al. 2021 on the shared samples; their values run 8% above ours, 5 points of which are the duplicate flag (DESIGN.md, finding 1) |
-| **By-catch** | the controls show HG00732's culture losing an X chromosome (1.84 copies in the 2015 DNA, 1.61 in 2019) |
-
-![pilot figure](example/1000G/pilot/pilot_figure.png)
-
-What it does not show: four trios say nothing about transmission reliability (that is what the
-602-trio run is for), the absolute rDNA scale has since been checked against ddPCR on only twelve lines (docs/EVIDENCE.md), and the
-window efficiencies and anchors were established on three Illumina chemistries only.
-
-Full tables: [example/1000G/pilot/pilot_report.md](example/1000G/pilot/pilot_report.md).
-
-## What the first 735 genomes show
-
-The cohort run is under way; its counts files and the page built from them accumulate in
-[NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G) (live at
-[jlanej.github.io/NGS-DOSE-1000G](https://jlanej.github.io/NGS-DOSE-1000G/)). The case that the
-method works — known copy numbers read correctly in every genome, a ten-copy paralog that steps
-in whole copies and whose steps are inherited, rDNA variation inherited with reliability 1 in
-149 trios, the same person agreeing across two sequencing technologies (ICC 0.98, against 0.19
-for the 18S depth ratio), r = 0.984 with an independent pipeline on the same files, and a
-one-minute fetch that returns 0.9997 of the whole-file scan — is laid out with its numbers, what
-each finding rules out, and what is not yet shown, in [docs/EVIDENCE.md](docs/EVIDENCE.md).
-
-![the evidence](docs/evidence.png)
+The method is validated on the expanded 1000 Genomes cohort (3,202 genomes, 602 trios, NYGC 30×
+NovaSeq CRAMs): a twelve-genome pilot in which every sample also has an older library of the same
+cell line on another instrument, and the cohort run that follows it. All of that work — the
+pipeline that drives the cohort through the method, the pilot, the counts files, the page built
+from them, the evidence write-up, and the comparisons with ddPCR, with HPRC assemblies and with
+published estimates — lives in its own repository, [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G),
+with the page live at [jlanej.github.io/NGS-DOSE-1000G](https://jlanej.github.io/NGS-DOSE-1000G/).
+In short: sequence of known copy number reads at its known copy number in every genome; the
+targeted fetch reproduces the whole-file scan; the 45S copy number is inherited with a reliability
+near 1 in the trios while the culture's and the library's properties are not; the calibrated
+estimate reproduces across sequencing technologies where a read-depth ratio does not; and against
+ddPCR it reads about 0.96× the assay. The numbers, and what each finding rules out, are in that
+repository's `docs/EVIDENCE.md`. This repository holds the method alone, so that it can be applied
+to any cohort.
 
 ## Quick start
 
@@ -85,8 +65,9 @@ cargo build --release                     # the engine: target/release/ngs-dose
 pip install -e .                          # the modelling layer: ngsdose
 ```
 
-Without compiling: the container has the engine, the package, the GRCh38 bundle, `aria2c` and
-the cohort scripts - a cluster needs nothing else but Apptainer and SLURM (`example/1000G`),
+Without compiling: the container has the engine, the package, the GRCh38 bundle and `aria2c` -
+a cluster needs nothing else but Apptainer, SLURM and the cohort's own scripts (the 1000 Genomes
+ones are in NGS-DOSE-1000G),
 
 ```bash
 apptainer pull ngs-dose.sif docker://ghcr.io/jlanej/ngs-dose:latest
@@ -123,11 +104,9 @@ ngsdose trios cohort.adjusted.tsv -p pedigree.txt -c rDNA45S.cn rDNA45S.cn_singl
 ngsdose selftest        # simulation checks of the statistics; needs no data
 ```
 
-```bash
-# the cohort page: what is measured and why, and the evidence that it works - known truths in every
-# sample, fetch against scan, trios, the cell line - recomputed from whatever counts exist, at any stage
-ngsdose report --scan counts_scan/ --fetch counts_fetch/ -p pedigree.txt -o docs/     # -> docs/index.html, report.json, data/*.tsv
-```
+A cohort's validation page - known truths in every sample, fetch against scan, transmission in
+trios, the coverage PCs - is built from these outputs by NGS-DOSE-1000G's `report` package; it is
+written for that cohort, and shows what any cohort's page needs.
 
 ```bash
 # whole-file scan, the full-accuracy mode: placement-independent, the only mode for dispersed sequence (the
@@ -146,10 +125,9 @@ ngsdose sinks scan*.json.gz --evaluate $B/sinks.bed      # fraction of each clas
 ngsdose sinks scan*.json.gz -o sinks.bed                 # or re-learn them
 ```
 
-`example/1000G/` runs the whole 1000 Genomes 30× cohort (SLURM or a plain loop) and holds the
-pilot; its results - the counts files and the page built from them - accumulate in a repository
-of their own, [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G), published as the run
-proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.
+The 1000 Genomes cohort run - its pipeline for SLURM or a plain loop, its pilot, its counts files
+and the page built from them - is [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G),
+published as the run proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.
 
 ## Output columns (per sample)
 
@@ -175,19 +153,20 @@ proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.
 Engine, estimator, cohort layer and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
 Rust unit tests, a simulated genome with known truth run end to end, a 2% subsample of real
 NA12878 reads, a mock trio cohort (that subsample sixty times over) through the whole cohort
-layer, bundle-integrity checks and regression tests on the pilot's counts, all in CI
+layer and bundle-integrity checks, all in CI
 (Linux and macOS, Python 3.10 to 3.13). Every push to `main` publishes the container image, and
 a version tag makes a release with prebuilt engines, the Python package and the resource bundle
 (`.github/workflows/`). Before the cohort run every assumption the counts files
-rest on was audited against data; nine were wrong and are fixed (DESIGN.md §15). Validated so far on a
-12-sample, 4-trio pilot in which every sample has an independent library replicate.
+rest on was audited against data; nine were wrong and are fixed (DESIGN.md §15). Validated on the
+1000 Genomes cohort in NGS-DOSE-1000G (a twelve-genome pilot with independent library replicates,
+then the cohort run: trios, two counting modes, ddPCR, assemblies, published estimates).
 Experimental panels - ten satellite families, which are dispersed and need scan mode, and the
 telomeric repeat, which the aligner concentrates and either mode measures - ship under
 `resources/experimental/`: in a first comparison with HPRC assemblies
 of the same people (two samples) HSat3, HSat1A and the α-satellite HORs come out within 7% of
 the assembly; the rest are relative measures or undecided, and that README says which and why.
-Not yet done: the cohort run (3,202 samples, 602 trios) and with it the comparison with the 200
-HPRC assemblies, sinks for DRAGEN-aligned data, a wider orthogonal rDNA calibration than the twelve ddPCR lines. See DESIGN.md §12–13. No licence has been chosen yet.
+Not yet done: the rest of the cohort run (1,259 of 3,202 genomes counted as of 2026-09-24),
+sinks for DRAGEN-aligned data, a wider orthogonal rDNA calibration than the twelve ddPCR lines. See DESIGN.md §12–13. No licence has been chosen yet.
 
 ## Provenance and credit
 

@@ -4,7 +4,7 @@ A positional class (rDNA, the distal junction) has a unit, its reads land in a f
 targeted fetch finds them. The satellite families have neither property: they are spread over
 centromere models, decoys and everything else in an alignment, so **only a whole-file scan
 measures them** — which is why a cohort that is scanned once should be scanned with these loaded
-(`example/1000G` does; `EXTRA_PANELS` in its `config.sh`). The telomeric repeat is the exception:
+(NGS-DOSE-1000G's pipeline does; `EXTRA_PANELS` in its `config.sh`). The telomeric repeat is the exception:
 the aligner concentrates its reads at the chromosome ends, the bundle's `sinks.bed` carries the
 intervals, and a fetch with `-p telomere.k31.panel.tsv.gz` measures it (`FETCH_PANELS`).
 
@@ -51,7 +51,7 @@ classes is dropped from both.
 ### Against assemblies of the same people
 
 HPRC release 2, CenSat annotation of both haplotypes summed, for two 1000 Genomes samples scanned
-whole (`example/1000G/hprc_satellites.py`). Cells are assembly Mb / NGS-DOSE Mb (ratio).
+whole (NGS-DOSE-1000G's `pipeline/hprc_satellites.py`). Cells are assembly Mb / NGS-DOSE Mb (ratio).
 
 | class | HG02258 (ACB, male) | HG01884 (ACB, female) |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ whole (`example/1000G/hprc_satellites.py`). Cells are assembly Mb / NGS-DOSE Mb 
 
 Two samples say nothing about whether the estimates *track* the assemblies across people, which
 is what association work needs. Two hundred samples of the 1000 Genomes cohort have HPRC
-assemblies; `example/1000G/04_hprc_satellites.sh` makes the comparison once the cohort is scanned.
+assemblies; NGS-DOSE-1000G's `pipeline/04_hprc_satellites.sh` makes the comparison once the cohort is scanned.
 
 ## `telomere.k31.panel.tsv.gz` — class `TEL`, six k-mers
 

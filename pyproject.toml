@@ -20,9 +20,6 @@ ngsdose = "ngsdose.cli:main"
 [tool.setuptools]
 packages = ["ngsdose"]
 
-[tool.setuptools.package-data]
-ngsdose = ["report_assets/*"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

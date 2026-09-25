@@ -7,7 +7,7 @@
 # A k-mer is kept if it occurs >= 10 times in the class's CHM13 arrays, in no other class, and
 # nowhere in CHM13 outside CenSat-annotated satellite. One genome's arrays are the only source, so
 # recall on other people's arrays has to be measured against assemblies (HPRC:
-# example/1000G/04_hprc_satellites.sh). Scan mode only: these reads are spread over centromere
+# NGS-DOSE-1000G's pipeline/04_hprc_satellites.sh). Scan mode only: these reads are spread over centromere
 # models, decoys and much else, and no sinks have been learned.
 # Not included, and why (share of 150-bp reads from the family's own CHM13 arrays that carry the four
 # k-mers a read needs): gamma satellite 13%, divergent alpha HORs 10%, HSat4 0% - too few recurring

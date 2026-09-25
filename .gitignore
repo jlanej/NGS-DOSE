@@ -5,7 +5,4 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .DS_Store
-example/1000G/logs/
 .claude/
-example/1000G/counts_scan/
-example/1000G/counts_fetch/

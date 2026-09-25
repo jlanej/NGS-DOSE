@@ -109,5 +109,5 @@ def test_features_anchors_and_sinks_are_inside_their_coordinate_systems():
 
 
 def test_shell_scripts_parse():
-    for sh in list((ROOT / "example").rglob("*.sh")) + list((ROOT / "resources" / "build").glob("*.sh")) + list((ROOT / "tests").rglob("*.sh")):
+    for sh in list((ROOT / "resources" / "build").glob("*.sh")) + list((ROOT / "tests").rglob("*.sh")):
         subprocess.run(["bash", "-n", str(sh)], check=True)

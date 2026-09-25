@@ -372,12 +372,6 @@ def main(argv=None):
     w.add_argument("-o", "--out", default="-")
     w.set_defaults(fn=cmd_pcsweep)
 
-    from . import report
-    rp = sub.add_parser("report", help="one static page from whatever counts files exist: the evidence that the measurement works, as the run proceeds",
-                        description=report.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    report.add_arguments(rp)
-    rp.set_defaults(fn=report.build)
-
     k = sub.add_parser("sinks", help="learn fetch-mode sink intervals from scan-mode counts")
     k.add_argument("counts", nargs="+")
     k.add_argument("-o", "--out", default="-")
