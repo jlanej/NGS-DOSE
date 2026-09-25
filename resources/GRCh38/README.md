@@ -33,6 +33,8 @@ multi-copy acrocentric sequence. (`bundle.json` records this as `expected_copies
 
 - **Different aligner, decoy set or ALT handling** (DRAGEN, GRCh38 without decoys, …): re-learn
   `sinks.bed` from `ngs-dose count -m scan` on a handful of samples; the panel and controls stay.
+  A fetch refuses a loaded class the sinks say nothing about (`--allow-missing-sinks` overrides and
+  records it), so a panel added later needs its sinks learned first (`ngsdose sinks --classes`).
 - **Different library chemistry**: re-learn window efficiencies with `ngsdose cohort`; check the
   known-truth columns; treat absolute values with caution until anchors have been confirmed for
   that chemistry (DESIGN.md §7).

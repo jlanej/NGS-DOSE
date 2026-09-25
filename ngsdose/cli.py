@@ -92,13 +92,20 @@ def _read_values(path, column):
 def cmd_trios(a):
     ped, pop = trios.load_pedigree(a.pedigree)
     centre = None if a.no_population_centring else pop
-    out = {}
+    out, failed = {}, {}
     for col in a.columns:
-        out[col] = trios.transmission(_read_values(a.table, col), ped, centre, n_perm=a.perm)
+        try:
+            out[col] = trios.transmission(_read_values(a.table, col), ped, centre, n_perm=a.perm)
+        except (ValueError, KeyError, SystemExit) as err:  # too few complete trios, or no such column: the other columns still get their row
+            failed[col] = str(err)
     ci = lambda t, k: ("(%.3f,%.3f)" % t[k + "_ci95"]) if k + "_ci95" in t else "NA"
     hdr = ("column", "n_trios", "R_midparent", "CI95", "slope", "se", "R_single", "R_mendel", "spousal_r", "CI95", "error_cv", "perm_null")
     print("\t".join(hdr))
-    for col, t in out.items():
+    for col in a.columns:
+        if col in failed:
+            print("\t".join([col, "0"] + ["NA"] * (len(hdr) - 2)) + f"\t# {failed[col]}")
+            continue
+        t = out[col]
         print("\t".join([col, str(t["n_trios"]), f"{t['reliability_midparent']:.3f}", ci(t, "reliability_midparent"),
                          f"{t['midparent_slope']:.3f}", f"{t['midparent_slope_se']:.3f}", f"{t['reliability_single_parent']:.3f}",
                          f"{t['reliability_mendel']:.3f}", f"{t['spousal_r']:+.3f}", ci(t, "spousal_r"), f"{t['error_cv']:.4f}",
@@ -108,17 +115,17 @@ def cmd_trios(a):
         print("\n# paired family bootstrap: R(column) - R(%s)" % a.compare_to)
         print("column\tdelta_R\tCI95\tP(column better)")
         for col in a.columns:
-            if col == a.compare_to:
+            if col == a.compare_to or col in failed:
                 continue
             try:
                 c = trios.compare(_read_values(a.table, col), base, ped, centre)
-            except ValueError as err:
+            except (ValueError, KeyError, SystemExit) as err:
                 print(f"{col}\tNA\tNA\tNA\t# {err}")
                 continue
             out[col]["vs_" + a.compare_to] = c
             print(f"{col}\t{c['delta']:+.4f}\t({c['ci95'][0]:+.4f},{c['ci95'][1]:+.4f})\t{c['p_a_better']:.3f}")
     if a.json:
-        _dump(out, a.json)
+        _dump({**out, **{col: dict(error=msg) for col, msg in failed.items()}}, a.json)
 
 
 def load_pcs(path, n_pc=None, strip=(".by1000.", ".")):
@@ -330,7 +337,8 @@ def main(argv=None):
 
     t = sub.add_parser("trios", help="transmission reliability from a pedigree")
     t.add_argument("table")
-    t.add_argument("-p", "--pedigree", required=True)
+    t.add_argument("-p", "--pedigree", required=True, help="the 1000 Genomes layout (FamilyID SampleID FatherID MotherID Sex Population ...), a PLINK "
+                   "PED/FAM, or a child father mother [population] table; whitespace-separated, header optional")
     t.add_argument("-c", "--columns", nargs="+", required=True)
     t.add_argument("--perm", type=int, default=1000)
     t.add_argument("--compare-to", help="baseline column: paired bootstrap of the reliability difference of every other column against it")

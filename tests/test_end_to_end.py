@@ -88,3 +88,53 @@ def test_compositional_class_mass(sim):
     m = r["classes"]["sat"]
     assert m["gc_supported_fraction"] > 0.99
     assert abs(m["mass_bp"] / sim["sat_mass_bp"] - 1) < 0.08, (m["mass_bp"], sim["sat_mass_bp"])
+
+
+def test_plan_lists_the_intervals_a_fetch_reads(sim):
+    """`ngs-dose plan` writes the fetch plan as BED: the control regions padded by 600 bp and the sinks,
+    merged; a file cut out with samtools along it and scanned gives the fetch's counts."""
+    d = sim["dir"]
+    run = lambda *a: subprocess.run([str(BIN), *map(str, a)], check=True, cwd=d, capture_output=True, text=True)
+    run("plan", "-c", "controls.fa.gz", "--sinks", "sinks.bed", "-i", "sim.bam", "-o", "plan.bed")
+    got = [(p[0], int(p[1]), int(p[2])) for p in (l.split("\t") for l in (d / "plan.bed").read_text().splitlines())]
+    want = {}
+    for line in (d / "controls.bed").read_text().splitlines():
+        c, s, e = line.split("\t")[:3]
+        want.setdefault(c, []).append((max(0, int(s) - 600), int(e) + 600))
+    for line in (d / "sinks.bed").read_text().splitlines():
+        c, s, e = line.split("\t")[:3]
+        want.setdefault(c, []).append((int(s), int(e)))
+    expected = []
+    for c in sorted(want):
+        merged = []
+        for s, e in sorted(want[c]):
+            if merged and s <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            else:
+                merged.append((s, e))
+        expected += [(c, s, e) for s, e in merged]
+    assert got == expected
+    assert run("plan", "-c", "controls.fa.gz", "--sinks", "sinks.bed").stdout.splitlines() == (d / "plan.bed").read_text().splitlines()
+    subprocess.run(["samtools", "view", "-b", "-M", "-L", "plan.bed", "-o", "cut.bam", "sim.bam"], check=True, cwd=d)
+    subprocess.run(["samtools", "index", "-c", "cut.bam"], check=True, cwd=d)
+    run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "scan", "-@", "2", "-o", "cut.json")
+    cut, fetch = io.load_counts(d / "cut.json"), sim["fetch"]
+    assert {c["name"]: c["reads"] for c in cut["classes"]} == {c["name"]: c["reads"] for c in fetch["classes"]}
+    assert abs(cut["ctrl_reads"] - fetch["ctrl_reads"]) <= max(2, 0.002 * fetch["ctrl_reads"])
+
+
+def test_fetch_refuses_a_loaded_class_without_sinks(sim):
+    """A panel class the sinks BED has no interval for would be counted only where its reads fall inside
+    other intervals: the engine refuses, or records the gap when told to go on."""
+    d = sim["dir"]
+    (d / "sinks_nosat.bed").write_text("".join(l + "\n" for l in (d / "sinks.bed").read_text().splitlines() if not l.endswith("\tsat")))
+    common = [str(BIN), "count", "-i", "sim.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "fetch", "--sinks", "sinks_nosat.bed", "-@", "2"]
+    r = subprocess.run([*common, "-o", "nosat.json"], cwd=d, capture_output=True, text=True)
+    assert r.returncode != 0 and "sat" in r.stderr and "--allow-missing-sinks" in r.stderr and not (d / "nosat.json").exists()
+    r = subprocess.run([*common, "--allow-missing-sinks", "-o", "nosat.json"], cwd=d, capture_output=True, text=True, check=True)
+    assert "WARNING" in r.stderr
+    c = io.load_counts(d / "nosat.json")
+    assert c["sinks_missing_classes"] == ["sat"]
+    sat = {x["name"]: x["reads"] for x in c["classes"]}["sat"]
+    assert sat < 0.05 * {x["name"]: x["reads"] for x in sim["scan"]["classes"]}["sat"]          # the undercount the flag admits to
+    assert "sinks_missing_classes" not in sim["fetch"]                                            # absent when nothing is missing

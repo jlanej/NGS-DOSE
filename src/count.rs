@@ -673,23 +673,17 @@ pub fn scan(input: &Input, panel: &Panel, controls: &Controls, p: &Params) -> Re
     Ok((acc, stats))
 }
 
-/// Targeted pass: only reads placed in the control regions and in the class sinks are
-/// retrieved (plus, optionally, the unmapped bin).
-pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String, i64, i64)], p: &Params) -> Result<(Acc, ReadStats)> {
-    // merged, non-overlapping plan; each record is counted in the interval holding its start
+/// The intervals a fetch reads: the control regions padded by `pad` on both sides (a fragment
+/// whose 5' end lies in the flank can still start a window inside the region), plus the class
+/// sinks, merged where they touch or overlap, sorted by contig name and start. `ngs-dose plan`
+/// writes this as BED for sites that must cut the reads out of a CRAM with samtools first.
+pub fn fetch_plan(controls: &Controls, sinks: &[(String, i64, i64)], pad: i64) -> Vec<(String, i64, i64)> {
     let mut by_chrom: FxHashMap<String, Vec<(i64, i64)>> = FxHashMap::default();
-    for (c, s, e) in controls.fetch_intervals(p.pad).into_iter().chain(sinks.iter().cloned()) {
+    for (c, s, e) in controls.fetch_intervals(pad).into_iter().chain(sinks.iter().cloned()) {
         by_chrom.entry(c).or_default().push((s, e));
     }
-    let probe = input.open_indexed()?;
-    let header = probe.header().clone();
-    drop(probe);
-    let mut plan: Vec<(i32, i64, i64)> = Vec::new();
+    let mut plan: Vec<(String, i64, i64)> = Vec::new();
     for (c, mut v) in by_chrom {
-        let tid = match header.tid(c.as_bytes()) {
-            Some(t) => t as i32,
-            None => bail!("fetch interval contig '{}' is not in the alignment header", c),
-        };
         v.sort_unstable();
         let mut merged: Vec<(i64, i64)> = Vec::new();
         for (s, e) in v {
@@ -698,7 +692,26 @@ pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String
                 _ => merged.push((s, e)),
             }
         }
-        plan.extend(merged.into_iter().map(|(s, e)| (tid, s, e)));
+        plan.extend(merged.into_iter().map(|(s, e)| (c.clone(), s, e)));
+    }
+    plan.sort_unstable();
+    plan
+}
+
+/// Targeted pass: only reads placed in the control regions and in the class sinks are
+/// retrieved (plus, optionally, the unmapped bin).
+pub fn fetch(input: &Input, panel: &Panel, controls: &Controls, sinks: &[(String, i64, i64)], p: &Params) -> Result<(Acc, ReadStats)> {
+    // merged, non-overlapping plan; each record is counted in the interval holding its start
+    let probe = input.open_indexed()?;
+    let header = probe.header().clone();
+    drop(probe);
+    let mut plan: Vec<(i32, i64, i64)> = Vec::new();
+    for (c, s, e) in fetch_plan(controls, sinks, p.pad) {
+        let tid = match header.tid(c.as_bytes()) {
+            Some(t) => t as i32,
+            None => bail!("fetch interval contig '{}' is not in the alignment header", c),
+        };
+        plan.push((tid, s, e));
     }
     plan.sort_unstable();
     let workers = p.threads.max(1).min(plan.len().max(1));
@@ -900,6 +913,10 @@ pub struct Output {
     pub controls: String,
     pub sinks: Option<String>,
     pub unmapped_fetched: bool,
+    /// fetch mode: loaded panel classes for which the sinks BED had no interval, counted only where
+    /// their reads fall inside other intervals (only with --allow-missing-sinks; otherwise refused)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sinks_missing_classes: Vec<String>,
     pub records: u64,
     pub primary: u64,
     pub primary_dup_flagged: u64,
@@ -1067,6 +1084,7 @@ pub fn make_output(
         controls: controls_path,
         sinks: sinks_path,
         unmapped_fetched: p.unmapped,
+        sinks_missing_classes: Vec::new(),
         records: st.records,
         primary: st.primary,
         primary_dup_flagged: st.primary_dup,
