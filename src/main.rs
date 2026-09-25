@@ -84,6 +84,14 @@ enum Cmd {
         /// count a BAM/CRAM that lacks its end-of-file marker instead of refusing it
         #[arg(long)]
         allow_truncated: bool,
+        /// fetch mode: padding (bp) added to both sides of every control region when it is retrieved
+        #[arg(long, default_value_t = 600)]
+        pad: i64,
+        /// fetch mode: go on when a loaded panel class has no interval in the sinks BED. Its reads
+        /// are then counted only where they fall inside other intervals - an undercount - and the
+        /// class is listed in the output's sinks_missing_classes. Without this flag the run refuses.
+        #[arg(long)]
+        allow_missing_sinks: bool,
         /// give up with exit status 75 when nothing has been read for this many seconds (a dead
         /// HTTPS connection waits for ever rather than failing); 0 disables
         #[arg(long, default_value_t = 300)]
@@ -107,6 +115,32 @@ enum Cmd {
         report: Option<PathBuf>,
         #[arg(short, long)]
         out: PathBuf,
+    },
+    /// Write the intervals a fetch reads (control regions padded, plus the sinks, merged) as BED.
+    /// For sites that cannot let the engine read CRAMs directly: cut the reads out first with
+    /// `samtools view -M -L plan.bed` and count the result in scan mode. A read overlapping an
+    /// interval's edge is kept by samtools but counted by a fetch only if its start lies inside; the
+    /// padding is what makes that immaterial for the controls.
+    Plan {
+        #[arg(short, long)]
+        controls: PathBuf,
+        /// BED of class sink intervals (the bundle's sinks.bed)
+        #[arg(long)]
+        sinks: PathBuf,
+        /// a BAM/CRAM whose header decides which contigs the plan keeps (samtools ignores a region
+        /// on a contig a CRAM lacks and exits 0, so an unfiltered plan can lose intervals silently)
+        #[arg(short, long)]
+        input: Option<String>,
+        #[arg(long)]
+        index: Option<String>,
+        #[arg(short = 'T', long)]
+        reference: Option<PathBuf>,
+        /// padding (bp) added to both sides of every control region, as `count` uses
+        #[arg(long, default_value_t = 600)]
+        pad: i64,
+        /// output BED; '-' or absent for stdout
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
     /// Build the controls FASTA (regions + flanks) from a BED and an indexed reference
     Controls {
@@ -183,6 +217,51 @@ fn main() -> Result<()> {
             let n = controls::build(&bed, &reference, flank, &out)?;
             eprintln!("wrote {} control regions to {}", n, out.display());
         }
+        Cmd::Plan { controls: controls_path, sinks, input, index, reference, pad, out } => {
+            let header = match &input {
+                Some(path) => Some(probe_header(&count::Input { path: path.clone(), index, reference }, true)?.0),
+                None => None,
+            };
+            let tid_of = |name: &str| match &header {
+                Some(h) => h.tid(name.as_bytes()).map(|t| t as i32),
+                None => Some(0),
+            };
+            let ctrl = controls::Controls::load(&controls_path, &tid_of)?;
+            let mut iv = Vec::new();
+            let mut skipped = 0;
+            for r in fasta::read_bed(&sinks)? {
+                if tid_of(&r.chrom).is_some() {
+                    iv.push((r.chrom, r.start, r.end));
+                } else {
+                    skipped += 1;
+                }
+            }
+            let absent = ctrl.regions.iter().filter(|r| r.absent).count();
+            let plan = count::fetch_plan(&ctrl, &iv, pad);
+            let mut text = String::new();
+            for (c, s, e) in &plan {
+                text.push_str(&format!("{}\t{}\t{}\n", c, s, e));
+            }
+            match out.as_ref().filter(|p| p.as_os_str() != "-") {
+                Some(p) => std::fs::write(p, &text).with_context(|| format!("cannot write {}", p.display()))?,
+                None => std::io::stdout().write_all(text.as_bytes())?,
+            }
+            let bp: i64 = plan.iter().map(|(_, s, e)| e - s).sum();
+            eprintln!(
+                "[plan] {} intervals, {:.1} Mb: {} control regions padded by {} bp, {} sink intervals{}{}",
+                plan.len(),
+                bp as f64 / 1e6,
+                ctrl.regions.len() - absent,
+                pad,
+                iv.len(),
+                if absent + skipped > 0 {
+                    format!("; dropped {} control regions and {} sink intervals on contigs the input lacks", absent, skipped)
+                } else {
+                    String::new()
+                },
+                if input.is_none() { " (no input given: every contig kept)" } else { "" }
+            );
+        }
         Cmd::Count {
             input,
             index,
@@ -202,6 +281,8 @@ fn main() -> Result<()> {
             place_bin,
             retries,
             allow_truncated,
+            pad,
+            allow_missing_sinks,
             stall_timeout,
         } => {
             let t0 = std::time::Instant::now();
@@ -231,12 +312,33 @@ fn main() -> Result<()> {
             }
             let tid_of = |name: &str| header.tid(name.as_bytes()).map(|t| t as i32);
             let ctrl = controls::Controls::load(&controls_path, &tid_of)?;
-            let params = count::Params { min_hits, min_frac, bin, l_grid, threads, place_bin, unmapped, pad: 600, retries };
+            let params = count::Params { min_hits, min_frac, bin, l_grid, threads, place_bin, unmapped, pad, retries };
             let mut sink_contigs: Vec<String> = Vec::new();
+            let mut sinks_missing: Vec<String> = Vec::new();
             let (acc, st) = match mode {
                 Mode::Scan => count::scan(&inp, &panel, &ctrl, &params)?,
                 Mode::Fetch => {
                     let recs = fasta::read_bed(sinks.as_ref().unwrap())?;
+                    // every loaded class must have sinks, or its reads are counted only where they
+                    // happen to fall inside other intervals, an undercount nothing would report
+                    if recs.iter().any(|r| !r.name.is_empty()) {
+                        let have: std::collections::HashSet<&str> = recs.iter().map(|r| r.name.as_str()).collect();
+                        sinks_missing = panel.classes.iter().map(|c| c.name.clone()).filter(|n| !have.contains(n.as_str())).collect();
+                        if !sinks_missing.is_empty() {
+                            let msg = format!(
+                                "the sinks BED has no interval for the loaded class(es) {}: a fetch would count their reads only where they fall inside other intervals. \
+                                 Learn sinks for them from whole-file scans (`ngsdose sinks scan*.json.gz --classes ...`), load a panel without them, or pass --allow-missing-sinks to record the gap and continue",
+                                sinks_missing.join(", ")
+                            );
+                            if allow_missing_sinks {
+                                eprintln!("[count] WARNING: {}", msg);
+                            } else {
+                                bail!("{}", msg);
+                            }
+                        }
+                    } else {
+                        eprintln!("[count] note: the sinks BED carries no class column; whether every loaded class has sinks is not checked");
+                    }
                     let mut iv = Vec::new();
                     let mut skipped = 0;
                     for r in recs {
@@ -262,7 +364,7 @@ fn main() -> Result<()> {
             let header_contigs: Vec<(String, u64)> = (0..header.target_count())
                 .map(|t| (String::from_utf8_lossy(header.tid2name(t)).to_string(), header.target_len(t).unwrap_or(0)))
                 .collect();
-            let o = count::make_output(
+            let mut o = count::make_output(
                 sample,
                 &inp,
                 if mode == Mode::Scan { "scan" } else { "fetch" },
@@ -284,6 +386,7 @@ fn main() -> Result<()> {
                 eof_marker,
                 t0.elapsed().as_secs_f64(),
             );
+            o.sinks_missing_classes = sinks_missing;
             let json = serde_json::to_vec(&o)?;
             if out == "-" {
                 std::io::stdout().write_all(&json)?;

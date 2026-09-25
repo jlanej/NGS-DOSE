@@ -32,6 +32,6 @@
   ],
   "window": 250,
   "rule": "fragment GC 40-60%, |median d| < 0.06 and 10-90% spread < 0.15, d = log(C_replicate/C_NYGC) per window",
-  "derived_from": "12 sample pairs: NYGC NovaSeq 2x150 vs HGSVC HiSeq 2500 2x126 / Platinum HiSeq 2000 2x100 (example/1000G/pilot/evaluate_pilot.py --write-anchors)"
+  "derived_from": "12 sample pairs: NYGC NovaSeq 2x150 vs HGSVC HiSeq 2500 2x126 / Platinum HiSeq 2000 2x100 (NGS-DOSE-1000G: python pilot/evaluate_pilot.py --write-anchors)"
  }
 }

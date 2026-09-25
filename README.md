@@ -125,6 +125,16 @@ ngsdose sinks scan*.json.gz --evaluate $B/sinks.bed      # fraction of each clas
 ngsdose sinks scan*.json.gz -o sinks.bed                 # or re-learn them
 ```
 
+A fetch refuses a loaded panel class that has no interval in the sinks (its reads would be counted only
+where they fall inside other intervals); `--allow-missing-sinks` records the gap in the counts instead.
+Where the engine cannot read the CRAMs itself, `ngs-dose plan` writes the intervals a fetch reads as BED,
+to cut them out with samtools and count the result in scan mode:
+
+```bash
+target/release/ngs-dose plan -c $B/controls.fa.gz --sinks $B/sinks.bed -i sample.cram -T ref.fa -o plan.bed
+samtools view -b -M -L plan.bed -o sample.fetch.bam sample.cram && samtools index -c sample.fetch.bam
+```
+
 The 1000 Genomes cohort run - its pipeline for SLURM or a plain loop, its pilot, its counts files
 and the page built from them - is [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G),
 published as the run proceeds. `resources/build/` rebuilds the GRCh38 bundle from public inputs.

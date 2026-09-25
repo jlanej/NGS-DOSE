@@ -85,7 +85,7 @@ def test_counts_do_not_depend_on_threads_or_on_co_loaded_panels(tmp_path):
     sat = ROOT / "resources" / "experimental" / "satellites.CHM13v2.k31.panel.tsv.gz"
     base = [str(BIN), "count", "-i", str(BAM), "-c", str(BUNDLE.controls), "--sinks", str(BUNDLE.sinks), "-m", "fetch"]
     runs = {"t1": ["-p", str(BUNDLE.panel), "-@", "1"], "t4": ["-p", str(BUNDLE.panel), "-@", "4"],
-            "sat": ["-p", str(BUNDLE.panel), "-p", str(sat), "-@", "4"]}
+            "sat": ["-p", str(BUNDLE.panel), "-p", str(sat), "-@", "4", "--allow-missing-sinks"]}     # the families have no sinks: a fetch refuses them unless told
     out = {}
     for name, extra in runs.items():
         subprocess.run(base + extra + ["-o", str(tmp_path / f"{name}.json")], check=True, capture_output=True)
@@ -96,6 +96,8 @@ def test_counts_do_not_depend_on_threads_or_on_co_loaded_panels(tmp_path):
     for c in out["t4"]["classes"]:
         assert (c["fwd"], c["rev"], c["reads"]) == (with_sat[c["name"]]["fwd"], with_sat[c["name"]]["rev"], with_sat[c["name"]]["reads"])
     assert len(with_sat) == 13 and len(out["sat"]["panel_sha256"]) == 2
+    assert sorted(out["sat"]["sinks_missing_classes"]) == sorted(n for n in with_sat if n not in {c["name"] for c in out["t4"]["classes"]})   # the ten families, recorded
+    assert "sinks_missing_classes" not in out["t4"]
     # and a whole-file scan with every panel loaded - classes, placements with their census, contig tallies -
     # is the same file whatever the number of threads
     exp = ROOT / "resources" / "experimental"

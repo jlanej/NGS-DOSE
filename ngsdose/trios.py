@@ -49,25 +49,65 @@ class Trio:
     population: str = ""
 
 
+MISSING_PARENT = ("0", "-9", "NA", ".", "")
+_CHILD_NAMES = ("sampleid", "iid", "sample", "child", "kid", "proband")
+_FATHER_NAMES = ("fatherid", "pat", "father", "dad", "paternal_id")
+_MOTHER_NAMES = ("motherid", "mat", "mother", "mom", "maternal_id")
+_POP_NAMES = ("population", "pop")
+
+
+def pedigree_layout(first: list[str]) -> tuple[int, int, int, int | None, bool]:
+    """(child, father, mother, population column, header present) for the first line of a pedigree file.
+
+    Three layouts are read: the 1000 Genomes one (FamilyID SampleID FatherID MotherID Sex Population ...),
+    PLINK PED/FAM (FID IID PAT MAT SEX PHENOTYPE: the sixth column is a phenotype code, not a population),
+    and a trios table (child father mother [population]). A header names the columns; without one the
+    layout is told from the number of columns and whether the sixth is a phenotype code."""
+    low = [x.lower() for x in first]
+    if any(x in _CHILD_NAMES for x in low):
+        col = lambda names: next((i for i, x in enumerate(low) if x in names), None)
+        c, f, m = col(_CHILD_NAMES), col(_FATHER_NAMES), col(_MOTHER_NAMES)
+        if f is None or m is None:
+            raise ValueError(f"pedigree header names no father/mother column: {' '.join(first)}")
+        return c, f, m, col(_POP_NAMES), True
+    if len(first) == 3:
+        return 0, 1, 2, None, False
+    if len(first) == 4 and first[3] not in ("1", "2", "0"):
+        return 0, 1, 2, 3, False
+    if len(first) >= 6 and first[5] in ("-9", "0", "1", "2"):
+        return 1, 2, 3, None, False                        # PLINK: phenotype, not population
+    return 1, 2, 3, (5 if len(first) > 5 else None), False
+
+
 def load_pedigree(path) -> tuple[list[Trio], dict[str, str]]:
-    """1000 Genomes style pedigree: FamilyID SampleID FatherID MotherID Sex Population ...
-    (whitespace separated, header optional). Returns complete trios and sample -> population."""
+    """Complete trios and sample -> population from a pedigree file in any layout `pedigree_layout` reads
+    (whitespace-separated). A parent given as 0, -9, NA or . is absent; a population column is optional."""
     trios, pop = [], {}
     with open(path) as fh:
-        for line in fh:
-            p = line.split()
-            if len(p) < 4 or p[1] in ("SampleID", "IID", "sampleID"):
-                continue
-            pop[p[1]] = p[5] if len(p) > 5 else ""
-            if p[2] not in ("0", "-9", "NA") and p[3] not in ("0", "-9", "NA"):
-                trios.append(Trio(p[1], p[2], p[3], p[5] if len(p) > 5 else ""))
+        lines = [line.split() for line in fh if line.strip() and not line.startswith("#")]
+    if not lines:
+        return trios, pop
+    c, f, m, g, header = pedigree_layout(lines[0])
+    for p in lines[1:] if header else lines:
+        if len(p) <= max(c, f, m):
+            continue
+        pop[p[c]] = p[g] if g is not None and len(p) > g else ""
+        if p[f] not in MISSING_PARENT and p[m] not in MISSING_PARENT:
+            trios.append(Trio(p[c], p[f], p[m], pop[p[c]]))
+    for t in trios:                                        # a trios table names the parents only on the child's row
+        for parent in (t.father, t.mother):
+            if t.population and not pop.get(parent):
+                pop[parent] = t.population
     return trios, pop
 
 
 def _ols(x, y):
     x, y = np.asarray(x, float), np.asarray(y, float)
     xm, ym = x - x.mean(), y - y.mean()
-    b = float((xm * ym).sum() / (xm ** 2).sum())
+    sxx = float((xm ** 2).sum())
+    if not sxx > 0:                                        # a constant regressor: no slope to estimate
+        return float("nan"), float("nan")
+    b = float((xm * ym).sum() / sxx)
     res = ym - b * xm
     # heteroscedasticity-robust (HC1) standard error
     se = float(np.sqrt(((xm * res) ** 2).sum()) / (xm ** 2).sum() * np.sqrt(len(x) / max(len(x) - 2, 1)))
@@ -176,12 +216,14 @@ def _chi2_sf3(x: float) -> float:
 
 def _estimators(c, f, m) -> dict:
     mid = (f + m) / 2
-    rho = float(np.corrcoef(f, m)[0, 1])
+    rho = float(np.corrcoef(f, m)[0, 1]) if np.std(f) > 0 and np.std(m) > 0 else float("nan")
     b, se = _ols(mid, c)
     bf, sef = _ols(f, c)
     bm, sem = _ols(m, c)
     V = float(np.var(np.r_[f, m], ddof=1))
     D = float(np.var(c - mid, ddof=1))
+    if not V > 0:                                          # constant among the parents (chrEBV in blood): nothing to inherit or to err in
+        V = float("nan")
     r = lambda x, y: float(np.corrcoef(x, y)[0, 1]) if np.std(x) > 0 and np.std(y) > 0 else float("nan")
     s = float(np.std(c, ddof=1) / np.sqrt(V)) if V > 0 else float("nan")
     pm = float(np.mean(np.r_[f, m]))
@@ -214,7 +256,8 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
     out = dict(n_trios=n, **_estimators(c, f, m), parent_mean=float(np.mean(np.r_[f, m])),
                child_minus_midparent_mean=float(np.mean(c - mid)))
     V = out["parent_sd"] ** 2
-    out["error_cv"] = float(np.sqrt(max(0.0, 1 - out["reliability_midparent"]) * V) / out["parent_mean"])
+    out["error_cv"] = (float(np.sqrt(max(0.0, 1 - out["reliability_midparent"]) * V) / out["parent_mean"])
+                       if np.isfinite(V) and np.isfinite(out["reliability_midparent"]) and out["parent_mean"] > 0 else float("nan"))
     rng = np.random.default_rng(seed)
     if n_perm and n >= 10:
         null = np.array([_ols(mid, c[rng.permutation(n)])[0] for _ in range(n_perm)])
