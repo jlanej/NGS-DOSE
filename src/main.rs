@@ -118,9 +118,10 @@ enum Cmd {
     },
     /// Write the intervals a fetch reads (control regions padded, plus the sinks, merged) as BED.
     /// For sites that cannot let the engine read CRAMs directly: cut the reads out first with
-    /// `samtools view -M -L plan.bed` and count the result in scan mode. A read overlapping an
-    /// interval's edge is kept by samtools but counted by a fetch only if its start lies inside; the
-    /// padding is what makes that immaterial for the controls.
+    /// `samtools view -M -L plan.bed`, index the cut, and count it in fetch mode with the same
+    /// bundle, sinks and padding - that reproduces the fetch of the whole file exactly. Counted in
+    /// scan mode the cut would pass for a whole-file scan, which it is not (`ngsdose sinks` refuses
+    /// such a file).
     Plan {
         #[arg(short, long)]
         controls: PathBuf,
@@ -222,9 +223,17 @@ fn main() -> Result<()> {
                 Some(path) => Some(probe_header(&count::Input { path: path.clone(), index, reference }, true)?.0),
                 None => None,
             };
+            // without an input every contig is kept, each under an id of its own: the controls loader
+            // checks for overlapping regions per id, so one id for all would fault regions on different
+            // chromosomes against each other
+            let ids: std::cell::RefCell<std::collections::HashMap<String, i32>> = Default::default();
             let tid_of = |name: &str| match &header {
                 Some(h) => h.tid(name.as_bytes()).map(|t| t as i32),
-                None => Some(0),
+                None => {
+                    let mut m = ids.borrow_mut();
+                    let next = m.len() as i32;
+                    Some(*m.entry(name.to_string()).or_insert(next))
+                }
             };
             let ctrl = controls::Controls::load(&controls_path, &tid_of)?;
             let mut iv = Vec::new();

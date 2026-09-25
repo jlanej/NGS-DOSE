@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -117,10 +118,22 @@ def test_plan_lists_the_intervals_a_fetch_reads(sim):
     assert run("plan", "-c", "controls.fa.gz", "--sinks", "sinks.bed").stdout.splitlines() == (d / "plan.bed").read_text().splitlines()
     subprocess.run(["samtools", "view", "-b", "-M", "-L", "plan.bed", "-o", "cut.bam", "sim.bam"], check=True, cwd=d)
     subprocess.run(["samtools", "index", "-c", "cut.bam"], check=True, cwd=d)
-    run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "scan", "-@", "2", "-o", "cut.json")
-    cut, fetch = io.load_counts(d / "cut.json"), sim["fetch"]
-    assert {c["name"]: c["reads"] for c in cut["classes"]} == {c["name"]: c["reads"] for c in fetch["classes"]}
-    assert abs(cut["ctrl_reads"] - fetch["ctrl_reads"]) <= max(2, 0.002 * fetch["ctrl_reads"])
+    # the cut, counted in fetch mode with the same bundle, sinks and padding, is the whole file's fetch
+    run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "fetch", "--sinks", "sinks.bed", "-@", "2", "-o", "cut.json.gz")
+    strip = lambda c: {k: v for k, v in c.items() if k not in ("input", "elapsed_sec")}
+    assert strip(io.load_counts(d / "cut.json.gz")) == strip(sim["fetch"])
+    # counted in scan mode it would pass for a whole-file scan; the sink learner and evaluator see that it is not
+    run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "scan", "-@", "2", "-o", "cut_scan.json")
+    # (the simulated genome is little but controls, so its whole-file scan looks cut too; the cohort's real scans put
+    # 0.33% of their primary reads in the controls, this cut puts most of them there)
+    from ngsdose import sinks as S
+    cut_scan = io.load_counts(d / "cut_scan.json")
+    assert S.looks_cut(cut_scan)
+    with pytest.raises(ValueError, match="cut along a fetch plan"):
+        S.learn([cut_scan])
+    assert S.learn([cut_scan], allow_cut=True)[0]
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(d / "cut_scan.json")], capture_output=True, text=True)
+    assert r.returncode != 0 and "cut along a fetch plan" in r.stderr and "Traceback" not in r.stderr
 
 
 def test_fetch_refuses_a_loaded_class_without_sinks(sim):

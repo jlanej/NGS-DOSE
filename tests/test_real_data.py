@@ -79,6 +79,43 @@ def test_rdna(result):
     assert five["cn_basis"] == "all" and 150 < five["cn"] < 280
 
 
+@pytest.mark.skipif(not __import__("shutil").which("samtools"), reason="needs samtools")
+def test_plan_without_an_input_keeps_every_contig_of_the_bundle(tmp_path):
+    """`ngs-dose plan` on the GRCh38 bundle with no input: every control region and sink, each contig
+    under an id of its own (one id for all faulted regions on different chromosomes as overlapping).
+    Given an input whose header lacks contigs, the same plan without them: the fixture's header holds
+    every contig the bundle uses, so a header-only BAM without chrEBV (a control region) and one
+    unplaced contig (two sinks) stands in; an input missing most of them is refused as the wrong
+    reference build, as by `count`."""
+    run = lambda *a: subprocess.run([str(BIN), "plan", "-c", str(BUNDLE.controls), "--sinks", str(BUNDLE.sinks), *a], check=True, capture_output=True, text=True)
+    rows = lambda text: [(p[0], int(p[1]), int(p[2])) for p in (l.split("\t") for l in text.splitlines())]
+    whole = rows(run().stdout)
+    contigs = {c for c, _, _ in whole}
+    assert len(contigs) >= 24 and len(whole) > 800
+    assert with_bam_rows(run, rows, BAM) == whole                                       # the fixture's header names them all
+    header = subprocess.run(["samtools", "view", "-H", str(BAM)], check=True, capture_output=True, text=True).stdout
+    sq = [l for l in header.splitlines() if l.startswith("@SQ")]
+    drop = {"chrEBV", "chrUn_KI270442v1"}
+    fewer = [l for l in sq if l.split("\t")[1][3:] not in drop]
+    kept = {l.split("\t")[1][3:] for l in fewer}
+    assert drop <= contigs and len(fewer) == len(sq) - 2
+    few = tmp_path / "few.bam"
+    subprocess.run(["samtools", "view", "-b", "-o", str(few), "-"], input="\n".join(["@HD\tVN:1.6\tSO:coordinate"] + fewer) + "\n", check=True, text=True, capture_output=True)
+    subprocess.run(["samtools", "index", "-c", str(few)], check=True, capture_output=True)
+    assert with_bam_rows(run, rows, few) == [r for r in whole if r[0] in kept]
+    r = subprocess.run([str(BIN), "plan", "-c", str(BUNDLE.controls), "--sinks", str(BUNDLE.sinks), "-i", str(few)], capture_output=True, text=True)
+    assert r.returncode == 0 and "dropped 1 control regions and 2 sink intervals" in r.stderr
+    two = tmp_path / "two.bam"                                                          # most contigs missing: not this build
+    subprocess.run(["samtools", "view", "-b", "-o", str(two), "-"], input="\n".join(["@HD\tVN:1.6\tSO:coordinate"] + sq[:2]) + "\n", check=True, text=True, capture_output=True)
+    subprocess.run(["samtools", "index", "-c", str(two)], check=True, capture_output=True)
+    r = subprocess.run([str(BIN), "plan", "-c", str(BUNDLE.controls), "--sinks", str(BUNDLE.sinks), "-i", str(two)], capture_output=True, text=True)
+    assert r.returncode != 0 and "wrong reference build" in r.stderr
+
+
+def with_bam_rows(run, rows, bam):
+    return rows(run("-i", str(bam)).stdout)
+
+
 def test_counts_do_not_depend_on_threads_or_on_co_loaded_panels(tmp_path):
     """The same reads give the same numbers with 1 or 4 threads, and a class's counts are
     unchanged when an unrelated panel (here the experimental satellite panel) is loaded as well."""
@@ -289,8 +326,12 @@ def test_sinks_are_decided_at_ten_kb_and_trimmed_on_a_finer_grid(counts):
             k = (p["class"], p["contig"], p["start"] // 10000 * 10000)
             merged[k] = merged.get(k, 0) + p["reads"]
     coarse["placements"] = [dict(**{"class": c}, contig=g, start=st, reads=n) for (c, g, st), n in merged.items()]
-    rows_f, cap_f = sinks.learn([fine])
-    rows_c, cap_c = sinks.learn([coarse])
+    # the fixture is itself a region subset (a 2% subsample restricted to the controls and sinks), which the
+    # learner refuses by default; the property tested here is relative, so it is learned from anyway
+    with pytest.raises(ValueError, match="cut along a fetch plan"):
+        sinks.learn([fine])
+    rows_f, cap_f = sinks.learn([fine], allow_cut=True)
+    rows_c, cap_c = sinks.learn([coarse], allow_cut=True)
     span = lambda rows, cls: sum(e - s0 for _, s0, e, c in rows if c == cls)
     for cls in ("rDNA45S", "DJ"):
         assert span(rows_f, cls) <= span(rows_c, cls)
@@ -301,5 +342,5 @@ def test_sinks_are_decided_at_ten_kb_and_trimmed_on_a_finer_grid(counts):
     # where reads are dense (45S, even in a 2% subsample) trimming loses nothing of note
     assert cap_f["rDNA45S"]["NA12878"] > cap_c["rDNA45S"]["NA12878"] - 0.002
     # pooling scans made on different grids works
-    rows_both, _ = sinks.learn([fine, coarse])
+    rows_both, _ = sinks.learn([fine, coarse], allow_cut=True)
     assert span(rows_both, "rDNA45S") >= span(rows_f, "rDNA45S")

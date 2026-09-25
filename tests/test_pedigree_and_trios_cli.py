@@ -37,6 +37,21 @@ def test_three_pedigree_layouts_read_the_same_trios(tmp_path):
     assert t3 == want and pop3["M2"] == "POPB"                   # a trios table gives the parents the child's population
     t4, _ = load_pedigree(bare)
     assert [(t.child, t.father, t.mother) for t in t4] == [(c, f, m) for c, f, m, _ in fams]
+    # a header that starts with '#': named columns, not a comment (a six-column table whose sixth column is a sex
+    # code would otherwise be read as PLINK, with the father for the child)
+    hprv = tmp_path / "hprv.tsv"
+    hprv.write_text("#kid\tdad\tmom\tkid_sex\tdad_sex\tmom_sex\n" + "".join(f"{c}\t{f}\t{m}\t1\t1\t2\n" for c, f, m, _ in fams))
+    t5, _ = load_pedigree(hprv)
+    assert [(t.child, t.father, t.mother) for t in t5] == [(c, f, m) for c, f, m, _ in fams]
+    fam = tmp_path / "hash.fam"
+    fam.write_text("#FID IID PAT MAT SEX PHENO\n# a comment\n" + "".join(f"F{i} {c} {f} {m} 1 -9\nF{i} {f} 0 0 1 -9\nF{i} {m} 0 0 2 -9\n" for i, (c, f, m, _) in enumerate(fams)))
+    t6, _ = load_pedigree(fam)
+    assert [(t.child, t.father, t.mother) for t in t6] == [(c, f, m) for c, f, m, _ in fams]
+    noted = tmp_path / "noted.txt"                                                     # a comment that mentions a column name is a comment
+    noted.write_text("# sample list, child father mother\n" + "".join(f"{c}\t{f}\t{m}\n" for c, f, m, _ in fams))
+    assert load_pedigree(noted)[0] == t4
+    noted.write_text("# the sample IDs\n" + "".join(f"{c}\t{f}\t{m}\n" for c, f, m, _ in fams))
+    assert load_pedigree(noted)[0] == t4
 
 
 def test_a_constant_column_gives_nan_and_the_table_survives(tmp_path):
@@ -56,8 +71,9 @@ def test_a_constant_column_gives_nan_and_the_table_survives(tmp_path):
         for i, (s, v, k, _) in enumerate(rows):
             fh.write(f"{s}\t{v:.4f}\t{k}\t{v:.4f}\n" if i < 6 else f"{s}\t{v:.4f}\t{k}\t\n")
     # the library: NaN statistics, no exception
-    const = transmission({s: 0.0 for s, _, _, _ in rows}, [Trio(c, f, m) for c, f, m, _ in fams], None, n_perm=0, n_boot=0)
+    const = transmission({s: 0.0 for s, _, _, _ in rows}, [Trio(c, f, m) for c, f, m, _ in fams], None, n_perm=200, n_boot=0)
     assert const["n_trios"] == N and all(np.isnan(const[k]) for k in ("reliability_midparent", "midparent_slope", "spousal_r", "error_cv", "reliability_mendel"))
+    assert np.isnan(const["perm_p"]) and np.isnan(const["perm_null_mean"])            # no slope, no test: not a p of 1/(n+1)
     # the command: every column gets its row
     out = subprocess.run([sys.executable, "-m", "ngsdose", "trios", str(table), "-p", str(ped), "-c", "var", "const", "sparse", "--perm", "0",
                           "--json", str(tmp_path / "t.json")], check=True, cwd=ROOT, capture_output=True, text=True)

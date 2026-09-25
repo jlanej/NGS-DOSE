@@ -84,7 +84,16 @@ def load_pedigree(path) -> tuple[list[Trio], dict[str, str]]:
     (whitespace-separated). A parent given as 0, -9, NA or . is absent; a population column is optional."""
     trios, pop = [], {}
     with open(path) as fh:
-        lines = [line.split() for line in fh if line.strip() and not line.startswith("#")]
+        raw = [line for line in fh if line.strip()]
+    lines = [line.split() for line in raw if not line.startswith("#")]
+    # a first line that starts with '#' is the header when it names the child, father and mother columns and
+    # has the data's column count (PLINK's "#FID IID PAT MAT ...", a "#kid dad mom ..." table); every other
+    # line starting with '#' is a comment
+    if raw and raw[0].startswith("#") and lines:
+        head = raw[0].lstrip("#").split()
+        low = [x.lower() for x in head]
+        if len(head) == len(lines[0]) and all(any(x in names for x in low) for names in (_CHILD_NAMES, _FATHER_NAMES, _MOTHER_NAMES)):
+            lines = [head] + lines
     if not lines:
         return trios, pop
     c, f, m, g, header = pedigree_layout(lines[0])
@@ -260,10 +269,13 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
                        if np.isfinite(V) and np.isfinite(out["reliability_midparent"]) and out["parent_mean"] > 0 else float("nan"))
     rng = np.random.default_rng(seed)
     if n_perm and n >= 10:
-        null = np.array([_ols(mid, c[rng.permutation(n)])[0] for _ in range(n_perm)])
-        out["perm_null_mean"], out["perm_null_sd"] = float(null.mean()), float(null.std())
-        # one-sided: how often a slope at least as large arises when children are shuffled among the families
-        out["perm_p"] = float((1 + np.sum(null >= out["midparent_slope"])) / (n_perm + 1))
+        if np.isfinite(out["midparent_slope"]):
+            null = np.array([_ols(mid, c[rng.permutation(n)])[0] for _ in range(n_perm)])
+            out["perm_null_mean"], out["perm_null_sd"] = float(null.mean()), float(null.std())
+            # one-sided: how often a slope at least as large arises when children are shuffled among the families
+            out["perm_p"] = float((1 + np.sum(null >= out["midparent_slope"])) / (n_perm + 1))
+        else:                                              # no slope (a constant column): no test, not a small p
+            out["perm_null_mean"] = out["perm_null_sd"] = out["perm_p"] = float("nan")
     if n_boot and n >= 20:
         keys = ("reliability_midparent", "reliability_single_parent", "reliability_mendel", "spousal_r", "r_midparent",
                 "reliability_rescaled", "sd_ratio", "mean_ratio")

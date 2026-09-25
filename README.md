@@ -128,11 +128,14 @@ ngsdose sinks scan*.json.gz -o sinks.bed                 # or re-learn them
 A fetch refuses a loaded panel class that has no interval in the sinks (its reads would be counted only
 where they fall inside other intervals); `--allow-missing-sinks` records the gap in the counts instead.
 Where the engine cannot read the CRAMs itself, `ngs-dose plan` writes the intervals a fetch reads as BED,
-to cut them out with samtools and count the result in scan mode:
+to cut them out with samtools and count the cut in fetch mode with the same bundle, sinks and padding,
+which reproduces the fetch of the whole file exactly (a cut counted in scan mode would pass for a
+whole-file scan, which it is not; `ngsdose sinks` refuses such a file):
 
 ```bash
 target/release/ngs-dose plan -c $B/controls.fa.gz --sinks $B/sinks.bed -i sample.cram -T ref.fa -o plan.bed
-samtools view -b -M -L plan.bed -o sample.fetch.bam sample.cram && samtools index -c sample.fetch.bam
+samtools view -b -M -L plan.bed -o sample.cut.bam sample.cram && samtools index -c sample.cut.bam
+target/release/ngs-dose count -m fetch -i sample.cut.bam -p $B/panel.k31.tsv.gz -c $B/controls.fa.gz --sinks $B/sinks.bed -o sample.json.gz
 ```
 
 The 1000 Genomes cohort run - its pipeline for SLURM or a plain loop, its pilot, its counts files
