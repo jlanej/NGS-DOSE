@@ -92,6 +92,6 @@ python3 "$HERE/select_controls.py" --reference "$GRCH38" --exclude "$EXCLUDE" --
 # ---- 6. data-dependent pieces ------------------------------------------------------------------
 # sinks.bed          ngs-dose count -m scan on a few whole CRAMs of the target pipeline, then
 #                    ngsdose sinks scan1.json.gz [scan2.json.gz ...] -o resources/GRCh38/sinks.bed
-# anchors.json       python example/1000G/pilot/evaluate_pilot.py --write-anchors   (needs cross-chemistry replicate pairs)
+# anchors.json       NGS-DOSE-1000G: python pilot/evaluate_pilot.py --write-anchors   (needs cross-chemistry replicate pairs)
 # efficiencies.json  ngsdose cohort estimates/*.json.gz --save-efficiencies resources/GRCh38/efficiencies.json
 echo "bundle written to $OUT"

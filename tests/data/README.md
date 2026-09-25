@@ -10,3 +10,5 @@ regions or sinks change). 1000 Genomes data are open access (https://www.interna
 
 It lets CI run the real engine and estimator on real reads and assert the method's own claims:
 known-copy-number sequence comes out at its known copy number (`tests/test_real_data.py`).
+
+`ngspca_1000G.singularvalues.txt`: the 200 singular values NGS-PCA kept of its 1000 Genomes run (the PCs and bins themselves are in NGS-DOSE-1000G/meta/ngspca); the Marchenko-Pastur edge test reads them.

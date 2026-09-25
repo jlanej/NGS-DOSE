@@ -46,8 +46,8 @@ the assumptions were tested on 1000 Genomes 30× CRAMs (NYGC; TruSeq PCR-free, N
 bwa-mem 0.7.15 to the GRCh38 analysis set). Most of them did not survive, and one bug was only
 found because the rewrite is tested against simulated truth. Findings 1-5 were measured on
 NA12878 unless stated; finding 6 on the twelve-sample pilot
-([report](../example/1000G/pilot/pilot_report.md), reproducible with
-[`run_pilot.sh`](../example/1000G/pilot/run_pilot.sh)).
+([report](https://github.com/jlanej/NGS-DOSE-1000G/blob/main/pilot/pilot_report.md), reproducible with
+[`run_pilot.sh`](https://github.com/jlanej/NGS-DOSE-1000G/blob/main/pilot/run_pilot.sh); both in NGS-DOSE-1000G).
 
 **Finding 1 — the duplicate flag is not neutral.** MarkDuplicates keys on the mapped position of
 both mates. Inside the collapsed rDNA, mates of true duplicates scatter across paralogs and
@@ -58,7 +58,7 @@ a factor (1 − d_rDNA)/(1 − d_ctrl) that is specific to the library (duplicat
 cohort run from 6% to 11%). Applying that factor to our uncorrected 18S estimate reproduces the
 published value for the same CRAM (Hall et al. 2021: 301; ours 276.5 × 1.057 = 292), and
 accounts for five of the eight percentage points by which their values exceed ours across the
-shared pilot samples ([pilot report](../example/1000G/pilot/pilot_report.md) §4).
+shared pilot samples ([pilot report](https://github.com/jlanej/NGS-DOSE-1000G/blob/main/pilot/pilot_report.md) §4).
 *Decision: count every primary read in numerator and denominator alike, and compute the
 denominator in the same pass under the same rules.* NGS-PCA's median remains a cross-check
 (32.74 dup-excluded against our 37.38 dup-included for NA12878, the expected ratio).
@@ -295,7 +295,7 @@ them (`ngsdose sinks --classes TEL`) and fetch mode measures the class when its 
   their HSat2 arrays (17 and 9 Mb of gap-containing arrays beside 44 and 30 Mb of spanned ones),
   and the estimates — 1.52 and 1.73 of the spanned arrays, 1.09 and 1.33 with the gapped ones
   counted at their annotated size — sit where a truth that is a lower bound leaves them. An
-  assembly is a truth only for the arrays it spans; `example/1000G/hprc_satellites.py` keeps the
+  assembly is a truth only for the arrays it spans; NGS-DOSE-1000G's `pipeline/hprc_satellites.py` keeps the
   two apart and leaves a sample out of a class's comparison when gap-containing arrays are more
   than 2% of what is annotated. SST1 and SATR are annotated
   several times more generously in the HPRC assemblies than in CHM13, so their absolute ratios
@@ -509,7 +509,7 @@ inflated by error shared within a family — a trio libraried together — and t
 correlation after population centring is the direct test for that, since spouses share no
 dosage by descent. Trios bound reliability from above; technical replicates measure it. Run per
 estimator, the table answers which estimator to use: the uncorrected 18S ratio, `cn_anchor`, the
-calibrated `cn`, each before and after coverage-PC adjustment (`example/1000G/02_cohort.sh`).
+calibrated `cn`, each before and after coverage-PC adjustment (NGS-DOSE-1000G's `pipeline/02_cohort.sh`).
 Confidence intervals come from resampling families, which carries the uncertainty of ρ into R;
 with 602 simulated trios the 95% interval is about ±0.09. That is too wide to rank estimators
 whose reliabilities differ by a few hundredths, but two estimators of the same quantity are
@@ -560,7 +560,7 @@ Apple M1 Max, NA12878 (15.8 GB CRAM, 758 M primary reads), bundle GRCh38-v1:
 
 In fetch mode the 3,202-sample cohort is therefore about 55 hours of single-stream time and never
 needs a CRAM on disk; scanned whole from staged CRAMs it is about 750 CPU-hours and 48 TB of
-transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak memory is 0.6 GB
+transfer, a few files at a time (NGS-DOSE-1000G's `pipeline/01_stage_and_dose.sh`). Peak memory is 0.6 GB
 (fetch) and 1.3 GB (scan) at 8 threads.
 
 ## 12. What it does not do, and known limits
@@ -568,7 +568,7 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
 - **Absolute scale of rDNA** rests on the anchors: windows on which three Illumina chemistries
   agree after their own GC corrections. That is evidence, not proof, of being unbiased. The one
   orthogonal check so far is ddPCR on twelve lymphoblastoid lines (Potapova et al. 2025; the
-  results repository's `assembly_rdna` study, `ngsdose report --ddpcr`): NGS-DOSE reads about
+  results repository's `assembly_rdna` study, `python -m report --ddpcr` in NGS-DOSE-1000G): NGS-DOSE reads about
   0.97× the assay. Relative dosage within a library type does not depend on it.
 - **A new chemistry** (DNBSEQ, Element, Ultima, a future Illumina) has unknown dropout zones.
   Window efficiencies must be re-learned on it, and its absolute level is provisional until it
@@ -598,7 +598,7 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
 
 ## 13. What comes next
 
-1. All 3,202 samples of the 1000 Genomes 30× cohort (`example/1000G`) **scanned whole**, from
+1. All 3,202 samples of the 1000 Genomes 30× cohort (NGS-DOSE-1000G's `pipeline/`) **scanned whole**, from
    staged CRAMs, with the satellite panel loaded — and fetched as well, three seconds more on a
    local file (`01b_dose_sample.sh`). The scan is the full-accuracy mode and the reference for
    everything cheaper: placement-independent counts, the satellite families against an assembly
@@ -634,11 +634,11 @@ transfer, a few files at a time (`example/1000G/01_stage_and_dose.sh`). Peak mem
    - *The S-phase hypothesis.* If late-replicating sequence is under-represented in DNA from
      cycling cultures, DJ, female X and the leading control PC should move together across the
      cohort, and adjustment should tighten DJ around 10.
-   - *The running record.* `ngsdose report` turns whatever counts exist into one page — what is
+   - *The running record.* NGS-DOSE-1000G's `python -m report` turns whatever counts exist into one page — what is
      measured and why, and the evidence that it works: the known truths in every sample, fetch
      against scan, the trios, the cell-line covariates, the satellites against assemblies, the
      coverage PCs and their sweep — with every number recomputed from the counts files and
-     every table beside it. It is published as the run proceeds (`example/1000G/05_report.sh`;
+     every table beside it. It is published as the run proceeds (NGS-DOSE-1000G's `pipeline/05_report.sh`;
      the results repository's GitHub Pages), partial results and flags included, so that what
      the cohort shows is on record at every stage and not only at the end.
    - *Culture or error?* Whether a child's departure from the midparent tracks the EBV load,
@@ -674,7 +674,7 @@ et al. 2022); in 156 acrocentric short arms assembled from HiFi, ultra-long nano
 data the array collapsed in every one (Lin et al., *Cell* 2026); per-array size and activity have
 been measured in fifteen genomes with long reads and imaging (Potapova et al., *Cell Genomics*
 2025). The HPRC release-2 assemblies of cohort members hold about a third of the rDNA their
-measured copy number implies, in pieces of at most about a megabase (`ngsdose report --censat`,
+measured copy number implies, in pieces of at most about a megabase (`python -m report --censat`,
 `data/rdna_hprc.tsv`). The cohort page's section 1 sets this out with the references.
 
 What is specific to NGS-DOSE: placement-independent read assignment with learned sinks, so that

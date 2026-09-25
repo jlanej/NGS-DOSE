@@ -74,14 +74,13 @@ jobs:
       # defects only (undefined and unused names, syntax, bugbear); configured in pyproject.toml
       - name: Python - lints
         if: matrix.lint
-        run: ruff check ngsdose tests example resources/build
+        run: ruff check ngsdose tests resources/build
 
       # data-free simulation of the estimator, cohort calibration and trio statistics
       - name: Model self-test
         run: ngsdose selftest
 
       # unit tests, the simulated-genome end-to-end test (engine + estimator against known truth),
-      # real 1000 Genomes reads, a mock trio cohort through the cohort layer, and the regression
-      # tests on the pilot's counts
+      # real 1000 Genomes reads, and a mock trio cohort through the cohort layer
       - name: pytest
         run: pytest -v

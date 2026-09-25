@@ -42,8 +42,8 @@ def test_pure_noise_has_no_components():
 def test_the_count_on_the_1000_genomes_spectrum_does_not_depend_on_how_much_of_it_was_kept():
     """NGS-PCA keeps the top 200 singular values of 3,200. The textbook fit of the law to that tail
     gives 59, 66 and 80 components for the top 100, 150 and 200; the edge fit must not wander so."""
-    sv = np.array([float(line.split()[1]) for line in open(ROOT / "example/1000G/ngspca/svd.singularvalues.txt").read().splitlines()[1:]])
-    n_bins = sum(1 for _ in open(ROOT / "example/1000G/ngspca/svd.bins.txt"))
+    sv = np.array([float(line.split()[1]) for line in open(ROOT / "tests/data/ngspca_1000G.singularvalues.txt").read().splitlines()[1:]])
+    n_bins = 142_070                       # the bins of NGS-PCA's 1000 Genomes run (svd.bins.txt, kept in NGS-DOSE-1000G/meta/ngspca)
     counts = [pcselect.mp_select(sv[:k], 3200, n_bins).n_pc for k in (100, 120, 150, 200)]
     assert counts == [38, 40, 40, 40], counts
     bare = [pcselect.mp_select(sv[:k], 3200, n_bins, margin=0).n_pc for k in (100, 120, 150, 200)]

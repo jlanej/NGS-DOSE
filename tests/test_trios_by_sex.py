@@ -65,11 +65,3 @@ def test_a_batch_that_rescales_the_children_moves_the_slope_but_not_the_rescaled
     assert abs(t["reliability_rescaled"] - 1.0) < 0.05
     identity = t["reliability_midparent"] + 1 + t["spousal_r"] / 2 - t["sd_ratio"] ** 2
     assert abs(t["reliability_mendel"] - identity) < 0.03
-
-
-def test_the_batch_of_each_generation_is_counted():
-    from ngsdose.report import trio_batches
-    from ngsdose.trios import Trio
-    rows = [dict(sample=s, **{"ngspca.batch": b}) for s, b in (("C1", "698"), ("F1", "2504"), ("M1", "2504"), ("C2", "698"), ("F2", "698"), ("M2", "2504"))]
-    b = trio_batches(rows, [Trio("C1", "F1", "M1"), Trio("C2", "F2", "M2"), Trio("C3", "F1", "M1")])
-    assert b == dict(n=2, child={"698": 2}, parent={"2504": 3, "698": 1}, shared=1)
