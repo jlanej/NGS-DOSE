@@ -28,16 +28,14 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      # Cargo.toml and ngsdose/__init__.py (pyproject.toml reads the package version from there), and the tag
       - name: One version everywhere
         id: v
         run: |
-          cargo_v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          py_v=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
-          [ "$cargo_v" = "$py_v" ] || { echo "::error::Cargo.toml says $cargo_v, pyproject.toml says $py_v"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$cargo_v" ]; then
-            echo "::error::tag $GITHUB_REF_NAME, but the sources say $cargo_v: bump Cargo.toml (and Cargo.lock) and pyproject.toml first"; exit 1
-          fi
-          echo "version=$cargo_v" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          tag=""; if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          v=$(bash .github/scripts/check_version.sh "$tag")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
   engine-linux:
     needs: version
@@ -110,6 +108,8 @@ jobs:
       # the release as a user meets it: unpacked engine, installed wheel, unpacked resources, nothing from the checkout
       - name: Install from the artifacts alone and run them together
         run: |
+          set -euo pipefail
+          check=$PWD/.github/scripts/smoke_check.py
           work=$(mktemp -d); cp tests/data/NA12878.subsample.bam* "$work"/
           tar xzf engine/ngs-dose-*-linux-x86_64.tar.gz -C "$work" --strip-components 1
           tar xzf dist/ngs-dose-resources-*.tar.gz -C "$work"
@@ -119,7 +119,8 @@ jobs:
           ./ngs-dose count -m fetch -i NA12878.subsample.bam -p $R/panel.k31.tsv.gz -c $R/controls.fa.gz --sinks $R/sinks.bed -o counts.json.gz
           venv/bin/ngsdose selftest
           venv/bin/ngsdose estimate counts.json.gz -t estimate.tsv
-          cut -f1-3 estimate.tsv
+          # the copy numbers the fixture is known to give, from the engine of this commit
+          python3 "$check" --engine "${{ needs.version.outputs.version }}+${GITHUB_SHA::7}" < estimate.tsv
       - uses: actions/upload-artifact@v4
         with:
           name: python-and-resources
