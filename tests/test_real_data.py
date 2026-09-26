@@ -43,12 +43,19 @@ def result(counts):
                                     region_tables=estimate.control_region_tables(BUNDLE.controls, L))
 
 
+# what a fetch is expected to differ in from a scan of the same file: how it was run and how much of
+# the file it read. Everything else - every class, control region, GC table and placement - must agree.
+SCAN_FETCH_DIFFER = {"mode", "sinks", "sinks_sha256", "sinks_skipped", "pad", "records", "primary", "primary_dup_flagged",
+                     "unmapped", "contigs", "elapsed_sec"}
+
+
 def test_fetch_retrieves_what_scan_finds(counts):
     s, f = counts["scan"], counts["fetch"]
     assert s["sample"] == f["sample"] == "NA12878"
-    assert s["gc_tables"] == f["gc_tables"]
-    for a, b in zip(s["classes"], f["classes"]):
-        assert a["fwd"] == b["fwd"] and a["rev"] == b["rev"], a["name"]
+    same = lambda d: {k: v for k, v in d.items() if k not in SCAN_FETCH_DIFFER}
+    assert same(s) == same(f), sorted(k for k in set(same(s)) | set(same(f)) if s.get(k) != f.get(k))
+    assert [(c["name"], c["len"]) for c in s["contigs"]] == [(c["name"], c["len"]) for c in f["contigs"]]
+    assert "sinks_skipped" not in f                     # every sink contig is in the fixture's header
 
 
 def test_library_properties(counts, result):
@@ -135,6 +142,11 @@ def test_counts_do_not_depend_on_threads_or_on_co_loaded_panels(tmp_path):
     assert len(with_sat) == 13 and len(out["sat"]["panel_sha256"]) == 2
     assert sorted(out["sat"]["sinks_missing_classes"]) == sorted(n for n in with_sat if n not in {c["name"] for c in out["t4"]["classes"]})   # the ten families, recorded
     assert "sinks_missing_classes" not in out["t4"]
+    # and the estimate does not turn what a sinkless fetch happened to catch into a mass
+    res = estimate.estimate_sample(out["sat"], io.load_panel(BUNDLE.panel), BUNDLE.units())
+    for n in out["sat"]["sinks_missing_classes"]:
+        assert res["classes"][n]["status"] == "no_sinks_in_fetch" and np.isnan(res["classes"][n]["mass_Mb"]), n
+    assert all(res["classes"][n]["status"] == "ok" and res["classes"][n]["cn"] > 0 for n in ("rDNA45S", "rDNA5S", "DJ"))
     # and a whole-file scan with every panel loaded - classes, placements with their census, contig tallies -
     # is the same file whatever the number of threads
     exp = ROOT / "resources" / "experimental"
@@ -279,9 +291,17 @@ def test_counts_made_before_a_truth_set_existed_are_still_usable(counts):
     with pytest.raises(ValueError, match="different controls file"):
         estimate.estimate_sample(fewer_controls, *args, region_tables=tables, regions=regions)
     renamed = copy.deepcopy(counts["fetch"])
-    renamed["regions"][-1]["name"] = "chrEBV:1-2"
+    renamed["regions"][0]["name"] = "chr1:1-2"                               # a control the bundle does not have
     with pytest.raises(ValueError, match="different controls file"):
         estimate.estimate_sample(renamed, *args, region_tables=tables, regions=regions)
+    # a dosage or truth region the bundle has since retired or renamed is left out, not refused
+    retired = copy.deepcopy(counts["fetch"])
+    assert retired["regions"][-1]["label"] == "chrEBV"
+    retired["regions"][-1]["name"] = "chrEBV:1-2"
+    res = estimate.estimate_sample(retired, *args, region_tables=tables, regions=regions)
+    assert "chrEBV" not in res["truth_regions"] and res["regions_not_in_bundle"] == ["chrEBV:1-2"]
+    assert res["classes"]["rDNA45S"]["cn"] == full["classes"]["rDNA45S"]["cn"]
+    assert res["control_qc"] == full["control_qc"] and len(retired["regions"]) == len(counts["fetch"]["regions"])
 
 
 def test_placements_carry_a_census_of_every_read_in_their_bin(counts):

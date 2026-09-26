@@ -9,7 +9,8 @@ observed at those position-strands. The rate
 is what a multi-copy class is compared against: a class present in C copies per diploid genome
 yields C/2 * lambda(g(p)) ends at unit position p. Benjamini & Speed (NAR 2012) showed that the
 GC of the whole fragment, not of the read, is what predicts Illumina coverage; this repository
-re-derived that on 1000 Genomes 30x data (docs/DESIGN.md, section 4).
+re-derived that on 1000 Genomes 30x data (docs/DESIGN.md, section 2, finding 2; the model itself
+is described in section 6).
 
 The curve is a Poisson regression of O on a natural cubic spline in g with offset log N.
 """
@@ -59,17 +60,45 @@ class GCCurve:
         return self.rate[b] * self.rescale
 
 
+def _dropout(N, O, use, k: int = 3, limit: float = 50.0):
+    """The first run of fitted GC bins with no fragment end whose expected ends exceed `limit`,
+    as (first bin, last bin, expected ends), or None. Expected ends are the run's positions times
+    the pooled rate of the `k` nearest fitted bins with ends on each side. The neighbours overstate
+    it where the rate falls steeply at the edge of the support, hence the wide margin: thinned
+    1000 Genomes controls (0.1-1.5x) reach at most about 12 in bins that simply got no end."""
+    idx = np.where(use)[0]
+    held = idx[O[idx] > 0]
+    i = 0
+    while i < len(idx):
+        if O[idx[i]] > 0:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(idx) and O[idx[j + 1]] == 0:
+            j += 1
+        a, b = idx[i], idx[j]
+        near = np.r_[held[held < a][-k:], held[held > b][:k]]
+        if len(near):
+            expect = N[a:b + 1][use[a:b + 1]].sum() * O[near].sum() / N[near].sum()
+            if expect > limit:
+                return int(a), int(b), float(expect)
+        i = j + 1
+    return None
+
+
 def fit_gc_curve(N, O, L: int, knot_step: float = 0.05, max_se: float = float("inf"), min_positions: int = 2000) -> GCCurve:
     """Fit lambda(g).
 
-    The supported GC range is set by the control *positions* (at least `min_positions` per 1%
-    bin), not by how many reads fell on them, so that the set of usable class windows is the
-    same at every depth. A support that narrows with depth silently changes which windows an
-    estimate averages over: with the original rule (log lambda known to 5%) the all-window 45S
-    estimate of one sample rose by 2.4% at 1x and 6.5% at 0.4x as its GC-rich, low-efficiency
-    windows dropped out. How well the curve is determined is reported instead (`se_log`; the
-    estimate carries its maximum over the support as `gc_curve_max_se`); `max_se` can still be
-    set to trim the support by precision when that is wanted."""
+    The supported GC range is set by the control *positions*, not by how many reads fell on them:
+    it runs from the lowest to the highest 1% bin with at least `min_positions` control
+    position-strands (bins inside it with fewer are left out of the fit and take the spline's
+    interpolated value), so that the set of usable class windows is the same at every depth. A
+    support that narrows with depth silently changes which windows an estimate averages over:
+    with the original rule (log lambda known to 5%) the all-window 45S estimate of one sample
+    rose by 2.4% at 1x and 6.5% at 0.4x as its GC-rich, low-efficiency windows dropped out. How
+    well the curve is determined is reported instead (`se_log`; the estimate carries its maximum
+    over the support as `gc_curve_max_se`); `max_se` can still be set to trim the support by
+    precision when that is wanted."""
     N = np.asarray(N, float)
     O = np.asarray(O, float)
     if N.shape != (GC_BINS,) or O.shape != (GC_BINS,):
@@ -79,25 +108,63 @@ def fit_gc_curve(N, O, L: int, knot_step: float = 0.05, max_se: float = float("i
     g = np.arange(GC_BINS) / 100.0
     use = N >= min_positions
     idx = np.where(use)[0]
+    if not len(idx):
+        raise ValueError(f"no 1% GC bin holds {min_positions} control position-strands (the largest holds {int(N.max())}): "
+                         "the controls are too small to fit a GC curve")
     lo, hi = idx.min(), idx.max()
     use &= (np.arange(GC_BINS) >= lo) & (np.arange(GC_BINS) <= hi)
     knots = np.arange(np.ceil(g[lo] / knot_step) * knot_step, g[hi] + 1e-9, knot_step)
     knots = np.unique(np.r_[g[lo], knots, g[hi]])
     if len(knots) < 4:
         raise ValueError("control GC range too narrow for a spline fit")
+    gap = _dropout(N, O, use)
+    if gap is not None:
+        a, b, expect = gap
+        where = f"GC bin {a}% holds" if a == b else f"GC bins {a}-{b}% hold"
+        raise ValueError(f"GC curve fit at L={L}: the {where} control positions but no fragment end, where "
+                         f"their neighbours give about {expect:.0f} (complete GC dropout): the curve cannot be fitted there")
     B = _ncs_basis(g, knots)
     Bu, Nu, Ou = B[use], N[use], O[use]
     beta = np.zeros(B.shape[1])
     beta[0] = np.log(Ou.sum() / Nu.sum())
     ridge = 1e-8 * np.eye(B.shape[1])
+    # the linear predictor is clipped so that a bin with no ends at all (complete GC dropout) cannot
+    # drive the rate to zero and the Hessian singular
+    mean = lambda b: Nu * np.exp(np.clip(Bu @ b, -30.0, 30.0))
+    dev = lambda m: 2.0 * np.sum(np.where(Ou > 0, Ou * np.log(np.maximum(Ou, 1e-300) / m), 0.0) - (Ou - m))
+    mu = mean(beta)
+    d = dev(mu)
+    converged = False
     for _ in range(100):
-        mu = Nu * np.exp(Bu @ beta)
         H = Bu.T @ (Bu * mu[:, None]) + ridge
-        step = np.linalg.solve(H, Bu.T @ (Ou - mu))
-        beta += step
+        try:
+            step = np.linalg.solve(H, Bu.T @ (Ou - mu))
+        except np.linalg.LinAlgError as e:
+            raise ValueError(f"GC curve fit failed at L={L} ({e})") from e
+        # Newton steps are halved while they increase the Poisson deviance (by more than rounding:
+        # near the optimum the steps are noise of about 1e-9 and the deviance moves by 1e-10)
+        for _ in range(30):
+            mu_new = mean(beta + step)
+            d_new = dev(mu_new)
+            if d_new <= d + 1e-8 * max(d, 1.0):
+                break
+            step = step / 2
+        beta = beta + step
+        mu, d = mu_new, d_new
         if np.max(np.abs(step)) < 1e-10:
+            converged = True
             break
-    mu = Nu * np.exp(Bu @ beta)
+    # Near the optimum the coefficients can wander along a flat direction (rounding noise at 30x)
+    # while the fitted rates stay put: that is a fit. A bin with no ends lets its rate slide toward
+    # zero for ever, so the test is on the bins that hold ends: rates still moving by 1% an
+    # iteration after 100 are not a fit (bins with no ends at all were checked above).
+    if not np.all(np.isfinite(beta)):
+        raise ValueError(f"GC curve fit failed at L={L}: non-finite coefficients")
+    held = Ou > 0
+    moving = float(np.max(np.abs(Bu[held] @ step)))
+    if not converged and moving > 0.01:
+        raise ValueError(f"GC curve fit did not converge at L={L} (deviance {d:.4g}, fitted log rates still moving by {moving:.3g})")
+    mu = mean(beta)
     df = max(1, use.sum() - B.shape[1])
     dispersion = float(np.sum((Ou - mu) ** 2 / np.maximum(mu, 1e-9)) / df)
     cov = np.linalg.inv(Bu.T @ (Bu * mu[:, None]) + ridge) * max(dispersion, 1.0)
@@ -130,9 +197,9 @@ def window_gc_counts(seq: str, L: int, circular: bool) -> tuple[np.ndarray, np.n
     U = len(seq)
     a = np.frombuffer(seq.upper().encode(), dtype=np.uint8)
     if circular:
-        reps = 2 + L // U
-        a = np.tile(a, reps + 1)
-        off = U * (1 + L // U)
+        c = -(-L // U)                  # copies on each side, enough for a window longer than the unit
+        a = np.tile(a, 2 * c + 1)
+        off = U * c
     else:
         off = 0
     isgc = (a == 71) | (a == 67)

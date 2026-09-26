@@ -36,9 +36,15 @@ populations with different means measures ancestry, not transmission.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+import warnings
+from dataclasses import dataclass, replace
 
 import numpy as np
+
+
+class PedigreeWarning(UserWarning):
+    """A pedigree row that could not be read, or trios whose values could not be centred within population."""
 
 
 @dataclass
@@ -50,10 +56,12 @@ class Trio:
 
 
 MISSING_PARENT = ("0", "-9", "NA", ".", "")
-_CHILD_NAMES = ("sampleid", "iid", "sample", "child", "kid", "proband")
-_FATHER_NAMES = ("fatherid", "pat", "father", "dad", "paternal_id")
-_MOTHER_NAMES = ("motherid", "mat", "mother", "mom", "maternal_id")
+MISSING_POPULATION = ("", ".", "NA", "na", "-9")
+_CHILD_NAMES = ("sampleid", "iid", "sample", "child", "kid", "proband", "individualid", "samplename")
+_FATHER_NAMES = ("fatherid", "pat", "father", "dad", "paternalid")
+_MOTHER_NAMES = ("motherid", "mat", "mother", "mom", "maternalid")
 _POP_NAMES = ("population", "pop")
+_norm = lambda x: re.sub(r"[\s_.-]", "", x.lower())      # 'Individual ID', 'paternal_id' -> 'individualid', 'paternalid'
 
 
 def pedigree_layout(first: list[str]) -> tuple[int, int, int, int | None, bool]:
@@ -61,9 +69,11 @@ def pedigree_layout(first: list[str]) -> tuple[int, int, int, int | None, bool]:
 
     Three layouts are read: the 1000 Genomes one (FamilyID SampleID FatherID MotherID Sex Population ...),
     PLINK PED/FAM (FID IID PAT MAT SEX PHENOTYPE: the sixth column is a phenotype code, not a population),
-    and a trios table (child father mother [population]). A header names the columns; without one the
-    layout is told from the number of columns and whether the sixth is a phenotype code."""
-    low = [x.lower() for x in first]
+    and a trios table (child father mother [population]). A header names the columns (case, spaces and
+    underscores aside); without one the layout is told from the number of columns, and a population is read
+    only from the fourth column of a four-column table: the sixth column of a headerless file is never taken
+    for one, since in PLINK it holds a phenotype (-9, 0, 1, 2, NA or a quantitative value)."""
+    low = [_norm(x) for x in first]
     if any(x in _CHILD_NAMES for x in low):
         col = lambda names: next((i for i, x in enumerate(low) if x in names), None)
         c, f, m = col(_CHILD_NAMES), col(_FATHER_NAMES), col(_MOTHER_NAMES)
@@ -74,40 +84,143 @@ def pedigree_layout(first: list[str]) -> tuple[int, int, int, int | None, bool]:
         return 0, 1, 2, None, False
     if len(first) == 4 and first[3] not in ("1", "2", "0"):
         return 0, 1, 2, 3, False
-    if len(first) >= 6 and first[5] in ("-9", "0", "1", "2"):
-        return 1, 2, 3, None, False                        # PLINK: phenotype, not population
-    return 1, 2, 3, (5 if len(first) > 5 else None), False
+    return 1, 2, 3, None, False                            # PLINK, or the 1000 Genomes layout without its header
 
 
-def load_pedigree(path) -> tuple[list[Trio], dict[str, str]]:
+def _split(line: str, by_tab: bool) -> list[str]:
+    return [x.strip() for x in line.rstrip("\r\n").split("\t")] if by_tab else line.split()
+
+
+def _header(line: str, groups) -> tuple[list[str], bool] | None:
+    """(fields, split on tabs) when `line` names a column of each of `groups`: split on whitespace, or on tabs
+    when the names hold spaces (the 1000 Genomes 20130606_g1k.ped: 'Family ID<TAB>Individual ID<TAB>...')."""
+    for by_tab in (False, True):
+        if by_tab and "\t" not in line:
+            break
+        fields = _split(line, by_tab)
+        low = [_norm(x) for x in fields]
+        if all(any(x in names for x in low) for names in groups):
+            return fields, by_tab
+    return None
+
+
+def load_population(path) -> dict[str, str]:
+    """sample -> population, or any grouping to centre within (clusters on ancestry PCs for a biobank), from a
+    file of sample and group. A header naming a sample column and a population column picks them from a wider
+    table (a 1000 Genomes pedigree, a .psam), and a header naming a sample column alone is an error; a file
+    without a header gives its first two columns. Other lines starting
+    with '#' are comments, and a label of NA, . or -9 is missing."""
+    with open(path) as fh:
+        raw = [line for line in fh if line.strip()]
+    names = _POP_NAMES + ("group", "cluster", "ancestry", "superpop", "superpopulation")    # in order of preference
+    h = _header(raw[0].lstrip("#"), (_CHILD_NAMES, names)) if raw else None
+    if raw and h is None and _header(raw[0].lstrip("#"), (_CHILD_NAMES,)) is not None:
+        # a header with a sample column but no group column (a .psam's '#IID SEX ...'): its second column is not a group
+        raise ValueError(f"{path}: the header names a sample column but no population/group column ({', '.join(names)})")
+    lines = [line for line in raw[1 if h else 0:] if not line.startswith("#")]
+    if h:
+        low = [_norm(x) for x in h[0]]
+        s, g = next(i for i, x in enumerate(low) if x in _CHILD_NAMES), next(low.index(n) for n in names if n in low)
+        by_tab = h[1]
+    else:
+        s, g, by_tab = 0, 1, False
+    out = {}
+    for line in lines:
+        p = _split(line, by_tab)
+        if len(p) > max(s, g) and p[g] not in MISSING_POPULATION:
+            out[p[s]] = p[g]
+    return out
+
+
+def load_pedigree(path, population=None) -> tuple[list[Trio], dict[str, str]]:
     """Complete trios and sample -> population from a pedigree file in any layout `pedigree_layout` reads
-    (whitespace-separated). A parent given as 0, -9, NA or . is absent; a population column is optional."""
+    (whitespace-separated, or tab-separated under a header whose names hold spaces). A parent given as 0, -9,
+    NA or . is absent; a population column is optional, and the dict holds only the samples with a label, so
+    it is empty for a file without one. `population` (a dict, or a file for `load_population`) gives labels
+    that replace the pedigree's for the samples it names. Rows too short for the layout are skipped with a
+    PedigreeWarning."""
     trios, pop = [], {}
     with open(path) as fh:
         raw = [line for line in fh if line.strip()]
-    lines = [line.split() for line in raw if not line.startswith("#")]
+    body = [line for line in raw if not line.startswith("#")]
+    head, by_tab = None, False
+    groups = (_CHILD_NAMES, _FATHER_NAMES, _MOTHER_NAMES)
     # a first line that starts with '#' is the header when it names the child, father and mother columns and
     # has the data's column count (PLINK's "#FID IID PAT MAT ...", a "#kid dad mom ..." table); every other
     # line starting with '#' is a comment
-    if raw and raw[0].startswith("#") and lines:
-        head = raw[0].lstrip("#").split()
-        low = [x.lower() for x in head]
-        if len(head) == len(lines[0]) and all(any(x in names for x in low) for names in (_CHILD_NAMES, _FATHER_NAMES, _MOTHER_NAMES)):
-            lines = [head] + lines
-    if not lines:
+    if raw and raw[0].startswith("#") and body:
+        h = _header(raw[0].lstrip("#"), groups)
+        if h and len(h[0]) == len(_split(body[0], h[1])):
+            head, by_tab = h
+    if head is None and body:
+        h = _header(body[0], groups)
+        if h:
+            (head, by_tab), body = h, body[1:]
+    rows = [_split(line, by_tab) for line in body]
+    if head is None and not rows:
         return trios, pop
-    c, f, m, g, header = pedigree_layout(lines[0])
-    for p in lines[1:] if header else lines:
+    if head is not None:
+        c, f, m, g, _ = pedigree_layout(head)
+    else:
+        pedigree_layout(rows[0])                            # a header that names a child but no parents is an error
+        # without a header the layout is guessed from the most common column count, not from the first row alone
+        counts = {}
+        for p in rows:
+            counts[len(p)] = counts.get(len(p), 0) + 1
+        n = max(counts, key=lambda k: (counts[k], -k))
+        c, f, m, g, _ = pedigree_layout(next(p for p in rows if len(p) == n))
+        if len(counts) > 1:
+            warnings.warn(f"{path}: no header, so the layout was taken from the {counts[n]} rows with {n} columns; "
+                          f"{len(rows) - counts[n]} rows have another column count", PedigreeWarning, stacklevel=2)
+    short = 0
+    for p in rows:
         if len(p) <= max(c, f, m):
+            short += 1
             continue
-        pop[p[c]] = p[g] if g is not None and len(p) > g else ""
+        label = p[g] if g is not None and len(p) > g and p[g] not in MISSING_POPULATION else ""
+        if label:
+            pop[p[c]] = label
         if p[f] not in MISSING_PARENT and p[m] not in MISSING_PARENT:
-            trios.append(Trio(p[c], p[f], p[m], pop[p[c]]))
+            trios.append(Trio(p[c], p[f], p[m], label))
+    if short:
+        warnings.warn(f"{path}: {short} rows with {max(c, f, m)} columns or fewer skipped", PedigreeWarning, stacklevel=2)
     for t in trios:                                        # a trios table names the parents only on the child's row
         for parent in (t.father, t.mother):
             if t.population and not pop.get(parent):
                 pop[parent] = t.population
+    if population is not None:
+        extra = population if isinstance(population, dict) else load_population(population)
+        pop.update({s: g for s, g in extra.items() if g not in MISSING_POPULATION})
+        trios = [replace(t, population=pop.get(t.child, "")) for t in trios]
     return trios, pop
+
+
+def families(trios: list[Trio]) -> list[list[int]]:
+    """Indices of `trios` grouped into families, in order of first appearance: trios that share anyone
+    (siblings, half-siblings, a child who is a parent in another trio) are one family."""
+    up = list(range(len(trios)))
+
+    def root(i):
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+    first = {}
+    for i, t in enumerate(trios):
+        for s in (t.child, t.father, t.mother):
+            a, b = root(i), root(first.setdefault(s, i))
+            if a != b:
+                up[max(a, b)] = min(a, b)
+    out = {}
+    for i in range(len(trios)):
+        out.setdefault(root(i), []).append(i)
+    return list(out.values())
+
+
+def _resample(fam: list[np.ndarray], rng) -> np.ndarray:
+    """Trio indices of one bootstrap draw of whole families (with one trio per family, a draw of trios)."""
+    k = rng.integers(0, len(fam), len(fam))
+    return np.concatenate([fam[j] for j in k])
 
 
 def _ols(x, y):
@@ -138,15 +251,24 @@ def centre_within(values: dict[str, float], group: dict[str, str], min_n: int = 
 
 def centre_within_sex(values: dict[str, float], population: dict[str, str], sex: dict[str, str], min_n: int = 5) -> dict[str, float]:
     """Subtract the mean of each sample's population and sex (of its sex alone where that group has fewer than
-    `min_n`), so that a difference between men and women is not read as transmission."""
+    `min_n`, and of everyone where the sex has fewer too), so that a difference between men and women is not
+    read as transmission."""
     by, by_sex = {}, {}
     for s, v in values.items():
         if np.isfinite(v):
             by.setdefault((population.get(s, ""), sex.get(s, "")), []).append(v)
             by_sex.setdefault(sex.get(s, ""), []).append(v)
+    if not by_sex:
+        return {}
     mean = {g: float(np.mean(vs)) for g, vs in by.items() if len(vs) >= min_n}
-    sex_mean = {g: float(np.mean(vs)) for g, vs in by_sex.items()}
-    return {s: v - mean.get((population.get(s, ""), sex.get(s, "")), sex_mean[sex.get(s, "")]) for s, v in values.items() if np.isfinite(v)}
+    sex_mean = {g: float(np.mean(vs)) for g, vs in by_sex.items() if len(vs) >= min_n}
+    grand = float(np.mean([v for vs in by_sex.values() for v in vs]))
+    return {s: v - mean.get((population.get(s, ""), sex.get(s, "")), sex_mean.get(sex.get(s, ""), grand)) for s, v in values.items() if np.isfinite(v)}
+
+
+def sex_code(x) -> str:
+    """'M', 'F' or '' (unknown) from M/F, male/female or PLINK's 1/2."""
+    return {"m": "M", "male": "M", "1": "M", "f": "F", "female": "F", "2": "F"}.get(str(x).strip().lower(), "")
 
 
 # parent -> child pairings by sex: (key, the parent, the child's sex)
@@ -170,7 +292,17 @@ def by_sex(values: dict[str, float], trios: list[Trio], population: dict[str, st
     autosomal quantity's should not: Cochran's Q on Fisher's z (each pairing weighted by n - 3) over the trios
     with all three values, referred to its distribution when the children's sexes are shuffled among the
     families and each family's parents swap roles at random (`p`). `p_normal` refers Q to chi-square with 3
-    degrees of freedom instead, which assumes normal values and is far too small for skewed ones."""
+    degrees of freedom instead, which assumes normal values and is far too small for skewed ones.
+
+    Sex is read as M/F, male/female or PLINK's 1/2; a parent without one takes its role's. A ValueError is
+    raised when trios are given but no child has a sex."""
+    sex = {s: sex_code(x) for s, x in sex.items()}
+    for t in trios:                                        # the role fixes a parent's sex where the pedigree gives none
+        for s, code in ((t.father, "M"), (t.mother, "F")):
+            if not sex.get(s):
+                sex[s] = code
+    if trios and not any(sex.get(t.child) for t in trios):
+        raise ValueError("no child has a sex (M/F or PLINK 1/2): transmission by sex needs the children's")
     v = centre_within_sex(values, population or {}, sex)
     out = {}
     for key, who, child_sex in PAIRS:
@@ -245,25 +377,59 @@ def _estimators(c, f, m) -> dict:
                 mean_ratio=float(np.mean(c)) / pm if pm > 0 else float("nan"))
 
 
+_UNCENTRED = ("values not centred within population: the trios' samples are not labelled with at least two populations "
+              "(of 5 or more samples), so a difference between populations can pass for transmission. Give the labels "
+              "(a population column, or a population file), or turn centring off for a cohort of one population")
+
+
+def _populations(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None, min_n: int = 5) -> tuple[int, bool]:
+    """(populations that centring separates: labels with `min_n` or more samples with a value, whether the lack
+    of them deserves a warning). No warning when centring was turned off (None) or when every trio's samples
+    carry one and the same label: one population has nothing to centre."""
+    if population is None:
+        return 0, False
+    n = {}
+    for s, v in values.items():
+        if np.isfinite(v) and population.get(s):
+            n[population[s]] = n.get(population[s], 0) + 1
+    k = sum(x >= min_n for x in n.values())
+    labels = {population.get(s, "") for x in trios for s in (x.child, x.father, x.mother) if s in values}
+    return k, k < 2 and not (len(labels) == 1 and "" not in labels)
+
+
 def transmission(values: dict[str, float], trios: list[Trio], population: dict[str, str] | None = None,
                  n_perm: int = 1000, seed: int = 1, n_boot: int = 1000) -> dict:
     """Reliability estimates from complete trios. `values` are on the natural scale.
 
-    Confidence intervals are percentile intervals from resampling families, which carries the
+    Confidence intervals are percentile intervals from resampling families: trios that share anyone
+    (`families`) are drawn together, so siblings do not count as independent. This carries the
     uncertainty of the spousal correlation into the corrected reliabilities (a slope's own
-    standard error does not)."""
+    standard error does not). `population_centred` says whether values were centred within two or
+    more populations. When they were not although `population` was given (a pedigree without
+    labels), a PedigreeWarning is issued; `warning` in the result notes that, and a spousal
+    correlation above 0.2 without centring."""
+    n_pop, warn = _populations(values, trios, population)
     if population:
         values = centre_within(values, population)
     t = [x for x in trios if all(s in values and np.isfinite(values[s]) for s in (x.child, x.father, x.mother))]
     n = len(t)
     if n < 3:
         raise ValueError(f"need at least 3 complete trios, got {n}")
+    fam = [np.array(g) for g in families(t)]
     c = np.array([values[x.child] for x in t])
     f = np.array([values[x.father] for x in t])
     m = np.array([values[x.mother] for x in t])
     mid = (f + m) / 2
-    out = dict(n_trios=n, **_estimators(c, f, m), parent_mean=float(np.mean(np.r_[f, m])),
-               child_minus_midparent_mean=float(np.mean(c - mid)))
+    out = dict(n_trios=n, n_families=len(fam), population_centred=n_pop >= 2, n_populations=n_pop, **_estimators(c, f, m),
+               parent_mean=float(np.mean(np.r_[f, m])), child_minus_midparent_mean=float(np.mean(c - mid)))
+    notes = [_UNCENTRED] if warn else []
+    if warn:
+        warnings.warn(_UNCENTRED, PedigreeWarning, stacklevel=2)
+    if n_pop < 2 and out["spousal_r"] > 0.2:
+        notes.append("spousal correlation above 0.2 without population centring: population structure, or error shared "
+                     "within families, inflates R")
+    if notes:
+        out["warning"] = "; ".join(notes)
     V = out["parent_sd"] ** 2
     out["error_cv"] = (float(np.sqrt(max(0.0, 1 - out["reliability_midparent"]) * V) / out["parent_mean"])
                        if np.isfinite(V) and np.isfinite(out["reliability_midparent"]) and out["parent_mean"] > 0 else float("nan"))
@@ -281,7 +447,7 @@ def transmission(values: dict[str, float], trios: list[Trio], population: dict[s
                 "reliability_rescaled", "sd_ratio", "mean_ratio")
         draws = {k: [] for k in keys}
         for _ in range(n_boot):
-            i = rng.integers(0, n, n)
+            i = _resample(fam, rng)
             e = _estimators(c[i], f[i], m[i])
             for k in keys:
                 draws[k].append(e[k])
@@ -295,33 +461,27 @@ def compare(values_a: dict[str, float], values_b: dict[str, float], trios: list[
     """Is estimator A more reliable than estimator B? Paired family bootstrap of R_A - R_B.
 
     Two estimators of the same quantity are strongly correlated, so their reliabilities can be
-    told apart far more finely than two separate confidence intervals suggest."""
+    told apart far more finely than two separate confidence intervals suggest. Only trios with finite
+    values under both are used, and whole families are resampled, as in `transmission`.
+    `p_a_better` is NaN when the difference or any bootstrap draw of it is (a constant column)."""
+    n_pop, warn = _populations(values_a, trios, population)
+    if warn:
+        warnings.warn(_UNCENTRED, PedigreeWarning, stacklevel=2)
     if population:
         values_a, values_b = centre_within(values_a, population), centre_within(values_b, population)
-    t = [x for x in trios if all(s in values_a and s in values_b for s in (x.child, x.father, x.mother))]
+    t = [x for x in trios if all(s in v and np.isfinite(v[s]) for v in (values_a, values_b) for s in (x.child, x.father, x.mother))]
     n = len(t)
     if n < 20:
         raise ValueError(f"need at least 20 complete trios for a paired bootstrap, got {n}")
+    fam = [np.array(g) for g in families(t)]
     arr = lambda v: tuple(np.array([v[getattr(x, who)] for x in t]) for who in ("child", "father", "mother"))
     (ca, fa, ma), (cb, fb, mb) = arr(values_a), arr(values_b)
     point = _estimators(ca, fa, ma)["reliability_midparent"] - _estimators(cb, fb, mb)["reliability_midparent"]
     rng = np.random.default_rng(seed)
     d = np.empty(n_boot)
     for j in range(n_boot):
-        i = rng.integers(0, n, n)
+        i = _resample(fam, rng)
         d[j] = _estimators(ca[i], fa[i], ma[i])["reliability_midparent"] - _estimators(cb[i], fb[i], mb[i])["reliability_midparent"]
-    return dict(n_trios=n, delta=float(point), ci95=(float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))),
-                p_a_better=float(np.mean(d > 0)))
-
-
-def mendelian_z(values: dict[str, float], se: dict[str, float], trios: list[Trio]) -> list[dict]:
-    """Per-trio departure of the child from the midparent, for outlier review. The segregation
-    variance is unknown per family, so this is a screen, not a test."""
-    rows = []
-    for x in trios:
-        if all(s in values for s in (x.child, x.father, x.mother)):
-            d = values[x.child] - (values[x.father] + values[x.mother]) / 2
-            e = np.sqrt(se.get(x.child, 0) ** 2 + (se.get(x.father, 0) ** 2 + se.get(x.mother, 0) ** 2) / 4)
-            rows.append(dict(child=x.child, father=x.father, mother=x.mother, delta=float(d), meas_se=float(e),
-                             within_parental_range=bool(d + (values[x.father] + values[x.mother]) / 2 <= values[x.father] + values[x.mother])))
-    return rows
+    p = float(np.mean(d > 0)) if np.isfinite(point) and np.isfinite(d).all() else float("nan")
+    return dict(n_trios=n, n_families=len(fam), population_centred=n_pop >= 2, delta=float(point),
+                ci95=(float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))), p_a_better=p)

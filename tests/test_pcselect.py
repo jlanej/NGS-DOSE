@@ -161,3 +161,26 @@ def test_a_truth_that_differs_between_samples_is_not_mistaken_for_error():
     P[:, 0] = np.log(truth) + rng.normal(0, 0.05, n)
     e_sex = np.array([r["sd_log_robust"] for r in pcselect.sweep(table, P, 5, {"truth.chrX": truth}, [])])
     assert np.all(np.abs(e_sex / e_sex[0] - 1) < 0.05), e_sex
+
+
+def test_recommend_survives_undefined_intervals_and_columns():
+    """A bootstrap interval is undefined when one resample has parents all alike (a mostly constant
+    column): the band is then 0 and the pick the best. A column undefined at every k is left out."""
+    rows = [dict(column="x", kind="class", n_pc=k, n=66, R_midparent=r, R_lo=np.nan, R_hi=np.nan) for k, r in enumerate((0.50, 0.53, 0.51))]
+    rows += [dict(column="y", kind="class", n_pc=k, n=66, R_midparent=np.nan) for k in range(3)]
+    rows += [dict(column="t", kind="truth", n_pc=k, n=66, sd_log_robust=np.nan) for k in range(3)]
+    rec = pcselect.recommend(rows)
+    assert set(rec) == {"x"} and rec["x"]["best"] == rec["x"]["pick"] == 1 and rec["x"]["se"] == 0.0
+
+
+def test_the_sweep_of_a_mostly_constant_column_gives_a_recommendation():
+    """22 trios, a copy number that is 2 in all but a few samples: the case that crashed `pcsweep`."""
+    trios = [Trio(f"c{i}", f"f{i}", f"m{i}") for i in range(22)]
+    samples = [s for t in trios for s in (t.child, t.father, t.mother)]
+    rng = np.random.default_rng(1)
+    P = rng.normal(size=(len(samples), 2))
+    p = rng.uniform(0.85, 0.99)
+    y = np.where(rng.random(len(samples)) < p, 2.0, 3.0)
+    rows = pcselect.sweep({"x": y}, P, 1, {}, ["x"], samples, trios, None, folds=5, n_boot=100, seed=1)
+    rec = pcselect.recommend(rows)
+    assert rec["x"]["pick"] in (0, 1) and np.isfinite(rec["x"]["se"])

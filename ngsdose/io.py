@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import gzip
+import io as _stdio
 import json
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,17 +12,37 @@ import numpy as np
 COUNTS_FORMAT = "ngs-dose-counts/1"
 
 
+class CountsError(ValueError):
+    """A counts file that cannot be read or is not a counts file; the message starts with its path."""
+
+
 def _open(path):
-    path = str(path)
-    return gzip.open(path, "rt") if path.endswith(".gz") else open(path)
+    """Text handle on a plain or gzip-compressed file, told apart by the gzip magic bytes, not the name.
+    The file is opened once and the magic bytes are peeked at, so a pipe or <(...) works too."""
+    fh = open(path, "rb")
+    try:
+        gz = fh.peek(2)[:2] == b"\x1f\x8b"
+    except BaseException:
+        fh.close()
+        raise
+    if not gz:
+        return _stdio.TextIOWrapper(fh)
+    g = gzip.GzipFile(fileobj=fh, mode="rb")
+    g.myfileobj = fh                                       # closing the handle closes the file, as gzip.open(path) does
+    return _stdio.TextIOWrapper(g)
 
 
 def load_counts(path) -> dict:
     """Load one per-sample counts file written by `ngs-dose count`."""
-    with _open(path) as fh:
-        d = json.load(fh)
-    if d.get("format") != COUNTS_FORMAT:
-        raise ValueError(f"{path}: not an {COUNTS_FORMAT} file (format={d.get('format')!r})")
+    try:
+        with _open(path) as fh:
+            d = json.load(fh)
+    except (OSError, EOFError, zlib.error, UnicodeDecodeError, json.JSONDecodeError) as e:
+        kind = "zlib.error, a damaged gzip stream" if isinstance(e, zlib.error) else type(e).__name__
+        raise CountsError(f"{path}: unreadable counts file ({kind}: {e})") from e
+    if not isinstance(d, dict) or d.get("format") != COUNTS_FORMAT:
+        got = d.get("format") if isinstance(d, dict) else type(d).__name__
+        raise CountsError(f"{path}: not an {COUNTS_FORMAT} file (format={got!r})")
     return d
 
 
@@ -69,6 +91,8 @@ def load_panel(path) -> Panel:
                 pos[int(p[1])].append(int(p[2]))
     classes = {}
     for i, kv in defs.items():
+        if kv["name"] in classes:
+            raise ValueError(f"{path}: class name {kv['name']!r} is defined twice")
         classes[kv["name"]] = PanelClass(kv["name"], kv["kind"], int(kv["length"]), kv["circular"] == "1",
                                          np.array(sorted(pos[i]), dtype=np.int64))
     return Panel(k, classes)

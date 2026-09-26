@@ -3,7 +3,9 @@ passes half of each parent's deviation to every child; a Y-linked one all of the
 none to his daughters, whatever the difference in level between men and women."""
 import numpy as np
 
-from ngsdose.trios import Trio, by_sex
+import pytest
+
+from ngsdose.trios import Trio, by_sex, centre_within_sex
 
 
 def _families(n=400, seed=7):
@@ -65,3 +67,18 @@ def test_a_batch_that_rescales_the_children_moves_the_slope_but_not_the_rescaled
     assert abs(t["reliability_rescaled"] - 1.0) < 0.05
     identity = t["reliability_midparent"] + 1 + t["spousal_r"] / 2 - t["sd_ratio"] ** 2
     assert abs(t["reliability_mendel"] - identity) < 0.03
+
+
+def test_plink_sex_codes_and_parents_without_a_sex():
+    """PLINK's 1/2 read as M/F, and a parent the pedigree gives no sex takes its role's; a sample alone in its
+    sex group is centred on everyone, not on itself (which would make it exactly 0)."""
+    trios, sex, pop, auto, _ = _families()
+    want = by_sex(auto, trios, pop, sex, n_perm=50)
+    plink = {s: {"M": "1", "F": "2"}[x] for s, x in sex.items()}
+    assert by_sex(auto, trios, pop, plink, n_perm=50) == want
+    no_parents = {t.child: sex[t.child] for t in trios}
+    assert by_sex(auto, trios, pop, no_parents, n_perm=50) == want
+    with pytest.raises(ValueError, match="no child has a sex"):
+        by_sex(auto, trios, pop, {})
+    v = centre_within_sex({"x": 5, "y": 7, "z": 9, "u": 42}, {}, {"x": "M", "y": "M", "z": "M"}, min_n=3)
+    assert v["y"] == 0 and v["u"] == 42 - 63 / 4
