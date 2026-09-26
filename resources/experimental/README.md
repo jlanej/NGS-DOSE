@@ -1,12 +1,29 @@
 # Experimental resources: dispersed sequence
 
 A positional class (rDNA, the distal junction) has a unit, its reads land in a few places, and a
-targeted fetch finds them. The satellite families have neither property: they are spread over
-centromere models, decoys and everything else in an alignment, so **only a whole-file scan
-measures them** — which is why a cohort that is scanned once should be scanned with these loaded
-(NGS-DOSE-1000G's pipeline does; `EXTRA_PANELS` in its `config.sh`). The telomeric repeat is the exception:
-the aligner concentrates its reads at the chromosome ends, the bundle's `sinks.bed` carries the
-intervals, and a fetch with `-p telomere.k31.panel.tsv.gz` measures it (`FETCH_PANELS`).
+targeted fetch finds them. The satellite families have no unit, and their reads are spread over
+centromere models, decoys and hundreds of other contigs (about 82 Mb of intervals for the ten
+families together), but within one pipeline those places are stable. In the NYGC bwa-mem alignments
+to the GRCh38 analysis set, sinks learned from 30 cohort scans
+(`ngsdose sinks --classes HSat1A HSat1B ...`) held at least 99.8% of `HSat1A`, `HSat2`, `HSat3`,
+`aSatHOR`, `bSat`, `ACRO`, `SST1`, `CER` and `SATR` in every one of 200 other genomes (≥ 99.85% in
+two of three random draws of the 30 and the 200), in 0.2–3.5 Mb of intervals per family and 59.6 Mb (the centromere
+models) for `aSatHOR`. `HSat1B` is the exception: about half of its reads sit on hs38d1 decoys, up
+to 3% are fully unmapped, and its 12–13 Mb of sinks held only 96.6% of it in the worst genome
+(median 98.8%; 96.8% and 98.8% in a second draw). Sinks depend on the aligner and the reference
+(under DRAGEN 4.x with an alt-masked reference, 64–90% of the `HSat1A`, `HSat1B`, `bSat`, `ACRO` and
+telomeric reads of the one genome checked were fully unmapped, but almost none of its `HSat2` or
+`aSatHOR` reads), so each pipeline has to learn them from whole-file scans of its own. The bundle
+does not ship satellite sinks, so for now these panels are measured by a whole-file scan, which is
+why a cohort that is scanned once should be scanned with them loaded (NGS-DOSE-1000G's pipeline
+does; `EXTRA_PANELS` in its `config.sh`). A cohort too large to scan would scan a subset of each
+pipeline with them loaded, learn the satellite sinks there, check their capture on held-out scans
+(`ngsdose sinks --evaluate`), and fetch the rest with those sinks and
+`-p satellites.CHM13v2.k31.panel.tsv.gz`. A scan classifies fully unmapped reads; a fetch reads them
+only with `ngs-dose count --unmapped`, which a class like `HSat1B` needs. The telomeric repeat
+already has its sinks: the aligner concentrates its reads at the chromosome ends, the bundle's
+`sinks.bed` carries the intervals, and a fetch with `-p telomere.k31.panel.tsv.gz` measures it
+(`FETCH_PANELS`).
 
 ```bash
 ngs-dose count -m scan -i sample.cram -T ref.fa -c ../GRCh38/controls.fa.gz -p ../GRCh38/panel.k31.tsv.gz \
@@ -22,8 +39,12 @@ produces the recall column below.
 ## `satellites.CHM13v2.k31.panel.tsv.gz` — ten families, 1.13 M k-mers
 
 From the T2T-CHM13v2.0 CenSat annotation. A k-mer is kept if it occurs at least ten times in the
-family's CHM13 arrays, in no other family, and nowhere in CHM13 outside CenSat-annotated
-satellite. *Recall* is the share of 150-bp reads drawn from the family's own CHM13 arrays that
+family's CHM13 arrays (arrays of at least 2 kb), in none of the other nine families, and nowhere
+in CHM13 outside CenSat-annotated satellite. K-mers that a family shares with satellites that have
+no class of their own are kept. These include monomeric α, divergent α HORs, γ-satellite, HSat4,
+rDNA and the other CenSat families, so reads from those satellites can be counted as the panelled
+family. For example, making monomeric α a class would take 17% of `aSatHOR`'s k-mers with it (see
+below). *Recall* is the share of 150-bp reads drawn from the family's own CHM13 arrays that
 carry the four k-mers a read needs to be assigned: what the panel can see of the genome it was
 built from, and so an upper bound on what it sees of anyone else's.
 
@@ -40,7 +61,8 @@ built from, and so an upper bound on what it sees of anyone else's.
 | `CER` | centromeric repeat | 1.1 Mb | 4,062 | 42% |
 | `SATR` | SATR1/2 | 0.3 Mb | 4,363 | 50% |
 
-The first five are measured; `ACRO` nearly; `bSat`, `SST1`, `CER` and `SATR` are relative
+`HSat1A`, `HSat1B`, `HSat3` and `aSatHOR` are measured; `HSat2` has full recall but the assemblies
+do not confirm it (see below); `ACRO` nearly; `bSat`, `SST1`, `CER` and `SATR` are relative
 measures — comparable between people, under-read in absolute terms by about their recall
 (β-satellite came out at 0.69 and 0.76 of the assembly in the comparison below, and its recall is
 0.69). Left out, because they cannot be measured this way or cost more than they give: gamma
@@ -80,9 +102,21 @@ whole (NGS-DOSE-1000G's `pipeline/hprc_satellites.py`). Cells are assembly Mb / 
   CHM13 annotation the panel was built from (2.4-2.9 Mb against 1.0 Mb diploid for SST1), so the
   absolute ratio means nothing; whether they track is a question for more samples.
 
-Two samples say nothing about whether the estimates *track* the assemblies across people, which
-is what association work needs. Two hundred samples of the 1000 Genomes cohort have HPRC
-assemblies; NGS-DOSE-1000G's `pipeline/04_hprc_satellites.sh` makes the comparison once the cohort is scanned.
+Two samples say nothing about whether the estimates *track* the assemblies across people, which is
+what association work needs. The cohort run in NGS-DOSE-1000G (`pipeline/04_hprc_satellites.sh`;
+its `docs/EVIDENCE.md` section 7 and the cohort page's section 3.8) makes that comparison for the
+cohort members with HPRC release-2 assemblies (200 in all; 96 counted as of 2026-09-24), leaving a
+sample out of a class when gaps could hide more than 2% of the class in its assembly. Per genome,
+most families agree within a robust SD of the log ratio of about 3–8%. Across people, the
+correlation also depends on how much people differ. The page of 2026-09-24 shows `HSat1B`
+r = 0.99, `ACRO` 0.95, β-satellite 0.94, `CER` 0.89, `HSat1A` 0.87, `HSat3` 0.79. α-satellite HOR
+mass reaches only r = 0.65: its mass differs between people by about 4%. `HSat2` does not track
+the assemblies with at most 2% of its arrays in marked gaps (r = 0.09 in 47; 0.18 in the 43 with
+none), so its estimate is heritable but
+not yet confirmed as HSat2 mass. Recomputed on the same table with the revised gap accounting,
+which also counts standalone gap records next to an array, the HORs give r = 0.63 in 92 genomes,
+`HSat3` 0.81 in 81 and `HSat2` 0.02 in 38; the page shows these once it is regenerated. The
+numbers change as more of the cohort is counted; NGS-DOSE-1000G holds the current ones.
 
 ## `telomere.k31.panel.tsv.gz` — class `TEL`, six k-mers
 
@@ -106,9 +140,17 @@ chr2:32.91 Mb, chr1:180 kb, …). Normalised by the controls, the count inside t
 and the whole-file count agree at r = 0.9997 across genomes (SD of the log ratio 0.019), so a
 targeted query measures the same thing as the scan. Sinks learned from 40 scans
 (`ngsdose sinks --classes TEL`, 10-kb bins holding ≥ 1e-5 of the class and ≥ 25 reads, padded 1 kb)
-captured ≥ 99.87% of the class in each of the other 332; the bundle's `sinks.bed` now carries the
-set learned from all 372. Two caveats travel with the number: the engine skips unmapped records in
-both modes, so a fully unmapped telomeric read is counted by neither (TelSeq counts it); and the
-implied length is 4.4 kb per chromosome end counting whole reads or 1.7 kb weighting each read by
-its telomeric k-mer share, an under-read that a calibration against TelSeq or NGS-TL on the same
-genomes will size.
+captured a median 99.8% of the class in the other 332 (lowest 99.4–99.6% across eleven draws of
+the 40); sets learned from 30 scans do no better, at 99.4–99.6% lowest in 200 others over three
+draws. The bundle's `sinks.bed` now carries the set learned from all 372 (63 intervals, 810 kb),
+which holds a median 99.87% (lowest 99.67%) of the class in those 372 and, across the 1,748 scans
+counted by 2026-09-25, a median of 99.87%, a 1st percentile of 99.68% and a minimum of 99.39%
+(HG02756). A placement bin counts as captured only when all of it lies inside a sink.
+
+Two caveats travel with the number. First, a scan classifies fully unmapped reads, but a fetch
+retrieves them only with `ngs-dose count --unmapped`; an unmapped read with a mapped mate sits at
+its mate's position and is fetched with its sink regardless. Across the 1,748 cohort scans not one
+`TEL` read was placed in the unmapped bin (bwa-mem places every pure telomeric read somewhere, most
+of them at chr5p), so nothing is lost this way here. Second, the implied length is 4.4 kb per
+chromosome end counting whole reads or 1.7 kb weighting each read by its telomeric k-mer share, an
+under-read that a calibration against TelSeq or NGS-TL on the same genomes will size.
