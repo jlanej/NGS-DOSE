@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Sequence-class dosage (rDNA, satellite and other multi-copy classes) from short-read WGS"
 repository = "https://github.com/jlanej/NGS-DOSE"
-rust-version = "1.75"
+rust-version = "1.88"
 
 [[bin]]
 name = "ngs-dose"

@@ -17,27 +17,19 @@ pytestmark = pytest.mark.skipif(not BIN.exists() or shutil.which("samtools") is 
                                 reason="needs target/release/ngs-dose (cargo build --release) and samtools")
 
 
-@pytest.fixture(scope="module")
-def sim(tmp_path_factory):
-    from simulate_bam import simulate
-    d = tmp_path_factory.mktemp("sim")
-    s = simulate(d)
-    run = lambda *a: subprocess.run([str(BIN), *map(str, a)], check=True, cwd=d, capture_output=True, text=True)
-    run("panel", "-m", "classes.tsv", "-k", "31", "-b", "background.fa", "-o", "panel.tsv.gz")
-    run("controls", "-b", "controls.bed", "-T", "ref.fa", "--flank", "700", "-o", "controls.fa.gz")
-    common = ["-i", "sim.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400"]
-    run("count", *common, "-m", "scan", "-@", "2", "-o", "scan.json")
-    run("count", *common, "-m", "fetch", "--sinks", "sinks.bed", "-@", "2", "-o", "fetch.json.gz")
-    s["scan"], s["fetch"] = io.load_counts(d / "scan.json"), io.load_counts(d / "fetch.json.gz")
-    return s
+# what a fetch differs in from a scan of the same file: how it was run and how much of the file it read
+SCAN_FETCH_DIFFER = {"mode", "sinks", "sinks_sha256", "sinks_skipped", "pad", "records", "primary", "primary_dup_flagged",
+                     "unmapped", "contigs", "elapsed_sec"}
 
 
 def test_scan_and_fetch_agree(sim):
     a, b = sim["scan"], sim["fetch"]
     assert a["sample"] == b["sample"] == "simulated"
-    assert a["gc_tables"] == b["gc_tables"]
-    assert a["classes"][0]["fwd"] == b["classes"][0]["fwd"] and a["classes"][0]["rev"] == b["classes"][0]["rev"]
+    same = lambda d: {k: v for k, v in d.items() if k not in SCAN_FETCH_DIFFER}
+    assert same(a) == same(b), sorted(k for k in set(same(a)) | set(same(b)) if a.get(k) != b.get(k))
+    assert [(c["name"], c["len"]) for c in a["contigs"]] == [(c["name"], c["len"]) for c in b["contigs"]]
     assert a["ctrl_reads"] == b["ctrl_reads"] > 50_000
+    assert b["primary"] <= a["primary"]
 
 
 def test_every_class_read_is_recovered_duplicates_included(sim):
@@ -120,8 +112,11 @@ def test_plan_lists_the_intervals_a_fetch_reads(sim):
     subprocess.run(["samtools", "index", "-c", "cut.bam"], check=True, cwd=d)
     # the cut, counted in fetch mode with the same bundle, sinks and padding, is the whole file's fetch
     run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "fetch", "--sinks", "sinks.bed", "-@", "2", "-o", "cut.json.gz")
-    strip = lambda c: {k: v for k, v in c.items() if k not in ("input", "elapsed_sec")}
-    assert strip(io.load_counts(d / "cut.json.gz")) == strip(sim["fetch"])
+    # (samtools adds its @PG line to the cut, so only the @SQ fingerprint of the pipeline record agrees)
+    strip = lambda c: {k: v for k, v in c.items() if k not in ("input", "elapsed_sec", "pipeline")}
+    cut = io.load_counts(d / "cut.json.gz")
+    assert strip(cut) == strip(sim["fetch"])
+    assert cut.get("pipeline", {}).get("sq_sha256") == sim["fetch"].get("pipeline", {}).get("sq_sha256")
     # counted in scan mode it would pass for a whole-file scan; the sink learner and evaluator see that it is not
     run("count", "-i", "cut.bam", "-p", "panel.tsv.gz", "-c", "controls.fa.gz", "--l-grid", "100,200,300,400", "-m", "scan", "-@", "2", "-o", "cut_scan.json")
     # (the simulated genome is little but controls, so its whole-file scan looks cut too; the cohort's real scans put
