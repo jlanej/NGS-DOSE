@@ -1,4 +1,4 @@
-"""Command line for the modelling layer: `ngsdose estimate | cohort | adjust | pcsweep | trios | sinks | selftest`."""
+"""Command line for the modelling layer: `ngsdose estimate | cohort | adjust | pcsweep | trios | sinks | fetchplan | selftest`."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, cohort, contract, estimate, io, pcselect, resources, sinks, trios
+from . import __version__, cohort, contract, estimate, fetchplan, io, pcselect, resources, sinks, trios
 from .tables import dump as _dump, load_result as _load_result, num as _num, summary_row, write_table
 
 
@@ -24,9 +24,16 @@ def _estimate_init(a):
     res = resources.Bundle(a.resources)
     panel, units = io.load_panel(res.panel), res.units()
     res.check_units(panel, units)
+    sub_options, known_sinks = estimate.fetch_context(res.dir, res.sinks, getattr(a, "fetch_sinks", None) or ())
     _EST.update(args=a, res=res, panel=panel, units=units, feats=res.features(),
                 anchors={} if a.gc_rule_anchors else res.anchors(), tables={}, lengths=res.contig_lengths(),
-                regions=None if a.no_control_qc else res.regions())
+                regions=None if a.no_control_qc else res.regions(),
+                # a fetch made with a lighter controls file the bundle names, and units of positional
+                # classes from experimental panels (resources/experimental/candidates/units, NGSDOSE_EXTRA_UNITS)
+                subsets=res.control_subsets(), experimental=res.experimental(),
+                # named subsets of classes' sinks (resources/experimental/subsets), and the sinks BEDs a fetch
+                # may have been made with, by hash: the bundle's, the experimental ones, the subsets', --fetch-sinks
+                sub_options=sub_options, known_sinks=known_sinks)
 
 
 def _output_name(path) -> str:
@@ -46,7 +53,7 @@ def _estimate_one(job):
     a, res = _EST["args"], _EST["res"]
     try:
         counts = contract.load(path)
-        found = contract.issues(counts, res)
+        found = contract.issues(counts, res, _EST["known_sinks"])
         if a.no_control_qc:                                 # the bundle's control regions are not used then
             found = [("warn" if lv == "fatal" and "controls file" in m else lv, m) for lv, m in found]
         fatal = [m for lv, m in found if lv == "fatal"]
@@ -57,8 +64,19 @@ def _estimate_one(job):
             _EST["tables"][L] = res.region_tables(L)
         r = estimate.estimate_sample(counts, _EST["panel"], _EST["units"], _EST["feats"], region_tables=_EST["tables"].get(L), L=a.L,
                                      window=a.window, min_kmers=a.min_kmers, anchors=_EST["anchors"],
-                                     contig_lengths=_EST["lengths"], regions=_EST["regions"])
+                                     contig_lengths=_EST["lengths"], regions=_EST["regions"],
+                                     control_subsets=_EST["subsets"], experimental=_EST["experimental"],
+                                     sub_options=_EST["sub_options"], known_sinks=_EST["known_sinks"])
         r["resources"] = {k: counts.get(k) for k in ("panel_sha256", "controls_sha256", "sinks_sha256")}
+        unverified = {k: v["parent"] for k, v in (r.get("sub_options") or {}).items() if v["status"] == "unverified"}
+        parents = sorted(n for n, c in r["classes"].items() if c.get("status") == "unverified")
+        if unverified or parents:
+            # the fetch's intervals are not known: whether it read these classes' sinks whole, or only some of them, cannot be told
+            found.append(("warn", f"{counts.get('sample')}: a fetch made with a sinks BED not known here ({counts.get('sinks')}, sha256 "
+                                  f"{str(counts.get('sinks_sha256'))[:12]}...): {', '.join(sorted(set(parents) | set(unverified.values())))} "
+                                  "may have been read whole or only at the intervals of the sub-options "
+                                  f"{', '.join(unverified) or 'of the fetch menu'}, so these classes get no value and the sub-options no "
+                                  "mass (status unverified); pass the BED with --fetch-sinks"))
         if out:
             _dump(r, out)
         classes = {c["name"]: (c.get("kind"), c.get("length"), c.get("panel_kmers")) for c in counts["classes"]}
@@ -94,11 +112,18 @@ def _mixed_resources(done: list[dict]) -> list[str]:
         diff = [f"{f} {' / '.join(map(str, sorted(v, key=str)))}" for f, v in per.items() if len(v) > 1]
         if diff:
             out.append(f"{name} was not counted with the same k-mers in every file ({'; '.join(diff)}): its values are not comparable across them.")
+    sets_used = Counter(o["row"].get("controls_subset") or "all" for o in done if o["row"].get("controls_used") is not None)
+    if len(sets_used) > 1:
+        out.append("the counts files were made with different sets of control regions (" + ", ".join(f"{n}: {k} file(s)" for n, k in
+                   sorted(sets_used.items())) + "). A lighter set moves levels a little (for lite200 against all the controls: the 45S "
+                   "rDNA by +0.2%, HSat1B by +1.5% with an SD of 2.3%): say so, or analyse them apart.")
     for k, what in (("controls_sha256", "controls"), ("sinks_sha256", "sinks")):
+        if k == "controls_sha256" and len(sets_used) > 1:
+            continue                                        # said above
         if len({o["resources"].get(k) for o in done if o["resources"].get(k)}) > 1:
             out.append(f"the counts files were not all made with the same {what} file. " + (
-                "Different controls files are accepted only if their control regions are identical (extra known-truth regions are then "
-                "simply missing for some samples)." if what == "controls" else
+                "Different controls files are accepted only if their control regions are identical, or one of the bundle's named subsets "
+                "(extra known-truth regions are then simply missing for some samples)." if what == "controls" else
                 "Different sinks change what a fetch reads: do not analyse such files as one cohort."))
     return out
 
@@ -144,7 +169,11 @@ def cmd_estimate(a):
                   f"{'each has its own estimate file, but ' if a.outdir else ''}a cohort takes one estimate per sample", file=sys.stderr)
     if "unknown" in by:
         print("[estimate] WARNING: sample 'unknown' - the counts name no sample (no @RG SM in the input and no -s when counting)", file=sys.stderr)
-    na = Counter((k[: -len(".status")], v) for o in done for k, v in o["row"].items() if k.endswith(".status") and v not in (None, "ok"))
+    # a sub-option whose class the file never counted was never asked for (an ordinary fetch loads no satellite panel): the
+    # table says not_counted, the log does not list it
+    subs = set(_EST.get("sub_options") or ())
+    na = Counter((k[: -len(".status")], v) for o in done for k, v in o["row"].items() if k.endswith(".status") and v not in (None, "ok", "experimental")
+                 and not (v == "not_counted" and k[: -len(".status")] in subs))
     if na:
         print("[estimate] not estimated (NA in the table): " + "; ".join(f"{c} in {n} sample(s): {v}" for (c, v), n in sorted(na.items())),
               file=sys.stderr)
@@ -496,10 +525,26 @@ def cmd_pcsweep(a):
               f"\t{r['at_0']:.4f}\t{at_def.get(key, float('nan')):.4f}\t{r['best']}\t{r['at_best']:.4f}\t{r['pick']}\t{r['at_pick']:.4f}", file=sys.stderr)
 
 
+def _write_stats(a, table, source, held_out):
+    try:
+        with open(a.stats, "w") as fh:
+            sinks.write_stats(fh, table, "\n".join([f"ngsdose sinks --stats: {source}", *(a.stats_note or ())]), held_out)
+    except OSError as e:
+        sys.exit(f"ngsdose sinks: {e}")
+    print(f"[sinks] statistics of {len(table)} intervals ({len({r['class'] for r in table})} classes) -> {a.stats}", file=sys.stderr)
+
+
 def cmd_sinks(a):
+    if a.stats and a.stats == a.out and a.out != "-":
+        sys.exit("ngsdose sinks: --stats and -o name the same file")
+    if a.held_out and not a.evaluate:
+        sys.exit("ngsdose sinks: --held-out describes the scans of --evaluate; learned sinks are measured in-sample")
+    if (a.held_out or a.stats_note) and not a.stats:
+        sys.exit("ngsdose sinks: --held-out and --stats-note go into the --stats file; pass --stats")
     if a.evaluate:
         try:
             bed = sinks.read_bed(a.evaluate)
+            tally = sinks.IntervalTally(bed) if a.stats else None
         except (OSError, ValueError) as e:
             sys.exit(f"ngsdose sinks: {e}")
         print("sample\tclass\tscan_reads\tcaptured\tfraction\tunmapped")
@@ -521,6 +566,10 @@ def cmd_sinks(a):
                     unmapped[p["class"]] += p["reads"]
             for cls, (tot, inside) in sinks.capture(c, bed).items():
                 print(f"{c['sample']}\t{cls}\t{tot}\t{inside}\t{inside / max(tot, 1):.5f}\t{unmapped[cls]}")
+            if tally:
+                tally.add(c)
+        if tally:
+            _write_stats(a, tally.table(), f"{a.evaluate} evaluated on {len(a.counts) - len(bad)} scan(s)", True if a.held_out else None)
         if bad:
             sys.exit(f"ngsdose sinks: {len(bad)} of {len(a.counts)} counts files were not evaluated (listed above)")
         return
@@ -542,6 +591,74 @@ def cmd_sinks(a):
         print(f"[sinks] {cls}: {n} intervals, {sum(r[2] - r[1] for r in rows if r[3] == cls):,} bp; "
               f"capture in these scans min {v[0]:.5f} median {v[len(v) // 2]:.5f} over {len(v)} scan(s)"
               f"{'' if n else ' - WARNING: no bin reached the rule, so the BED has no sinks for it'}", file=sys.stderr)
+    if a.stats:                                            # a third pass over the scans, one file at a time
+        try:
+            table = sinks.interval_stats(a.counts, rows, allow_cut=a.allow_cut)
+        except ValueError as e:
+            sys.exit(f"ngsdose sinks: {e}")
+        _write_stats(a, table, f"the learned intervals, in the {len(a.counts)} training scan(s) (in-sample)", False)
+
+
+def _capture_class(items) -> dict[str, float]:
+    out = {}
+    for x in items or ():
+        name, eq, v = x.partition("=")
+        try:
+            out[name] = float(v)
+        except ValueError:
+            sys.exit(f"ngsdose fetchplan: --capture-class {x}: expected CLASS=FRACTION, e.g. TEL=0.99")
+        if not eq or not name or not 0 < out[name] <= 1:
+            sys.exit(f"ngsdose fetchplan: --capture-class {x}: expected CLASS=FRACTION with 0 < FRACTION <= 1")
+    return out
+
+
+def _plan_header(a, menu, plan) -> str:
+    """Every argument that shapes the plan, as a command line, for the head of PREFIX.sinks.bed and PREFIX.plan.tsv: two plans
+    that differ in their intervals, flags or costing differ here too. Defaults are written out; files by path."""
+    x = [f"--menu {menu.path}"]
+    x += [f"--classes {' '.join(a.classes)}"] if a.classes else []
+    x += [f"--preset {' '.join(a.preset)}"] if a.preset else []
+    if a.budget_mb is not None:
+        x += [f"--budget-mb {a.budget_mb:g}", f"--status {a.status}"] + (["--fill"] if a.fill else [])
+    x += [f"--capture {a.capture:g}"] if a.capture is not None else []
+    x += [f"--capture-class {' '.join(a.capture_class)}"] if a.capture_class else []
+    x += [f"--capture-stat {a.capture_stat}"]
+    x += [f"--stats {' '.join(a.stats)}"] if a.stats else []
+    x += [f"--sinks {' '.join(a.sinks)}"] if a.sinks else []
+    x += [f"--controls {a.controls}"] if a.controls else []
+    x += [f"--pad {a.pad}"]
+    if a.crai:
+        x += [f"--crai ({len(a.crai)} index(es): {' '.join(Path(p).name for p in a.crai)})", f"--contigs {a.contigs}"]
+    x += [f"--engine {a.engine}"] if a.engine else []
+    x += ["--unmarked-companions"] if a.unmarked_companions else []
+    x += [f"--panel-root {a.panel_root}"] if a.panel_root else []
+    flags = f"; count flags: {plan.classes_flag}" if plan.classes_flag else ""
+    return " ".join(x) + flags
+
+
+def cmd_fetchplan(a):
+    try:
+        menu = fetchplan.read_menu(a.menu)
+        if a.list:
+            print("\n".join(fetchplan.list_menu(menu)))
+            return
+        if a.capture is not None and not 0 < a.capture <= 1:
+            sys.exit(f"ngsdose fetchplan: --capture {a.capture}: expected a fraction in (0, 1]")
+        plan = fetchplan.make_plan(menu, classes=a.classes or (), presets=a.preset or (), budget_mb=a.budget_mb, fill=a.fill,
+                                   statuses=tuple(x.strip() for x in a.status.split(",") if x.strip()), capture=a.capture,
+                                   capture_class=_capture_class(a.capture_class), capture_stat=a.capture_stat, sinks_files=a.sinks or (),
+                                   stats_files=a.stats or (), controls=a.controls, pad=a.pad, crais=a.crai or (), contigs=a.contigs,
+                                   engine=a.engine, unmarked_companions=a.unmarked_companions)
+    except (OSError, ValueError) as e:
+        sys.exit(f"ngsdose fetchplan: {e}")
+    print("\n".join(fetchplan.table_lines(plan)))
+    if a.out:
+        try:
+            fetchplan.write(plan, a.out, menu, panel_root=a.panel_root, header=_plan_header(a, menu, plan))
+        except OSError as e:
+            sys.exit(f"ngsdose fetchplan: {e}")
+        print(f"[fetchplan] wrote {a.out}.sinks.bed ({len(plan.bed())} intervals), {a.out}.panels.txt, {a.out}.count_flags.txt, "
+              f"{a.out}.controls.txt (-c {Path(plan.controls_fasta).name}), {a.out}.scan_panels.txt, {a.out}.plan.tsv", file=sys.stderr)
 
 
 def cmd_selftest(a):
@@ -566,6 +683,11 @@ def main(argv=None):
     e.add_argument("-j", "--jobs", type=int, default=1, help="parallel processes")
     e.add_argument("--no-control-qc", action="store_true")
     e.add_argument("--gc-rule-anchors", action="store_true", help="ignore the bundle's anchor intervals; anchor on fragment GC 40-60%%")
+    e.add_argument("--fetch-sinks", nargs="+", metavar="BED", help="sinks BEDs fetches were made with (e.g. a fetchplan PREFIX.sinks.bed), "
+                   "known by the sha256 the counts record: the sub-options (resources/experimental/subsets: DXZ1, DYZ3, DYZ1, DYZ2) of a "
+                   "fetch are reported only when its BED is known and holds their intervals, and their classes (aSatHOR, HSat3, "
+                   "HSat1B) only when it is known (else status unverified: the fetch may have read them at the sub-options only). "
+                   "The bundle's sinks.bed and the BEDs of resources/experimental are known without it")
     e.set_defaults(fn=cmd_estimate)
 
     c = sub.add_parser("cohort", help="calibrate window efficiencies across samples")
@@ -662,7 +784,75 @@ def main(argv=None):
                         "every aligner and reference)")
     k.add_argument("--allow-cut", action="store_true", help="accept counts that look like a cut along a fetch plan")
     k.add_argument("--allow-mixed-panels", action="store_true", help="pool scans counted with different panel files")
+    k.add_argument("--stats", metavar="FILE", help="also write, per interval (of the learned sinks, or of the --evaluate BED): its share of "
+                   "the class's reads (median and 10th percentile over the scans), the reads of any class in it (the 'all' counts of the "
+                   "class's placement bins there, median) and, per class in order of decreasing share per read, the cumulative capture "
+                   "(median and 10th percentile): the capture curve `ngsdose fetchplan --capture` trims by. For learned sinks it is "
+                   "in-sample; with --evaluate on held-out scans it is not (say so with --held-out). Also the largest share an interval held "
+                   "in any one scan (share_max), which bounds the capture of intervals kept in another order (fetchplan --crai)")
+    k.add_argument("--held-out", action="store_true", help="with --evaluate and --stats: none of these scans was used to learn the BED. "
+                   "The statistics file says so ('# held-out: yes'), and `ngsdose fetchplan` then reports its expected capture as held-out")
+    k.add_argument("--stats-note", action="append", metavar="TEXT", help="a line of provenance for the head of the --stats file (repeatable)")
     k.set_defaults(fn=cmd_sinks)
+
+    f = sub.add_parser("fetchplan", help="choose what a fetch reads: classes by name, preset or byte budget, with capture targets",
+                       description="Select options from the fetch menu (resources/fetch_menu.tsv) and write what `ngs-dose count -m fetch` "
+                                   "takes: PREFIX.sinks.bed (--sinks), PREFIX.panels.txt (one -p each), PREFIX.count_flags.txt, PREFIX.controls.txt "
+                                   "(the -c FASTA matching the control regions costed); plus "
+                                   "PREFIX.scan_panels.txt (panels for the whole-file scans, candidates included) and PREFIX.plan.tsv. "
+                                   "The control regions are always read. Sinks come from scans (`ngsdose sinks`): a candidate class, "
+                                   "which has none yet, is selected for scanning only.")
+    f.add_argument("--menu", help="the fetch menu (default: fetch_menu.tsv beside $NGSDOSE_RESOURCES, else resources/fetch_menu.tsv)")
+    f.add_argument("--list", action="store_true", help="print the menu's options and presets and stop")
+    f.add_argument("--classes", nargs="+", metavar="OPTION", help="options by name (a class, a named subset of a class's intervals such as DXZ1, or 'unmapped')")
+    f.add_argument("--preset", nargs="+", metavar="PRESET", help="options by preset (see --list)")
+    f.add_argument("--budget-mb", type=float, help="add options in tier order (A to D), cheapest first within a tier, until the next would take "
+                   "the plan (controls included) past this many MB (1e6 bytes, median over the --crai indexes); from the --classes and "
+                   "--preset options if given, otherwise from the whole menu. Needs --crai")
+    f.add_argument("--fill", action="store_true", help="for --budget-mb: skip an option that does not fit and go on adding later ones that "
+                   "do (default: stop at the first that does not fit, so that no lower tier displaces a higher one)")
+    f.add_argument("--status", default="shipped,experimental", help="for --budget-mb: the statuses to draw from (default shipped,experimental)")
+    f.add_argument("--capture", type=float, help="per class, keep the intervals of highest share per read until the expected capture reaches "
+                   "this fraction, drop the rest (needs statistics: the menu's stats column or --stats; a class without them keeps all its "
+                   "intervals, and a named subset is fetched whole). With --crai, per byte of the intervals' own CRAM slices instead: an "
+                   "interval of low median share on costly slices (a pile-up bin, a multi-reference decoy slice) ranks behind the "
+                   "intervals worth their bytes. The expected capture is then a lower bound (the capture of all the class's intervals "
+                   "less the largest share each dropped interval held in any one scan), so an interval is dropped only while its largest "
+                   "share in any scan still leaves the target reached (TEL keeps the chr2:32.91 Mb pile-up bin above about 0.979), and "
+                   "when keeping per read reaches the target with fewer bytes, that is kept. Classes share intervals: one that another "
+                   "selected class keeps is read anyway, so it is kept for every class that has it (with --crai: any interval whose "
+                   "slices the plan reads anyway, and each class is trimmed again with those slices free). The table reports per option "
+                   "the MB its trimming saved of the plan (mb_saved) and the capture lost")
+    f.add_argument("--capture-class", nargs="+", metavar="CLASS=FRACTION", help="a capture target for one class, e.g. TEL=0.99")
+    f.add_argument("--capture-stat", choices=("p10", "median"), default="p10",
+                   help="which capture of the statistics' scans the target applies to: the 10th percentile (default) or the median")
+    f.add_argument("--stats", nargs="+", metavar="FILE", help="interval statistics from `ngsdose sinks --stats` (later files win per class)")
+    f.add_argument("--sinks", nargs="+", metavar="BED", help="take every class's intervals from these sinks BEDs (learned for this pipeline) "
+                   "instead of the files the menu names")
+    f.add_argument("--controls", metavar="BED", help="the control regions as BED (default: the menu's controls row); the fetch must then use the "
+                   "controls FASTA of the same name (controls.NAME.bed -> controls.NAME.fa.gz), which controls.txt names")
+    f.add_argument("--pad", type=int, default=600, help="padding of the control regions, as `ngs-dose count --pad` (default 600, at least 400); another value goes to "
+                   "count_flags.txt so the fetch reads the regions costed here")
+    f.add_argument("--crai", nargs="+", metavar="CRAI", help="CRAM indexes to cost the plan on (median over them); each from the same place "
+                   "as its CRAM")
+    f.add_argument("--contigs", metavar="FILE", help="the contigs of the CRAMs in header order: the .fai or .dict of their reference, or "
+                   "`samtools view -H` output")
+    f.add_argument("--engine", default="ngs-dose", help="the ngs-dose that will run the fetch (default: ngs-dose on PATH). When the plan "
+                   "needs count flags, fetchplan runs `ENGINE count --help` and refuses a plan the engine cannot run (--pad other than "
+                   "600 on fae1124). When the loaded panels define classes the plan does not select: an engine that takes --classes gets "
+                   "'--classes=...' in count_flags.txt (only the selected classes are counted and reported); one that takes only "
+                   "--allow-missing-sinks (7772e32) gets that flag (the others are listed as incomplete); one that takes neither "
+                   "(fae1124) is refused, see --unmarked-companions. When no engine is found, '--allow-missing-sinks' is written, "
+                   "which fae1124 refuses at the fetch. The notes and plan.tsv say which was written")
+    f.add_argument("--unmarked-companions", action="store_true", help="with an engine that takes neither --classes nor "
+                   "--allow-missing-sinks (fae1124): write the plan anyway. The classes the loaded panels define but the plan does not "
+                   "select are then counted only inside the plan's intervals and not marked incomplete in the counts; `ngsdose "
+                   "estimate --fetch-sinks PREFIX.sinks.bed` marks them")
+    f.add_argument("--panel-root", metavar="DIR", help="write panel paths under DIR (e.g. the resources directory inside a container) instead "
+                   "of the menu's directory")
+    f.add_argument("-o", "--out", metavar="PREFIX", help="write PREFIX.sinks.bed, .panels.txt, .count_flags.txt, .controls.txt, .scan_panels.txt, .plan.tsv "
+                   "(without it, only the table is printed)")
+    f.set_defaults(fn=cmd_fetchplan)
 
     s = sub.add_parser("selftest", help="simulation-based check of the estimator; needs no data")
     s.set_defaults(fn=cmd_selftest)

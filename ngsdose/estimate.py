@@ -16,16 +16,29 @@ denominator alike. usable_fraction is therefore a share of strand-bins, and a wi
 
 A class is estimated only when its counts are complete and were made with the bundle's panel
 (contract.py); otherwise it keeps its record, with NaN values and a `status` saying why.
+
+The control regions of a counts file are the bundle's, or a named subset of them (a fetch made
+with a lighter controls file the bundle lists, see resources.Bundle.control_subsets): the curve
+is then fitted on the regions the file holds, and `controls_used` says how many. A positional
+class the bundle has no unit for can be estimated from an experimental unit (status
+`experimental`, see estimate_sample).
+
+A sub-option is a named subset of a compositional class's learned sink intervals: one array of a
+satellite family, such as DXZ1 (the alpha-satellite HOR array of chrX's centromere) among aSatHOR's
+sinks (resources/experimental/subsets/NAME.bed, whose fourth column names the class). Its value is
+the class's reads placed inside its intervals (a placement bin counts only when all of it, clipped
+at the contig's end, lies inside), times the class's mass per read (sub_option_values).
 """
 from __future__ import annotations
 
 import hashlib
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
-from . import contract, gcmodel
+from . import contract, gcmodel, sinks
 from .io import Panel, PanelClass
 
 ANCHOR_GC = (0.40, 0.60)
@@ -192,11 +205,14 @@ def _natural(s: str):
 def estimate_positional(cls: dict, pc: PanelClass, seq: str, k: int, curve: gcmodel.GCCurve, R: int,
                         window: int = 250, min_kmers: int = 20,
                         features: list[tuple[str, int, int]] | None = None,
-                        anchors: list[tuple[int, int]] | None = None) -> dict:
+                        anchors: list[tuple[int, int]] | None = None, headline: str = "anchor") -> dict:
     """`anchors`: unit intervals that set the absolute level (a bundle's empirically clean windows);
     the anchor bins are the usable bins inside them whose fragment GC is within ANCHOR_GC (without
     anchors, the GC rule alone). The headline `cn` is the anchor estimate when the anchor bins
-    hold at least MIN_ANCHOR_ENDS fragment ends, otherwise the all-window one (`cn_basis`)."""
+    hold at least MIN_ANCHOR_ENDS fragment ends, otherwise the all-window one (`cn_basis`);
+    `headline="all"` makes it the all-window one always (a class with no known clean windows)."""
+    if headline not in ("anchor", "all"):
+        raise ValueError(f"headline must be 'anchor' or 'all', not {headline!r}")
     U, b = pc.length, cls["bin"]
     if len(seq) != U:
         raise ValueError(f"unit FASTA for {pc.name} has {len(seq)} bp, panel says {U}")
@@ -248,7 +264,7 @@ def estimate_positional(cls: dict, pc: PanelClass, seq: str, k: int, curve: gcmo
                          usable=round(frac, 3), cn=(round(2.0 * o / e, 3) if e > 0 and frac >= 0.5 else None)))
     cns = np.array([w["cn"] for w in wins if w["cn"] is not None], float)
     # headline: anchor windows when the unit has them, otherwise every usable window
-    has_anchor = n_anchor >= MIN_ANCHOR_ENDS
+    has_anchor = headline == "anchor" and n_anchor >= MIN_ANCHOR_ENDS
     out = dict(kind="positional", length=U, reads=cls["reads"], usable_fraction=round(float(usable.mean()), 4),
                cn=cn_anchor if has_anchor else cn_all, cn_basis="anchor" if has_anchor else "all",
                cn_all=cn_all, n_all=n_all, cn_anchor=cn_anchor, n_anchor=n_anchor, cn_all_flat=ratio_flat(all_mask),
@@ -311,10 +327,15 @@ def check_build(counts: dict, contig_lengths: dict[str, int] | None):
                          f"on {want:,} ({len(bad)} contigs differ): this file is aligned to a different reference build")
 
 
-def align_region_tables(counts: dict, region_tables: np.ndarray, regions: list[tuple[str, str]]) -> tuple[dict, np.ndarray]:
+def align_region_tables(counts: dict, region_tables: np.ndarray, regions: list[tuple[str, str]],
+                        subsets: dict[str, frozenset] | None = None) -> tuple[dict, np.ndarray]:
     """The counts with their regions in the bundle's order, and the matching rows of the bundle's
-    region tables. The counts must hold exactly the bundle's `control` regions - they are the
-    denominator and the GC curve, and a cohort is only one cohort if they are the same everywhere.
+    region tables. The counts must hold exactly the bundle's `control` regions, or exactly one of
+    the named subsets of them in `subsets` (name -> control region names; a fetch made with a
+    lighter controls file, resources.Bundle.control_subsets): they are the denominator and the GC
+    curve, and a cohort is only one cohort if they are the same everywhere. Any other set of
+    controls is refused, a subset that no name declares included (a file that lost regions is not
+    a lighter fetch). A named subset is recorded as `controls_subset` in the returned counts.
     Other regions may differ: a known-truth or dosage set added to a bundle later does not
     invalidate counts made before it existed (the one layer that cannot be redone without
     re-reading the alignments), and one the bundle has retired or renamed is left out of a copy of
@@ -323,14 +344,20 @@ def align_region_tables(counts: dict, region_tables: np.ndarray, regions: list[t
     row = {name: i for i, (name, _) in enumerate(regions)}
     ctrl_bundle = {n for n, role in regions if role == "control"}
     ctrl_counts = {r["name"] for r in counts["regions"] if r.get("role", "control") == "control"}
+    subset = None
     if ctrl_bundle != ctrl_counts:
-        raise ValueError(f"{counts.get('sample')}: these counts were made with a different controls file "
-                         f"({len(ctrl_bundle ^ ctrl_counts)} control regions not shared with the bundle)")
+        subset = next((n for n, names in (subsets or {}).items() if set(names) == ctrl_counts and ctrl_counts < ctrl_bundle), None)
+        if subset is None:
+            why = (f"its {len(ctrl_counts)} control regions are a subset of the bundle's {len(ctrl_bundle)} that no named subset of the bundle declares"
+                   if ctrl_counts and ctrl_counts < ctrl_bundle else f"{len(ctrl_bundle ^ ctrl_counts)} control regions not shared with the bundle")
+            raise ValueError(f"{counts.get('sample')}: these counts were made with a different controls file ({why})")
     known = sorted((r for r in counts["regions"] if r["name"] in row), key=lambda r: row[r["name"]])
     dropped = [r["name"] for r in counts["regions"] if r["name"] not in row]
     counts = {**counts, "regions": known}
     if dropped:
         counts["regions_not_in_bundle"] = dropped
+    if subset is not None:
+        counts["controls_subset"] = subset
     return counts, region_tables[[row[r["name"]] for r in known]]
 
 
@@ -341,19 +368,182 @@ def _fit(counts: dict, tab: dict) -> gcmodel.GCCurve:
         raise ValueError(f"{counts.get('sample')}: {e}") from e
 
 
+EXPERIMENTAL_ESTIMATOR = "single-sample, all usable windows (no anchor windows, no cohort calibration)"
+
+
+def _cn_se_rel(r: dict) -> float:
+    """Relative standard error of a single-sample all-window estimate: the spread of the window
+    copy numbers over the square root of their number (the windows as replicate measurements of
+    one copy number), with the Poisson error of the ends counted added. It says how well the
+    windows agree, not how far their common level is from the truth: without anchor windows or a
+    cohort's window efficiencies that level carries the unit's efficiency, which only a
+    comparison with a known answer can measure."""
+    cns = np.array([w["cn"] for w in r["windows"] if w["cn"] is not None and w["cn"] > 0], float)
+    if len(cns) < 3 or not r["n_all"]:
+        return float("nan")
+    return float(np.sqrt(np.var(np.log(cns), ddof=1) / len(cns) + 1.0 / r["n_all"]))
+
+
+@dataclass
+class SubOption:
+    """A named subset of a class's learned sink intervals (a per-array option of the fetch menu)."""
+    name: str
+    parent: str
+    intervals: list[tuple[str, int, int]]
+    path: str = ""
+
+
+def sub_option_dir(bundle_dir) -> Path:
+    """resources/experimental/subsets beside the bundle's directory, as the repository and the image lay them out."""
+    return Path(bundle_dir).resolve().parent / "experimental" / "subsets"
+
+
+def load_sub_options(directory) -> dict[str, SubOption]:
+    """Every NAME.bed of a directory (none when it does not exist): the option NAME, whose intervals all
+    name one class in their fourth column."""
+    out: dict[str, SubOption] = {}
+    d = Path(directory)
+    if not d.is_dir():
+        return out
+    for p in sorted(d.glob("*.bed")):
+        rows = sinks.read_bed(p)
+        names = {r[3] for r in rows}
+        if not rows or len(names) != 1 or "" in names:
+            raise ValueError(f"{p}: a sub-option's BED names one class in its fourth column on every row")
+        parent = names.pop()
+        if parent == p.stem:
+            raise ValueError(f"{p}: the sub-option is named after its own class")
+        out[p.stem] = SubOption(p.stem, parent, sorted({r[:3] for r in rows}), str(p))
+    return out
+
+
+def sinks_by_hash(paths) -> dict[str, list[tuple[str, int, int, str]]]:
+    """sha256 of a sinks BED as stored (what a fetch's counts record as sinks_sha256) -> its rows, for every
+    path that exists."""
+    out = {}
+    for p in dict.fromkeys(map(str, paths)):
+        if Path(p).is_file():
+            out[hashlib.sha256(Path(p).read_bytes()).hexdigest()] = sinks.read_bed(p)
+    return out
+
+
+def fetch_context(bundle_dir, bundle_sinks, fetch_sinks=()) -> tuple[dict[str, SubOption], dict]:
+    """What estimate_sample needs to judge a fetch's sub-options and their classes (its `sub_options` and
+    `known_sinks`): the sub-options beside the bundle (sub_option_dir), and by hash the sinks BEDs a fetch
+    may have been made with: the bundle's, resources/experimental/*.bed, the sub-options' own and
+    `fetch_sinks` (e.g. a fetchplan PREFIX.sinks.bed). Without them a fetch of a plan that read a family
+    only at its sub-options would report the family as measured."""
+    d = sub_option_dir(bundle_dir)
+    return load_sub_options(d), sinks_by_hash([bundle_sinks, *sorted(Path(bundle_dir).resolve().parent.joinpath("experimental").glob("*.bed")),
+                                               *sorted(d.glob("*.bed")), *fetch_sinks])
+
+
+def sub_option_reads(counts: dict, opt: SubOption) -> int:
+    """The class's reads in placement bins that lie wholly inside the option's intervals (a bin clipped at
+    the contig's end), scored as sinks.capture scores a sink."""
+    top = {x["name"]: x["len"] for x in counts.get("contigs", ()) if isinstance(x, dict) and "len" in x}
+    width = sinks._widths(counts, [opt.parent])[opt.parent]
+    index = sinks._index([(c, s, e, opt.parent) for c, s, e in opt.intervals])
+    return int(sum(p["reads"] for p in counts["placements"] if p["class"] == opt.parent and p["contig"] != "*"
+                   and sinks._inside(index, opt.parent, p["contig"], p["start"], sinks._bin_end(p["start"], width, top.get(p["contig"])))))
+
+
+def sub_option_values(counts: dict, options: dict[str, SubOption], classes: dict[str, dict], curve_r: gcmodel.GCCurve,
+                      known_sinks: dict | None = None) -> dict[str, dict]:
+    """Per sub-option: reads (the class's reads inside its intervals, sub_option_reads), mass_bp and
+    mass_Mb (those reads times the class's mass per read: estimate_compositional of the class's reads,
+    so at the class's GC mix - in a scan the whole class's, in a fetch that read only the option's
+    intervals the option's own), and a status.
+
+    A scan holds every placement, so its values are measured ('ok'). A fetch holds only the reads of
+    the intervals it read: its values are 'ok' when its sinks BED is known here (`known_sinks`,
+    sha256 -> rows, as sinks_sha256 records it) and holds all the option's intervals under the class;
+    'not_fetched' (NaN) when that BED lacks some of them; 'unverified' (reads given, mass NaN) when
+    the BED is not known here. A class not counted, not compositional or not measured in the file
+    gives NaN and says why ('reason')."""
+    nan = float("nan")
+    by = {c["name"]: c for c in counts["classes"]}
+    fetch = counts.get("mode") == "fetch"
+    bed = (known_sinks or {}).get(counts.get("sinks_sha256")) if fetch else None
+    out = {}
+    for name, opt in options.items():
+        rec = dict(parent=opt.parent, reads=None, mass_bp=nan, mass_Mb=nan, status="ok")
+        cls = by.get(opt.parent)
+        measured = classes.get(opt.parent, {})
+        if name in by:
+            rec.update(status="name_clash", reason=f"the counts hold a class named {name}, as this sub-option of {opt.parent} is named")
+        elif cls is None:
+            rec.update(status="not_counted", reason=f"the counts hold no class {opt.parent}")
+        elif cls.get("kind") != "compositional":
+            rec.update(status="not_compositional", reason=f"{opt.parent} is {cls.get('kind')} in the counts; a sub-option's value is a mass")
+        elif "placement_bin" not in counts:
+            rec.update(status="no_placements", reason="the counts record no placements (written by an engine before them)")
+        elif measured.get("status") not in ("ok", "subset_only", "unverified"):
+            rec.update(status="class_not_measured",
+                       reason=f"{opt.parent} is not measured in this file ({measured.get('status')}: {measured.get('reason', '')})")
+        else:
+            reads = sub_option_reads(counts, opt)
+            rec["reads"] = reads
+            if fetch and bed is None:
+                rec.update(status="unverified", reason="a fetch made with a sinks BED not known here: pass that BED to `ngsdose estimate "
+                                                       "--fetch-sinks` to check that the fetch read all the option's intervals")
+            elif fetch:
+                top = {x["name"]: x["len"] for x in counts.get("contigs", ()) if isinstance(x, dict) and "len" in x}
+                index = sinks._index([(c, s, e, opt.parent) for c, s, e, n in bed if n in (opt.parent, "")])
+                # what lies past a contig's end is not sequence: an interval is held when its part on the contig is
+                miss = sum(1 for c, s, e in opt.intervals if s < top.get(c, e) and not sinks._inside(index, opt.parent, c, s, min(e, top.get(c, e))))
+                if miss:
+                    rec.update(reads=None, status="not_fetched",
+                               reason=f"{miss} of its {len(opt.intervals)} intervals are not among the fetch's {opt.parent} sinks")
+            if rec["status"] == "ok":
+                est = estimate_compositional(cls, curve_r)
+                rec["mass_bp"] = reads * est["mass_bp"] / cls["reads"] if reads else 0.0
+                rec["mass_Mb"] = rec["mass_bp"] / 1e6
+        out[name] = rec
+    return out
+
+
 def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features: dict | None = None,
                     region_tables: np.ndarray | None = None, L: int | None = None, window: int = 250,
                     min_kmers: int = 20, anchors: dict | None = None, contig_lengths: dict | None = None,
-                    regions: list[tuple[str, str]] | None = None) -> dict:
+                    regions: list[tuple[str, str]] | None = None, control_subsets: dict[str, frozenset] | None = None,
+                    experimental=None, sub_options: dict[str, SubOption] | None = None, known_sinks: dict | None = None) -> dict:
     """`regions`: the bundle's (name, role) list in the row order of `region_tables`; with it the
     tables are matched to the counts by name, without it they must correspond row for row.
+    `control_subsets`: the named subsets of the bundle's control regions that counts may have been
+    made with instead of all of them (align_region_tables); the curve is then fitted on the
+    regions present, and the result says which (`controls_subset`) and how many (`controls_used`,
+    the control regions in the counts, whatever set they are).
 
     A class the counts do not hold in full (contract.incomplete_sinks) or that was counted with
     another panel (contract.panel_mismatch) keeps a record with NaN values and a `status`; a
-    positional class the bundle has no panel entry or unit for is listed in `skipped_classes`."""
+    positional class the bundle has no panel entry or unit for is listed in `skipped_classes`,
+    unless `experimental` supplies one (with `experimental`, the reason of a class it has no unit for
+    also says where one was looked for).
+
+    `experimental` (resources.ExperimentalUnits, or anything with its `lookup(name, counts, pc)`,
+    which returns (PanelClass, unit sequence, source) or a reason string): units of positional
+    classes from experimental panels, which the bundle does not carry. Such a class is estimated
+    as the bundle's positional classes are - the same windows, masks and GC model - with status
+    `experimental`, and one difference: no anchor windows are known for it and no cohort has
+    measured its window efficiencies, so its headline `cn` is the single-sample estimate over all
+    usable windows (`cn_basis` "all", EXPERIMENTAL_ESTIMATOR; `cn_anchor` is NaN and `n_anchor`
+    None, as for an unestimated class, because the GC-rule bins are not anchor windows), and `cn_se_rel` is the
+    single-sample relative error of _cn_se_rel; `unit_source` and `unit_sha256` say which unit
+    was used. Its absolute level carries the unit's average
+    window efficiency (on 60 cohort genomes the all-window estimate of the 45S rDNA is 0.94-0.98 of
+    the anchor one, median 0.96; of DJ 1.00-1.03), so it is comparable between samples before it
+    is comparable with a known copy number.
+
+    `sub_options` (load_sub_options): named subsets of classes' sink intervals, reported under
+    `sub_options` (sub_option_values; `known_sinks` identifies the sinks BED of a fetch). A fetch that
+    read only such subsets of a class (contract.subset_only) leaves the class itself unmeasured,
+    status `subset_only`; a fetch whose sinks BED is not known here leaves a class with sub-options
+    unmeasured too, status `unverified` (contract.unverified_parents), since it may have read the
+    sub-options' intervals only."""
     check_build(counts, contig_lengths)
     if region_tables is not None and regions is not None:
-        counts, region_tables = align_region_tables(counts, region_tables, regions)
+        counts, region_tables = align_region_tables(counts, region_tables, regions, control_subsets)
     tab = nearest_table(counts, L)
     curve = _fit(counts, tab)
     qc = control_qc(counts, curve, region_tables)
@@ -389,37 +579,71 @@ def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features:
                                                 # the bundle's order, and the hash of their names says which order.
                                                 region_log_ratio=[round(float(x), 4) for x in np.log(np.maximum(qc.ratios, 1e-6))],
                                                 region_order_sha256=hashlib.sha256("\n".join(qc.names).encode()).hexdigest()),
+        controls_used=sum(1 for r in counts["regions"] if r.get("role", "control") == "control"),
         skipped_classes=[],
         classes={},
     )
+    if counts.get("controls_subset"):
+        res["controls_subset"] = counts["controls_subset"]
     if counts.get("regions_not_in_bundle"):
         res["regions_not_in_bundle"] = counts["regions_not_in_bundle"]
     sq = (counts.get("pipeline") or {}).get("sq_sha256")
     if sq:
         res["pipeline_sq_sha256"] = sq
-    incomplete = contract.incomplete_sinks(counts)
-    missing = set(counts.get("sinks_missing_classes") or [])
+    incomplete = contract.incomplete_sinks(counts, known_sinks)
+    missing = set(counts.get("sinks_missing_classes") or []) | set(contract.missing_from_bed(counts, known_sinks))
     mismatch = contract.panel_mismatch(counts, panel)
+    only = contract.subset_only(counts, sub_options, known_sinks) if sub_options else {}
+    unsure = contract.unverified_parents(counts, sub_options, known_sinks, only) if sub_options else {}
     for cls in counts["classes"]:
         name = cls["name"]
         pc = panel.classes.get(name)
         feats = (features or {}).get(name)
+        exp_unit = None
         if cls["kind"] == "positional" and (pc is None or name not in units):
             # needs the class's k-mer positions (what is callable) and its unit sequence (expected GC)
-            res["skipped_classes"].append(dict(name=name, kind=cls["kind"], reads=cls["reads"],
-                                               reason="not in the bundle panel" if pc is None else "no unit sequence in the bundle"))
-            continue
+            reason = "not in the bundle panel" if pc is None else "no unit sequence in the bundle"
+            found = experimental.lookup(name, counts, pc) if experimental is not None else None
+            if found is None and hasattr(experimental, "missing"):
+                found = experimental.missing(name)             # where a unit was looked for
+            if not isinstance(found, tuple):
+                res["skipped_classes"].append(dict(name=name, kind=cls["kind"], reads=cls["reads"],
+                                                   reason=reason if found is None else f"{reason}; {found}"))
+                continue
+            pc, exp_unit, source = found
+            feats = None
+            # the counts must have been made with the k-mers of this entry, as a bundle class with the bundle's
+            why = contract.panel_mismatch({"k": counts.get("k"), "classes": [cls]}, Panel(panel.k, {name: pc})).get(name)
+            mismatch = {n: v for n, v in mismatch.items() if n != name}
+            if why:
+                mismatch[name] = why.replace("the bundle panel", "the experimental panel")
         if name in incomplete:
             status = "no_sinks_in_fetch" if name in missing else "sinks_skipped"
             r = unestimated(cls, status, incomplete[name], pc, window, feats)
         elif name in mismatch:
             r = unestimated(cls, "panel_mismatch", mismatch[name], pc, window, feats)
+        elif name in only:
+            r = unestimated(cls, "subset_only", only[name], pc, window, feats)
+        elif name in unsure:
+            r = unestimated(cls, "unverified", unsure[name], pc, window, feats)
+        elif exp_unit is not None:
+            r = estimate_positional(cls, pc, exp_unit, panel.k, curve, R, window, min_kmers, None, None, headline="all")
+            # without anchor windows the GC-rule bin subset estimate_positional also reports is not an
+            # anchored value: leave it empty so that no table reads it as one
+            r.update(status="experimental", estimator=EXPERIMENTAL_ESTIMATOR, cn_se_rel=_cn_se_rel(r),
+                     cn_anchor=float("nan"), n_anchor=None)
         elif cls["kind"] == "positional":
             r = estimate_positional(cls, pc, units[name], panel.k, curve, R, window, min_kmers, feats, (anchors or {}).get(name))
         else:
             r = estimate_compositional(cls, curve_r)
+        if exp_unit is not None:
+            # where the unit was found (relative to the install root when under it) and what it held
+            r["unit_source"] = source
+            r["unit_sha256"] = hashlib.sha256(exp_unit.upper().encode()).hexdigest()
         r["dup_flag_frac"] = cls["dup_flagged"] / max(cls["reads"], 1)
         res["classes"][name] = r
+    if sub_options:
+        res["sub_options"] = sub_option_values(counts, sub_options, res["classes"], curve_r, known_sinks)
     return res
 
 

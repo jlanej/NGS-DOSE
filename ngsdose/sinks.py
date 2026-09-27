@@ -260,3 +260,174 @@ def capture(scan: dict, bed: list[tuple[str, int, int, str]]) -> dict[str, tuple
         if p["contig"] != "*" and _inside(index, p["class"], p["contig"], p["start"], _bin_end(p["start"], width[p["class"]], top.get(p["contig"]))):
             o[1] += p["reads"]
     return {k: (v[0], v[1]) for k, v in out.items()}
+
+
+STATS_COLUMNS = ("class", "rank", "contig", "start", "end", "bp", "scans", "share_median", "share_p10", "share_max", "reads_median",
+                 "share_per_read", "cum_capture_median", "cum_capture_p10")
+STATS_OPTIONAL = ("share_max",)                            # files written before it was added lack it
+HELD_OUT = "# held-out: "                                  # the header line that says whether the scans learned the intervals
+
+
+class IntervalTally:
+    """Per sink interval, over scan-mode counts: the share of the class's reads (unmapped included)
+    it holds, and the reads it holds of any class, fed one scan at a time (`add`).
+
+    A placement bin is scored as in `capture`: it counts only when all of it lies inside the class's
+    (merged) intervals, and then for the interval that holds its start. So the shares of a class's
+    intervals add up, in each scan, to the capture `capture` reports. The reads of an interval are
+    the 'all' counts (every mapped primary read) of the class's placement bins inside it: a scan
+    records them only for bins that hold class reads, so they are a lower bound on what reading the
+    interval returns (0 for scans written without them)."""
+
+    def __init__(self, bed):
+        rows = [r for r in bed if r[3]]
+        if len(rows) < len(bed):
+            raise ValueError(f"{len(bed) - len(rows)} sink intervals have no class column: interval statistics are per class")
+        self.rows = sorted(set(rows), key=lambda r: (r[3], r[0], r[1], r[2]))
+        self.index = _index(self.rows)
+        self.by: dict[tuple[str, str], tuple[list[int], list[int]]] = defaultdict(lambda: ([], []))     # (class, contig) -> (starts, row numbers)
+        for i, (contig, s0, _e0, cls) in enumerate(self.rows):
+            st, ix = self.by[(cls, contig)]
+            st.append(s0)
+            ix.append(i)
+        self.classes = sorted({r[3] for r in self.rows})
+        self.first = {}                                    # class -> its first row: rows are sorted by class
+        for i, r in enumerate(self.rows):
+            self.first.setdefault(r[3], i)
+        self.n = {c: sum(1 for r in self.rows if r[3] == c) for c in self.classes}
+        self.share: dict[str, list] = defaultdict(list)    # class -> one array (its intervals) per scan
+        self.reads: dict[str, list] = defaultdict(list)
+
+    def _row(self, cls, contig, a) -> int:
+        """The interval holding the bin's start (of overlapping ones, the one that starts last); called
+        only for a bin inside the class's intervals, so there is one."""
+        st, ix = self.by[(cls, contig)]
+        j = bisect_right(st, a) - 1
+        while self.rows[ix[j]][2] <= a:
+            j -= 1
+        return ix[j]
+
+    def add(self, counts: dict):
+        import numpy as np
+        top = {x["name"]: x["len"] for x in counts.get("contigs", ()) if isinstance(x, dict) and "len" in x}
+        have = {x["name"] for x in counts.get("classes", ())}
+        names = [c for c in self.classes if c in have]
+        width = _widths(counts, names)
+        total: dict[str, int] = defaultdict(int)
+        share = {c: np.zeros(self.n[c]) for c in names}
+        reads = {c: np.zeros(self.n[c]) for c in names}
+        for p in counts["placements"]:
+            cls = p["class"]
+            if cls not in share:
+                continue
+            total[cls] += p["reads"]
+            if p["contig"] == "*":
+                continue
+            a, b = p["start"], _bin_end(p["start"], width[cls], top.get(p["contig"]))
+            if _inside(self.index, cls, p["contig"], a, b):
+                i = self._row(cls, p["contig"], a) - self.first[cls]
+                share[cls][i] += p["reads"]
+                reads[cls][i] += p.get("all") or 0
+        for c in names:
+            if total[c]:                                   # a scan without reads of the class says nothing of its shares
+                self.share[c].append(share[c] / total[c])
+                self.reads[c].append(reads[c])
+
+    def table(self) -> list[dict]:
+        """One row per interval (STATS_COLUMNS), per class in order of decreasing share per read (the
+        interval's median share over its median reads; by share alone where scans carry no read
+        counts): the capture curve. cum_capture_* is the capture, over the scans, of the interval
+        and all ranked before it. share_max is the largest share the interval held in any one scan:
+        in every scan, the intervals of any subset together hold at least the capture of all of them
+        less the share_max of those left out, which bounds the capture of intervals kept in another
+        order than this one (`ngsdose fetchplan --crai` keeps them by share per byte)."""
+        import numpy as np
+        out = []
+        for c in self.classes:
+            if not self.share[c]:
+                continue
+            ix = range(self.first[c], self.first[c] + self.n[c])
+            sh = np.array(self.share[c])                   # scans x intervals
+            rd = np.array(self.reads[c])
+            med, p10, rmed, top = np.median(sh, axis=0), np.quantile(sh, 0.1, axis=0), np.median(rd, axis=0), sh.max(axis=0)
+            per = med / np.maximum(rmed, 1)
+            order = sorted(range(len(ix)), key=lambda j: (-per[j], -med[j], self.rows[ix[j]][0], self.rows[ix[j]][1]))
+            cum = np.cumsum(sh[:, order], axis=1)
+            cmed, cp10 = np.median(cum, axis=0), np.quantile(cum, 0.1, axis=0)
+            for rank, j in enumerate(order, 1):
+                contig, s0, e0, _ = self.rows[ix[j]]
+                out.append(dict(zip(STATS_COLUMNS, (c, rank, contig, s0, e0, e0 - s0, len(sh), float(med[j]), float(p10[j]), float(top[j]),
+                                                    float(rmed[j]), float(per[j]), float(cmed[rank - 1]), float(cp10[rank - 1])))))
+        return out
+
+
+def interval_stats(scan_counts, bed, allow_cut: bool = False) -> list[dict]:
+    """`IntervalTally(bed)` over scan-mode counts (dicts or paths, read one at a time)."""
+    from .io import load_counts
+    t = IntervalTally(bed)
+    for item in scan_counts:
+        c = item if isinstance(item, dict) else load_counts(item)
+        check_scan(c, allow_cut)
+        t.add(c)
+    return t.table()
+
+
+def write_stats(fh, table: list[dict], note: str = "", held_out: bool | None = None):
+    """The statistics as TSV, after '#' lines: `note` (one line per line of it) and, when `held_out` is
+    given, a HELD_OUT line saying whether the scans were ones the intervals were learned from
+    (`ngsdose fetchplan` repeats it where it reports the expected capture)."""
+    for line in note.splitlines():
+        fh.write(f"# {line}\n")
+    if held_out is not None:
+        fh.write(HELD_OUT + ("yes: none of these scans was used to learn the intervals\n" if held_out else
+                             "no: in-sample, the scans the intervals were learned from\n"))
+    fh.write("\t".join(STATS_COLUMNS) + "\n")
+    for r in table:
+        fh.write("\t".join(f"{r[k]:.6g}" if isinstance(r[k], float) else str(r[k]) for k in STATS_COLUMNS) + "\n")
+
+
+def read_stats(path) -> dict[str, list[dict]]:
+    """class -> its rows of a `write_stats` file, in rank order. A file written before share_max was
+    added (STATS_OPTIONAL) is read with share_max None."""
+    from .io import _open
+    out: dict[str, list[dict]] = defaultdict(list)
+    head = None
+    with _open(path) as fh:
+        for i, line in enumerate(fh, 1):
+            if line.startswith("#") or not line.strip():
+                continue
+            p = line.rstrip("\n").split("\t")
+            if head is None:
+                head = p
+                miss = [k for k in STATS_COLUMNS if k not in head and k not in STATS_OPTIONAL]
+                if miss:
+                    raise ValueError(f"{path}: not a sinks statistics file (`ngsdose sinks --stats`): no column {', '.join(miss)}")
+                continue
+            if len(p) != len(head):
+                raise ValueError(f"{path}:{i}: {len(p)} columns, the header has {len(head)}")
+            r = dict(zip(head, p))
+            try:
+                for k in ("rank", "start", "end", "bp", "scans"):
+                    r[k] = int(r[k])
+                for k in STATS_COLUMNS[7:]:
+                    r[k] = float(r[k]) if k in r else None
+            except ValueError as e:
+                raise ValueError(f"{path}:{i}: {e}") from e
+            out[r["class"]].append(r)
+    for rows in out.values():
+        rows.sort(key=lambda r: r["rank"])
+    return dict(out)
+
+
+def stats_held_out(path) -> bool | None:
+    """Whether a statistics file says its scans were held out from learning its intervals (its
+    HELD_OUT header line): True, False, or None when it does not say."""
+    from .io import _open
+    with _open(path) as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                break
+            if line.startswith(HELD_OUT):
+                v = line[len(HELD_OUT):].strip().lower()
+                return True if v.startswith("yes") else False if v.startswith("no") else None
+    return None

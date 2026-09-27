@@ -1,0 +1,18 @@
+# A named subset of the learned sinks in ../sinks.satellites.bed (NYGC bwa-mem alignments of the 1000 Genomes 30x cohort to the
+# GRCh38 analysis set; learned from 100 whole-file scans, engine fae1124): the fourth column names the class, so a fetch counts
+# that class inside these intervals, and `ngsdose estimate` reports DXZ1.mass_Mb, DXZ1.reads and DXZ1.status for any counts
+# file (scan or fetch) from the class's placements inside them (a placement bin counts only when all of it lies inside).
+# Numbers below: held-out scans are the 1,648 cohort scans not among those 100; MB = bytes of the CRAM slices the intervals
+# overlap with their containers' compression headers (as fetchplan counts them), median (range) over 13 NYGC .crai; reads
+# per control 5' end is the class's reads inside / the control-region 5' ends.
+# DXZ1: the alpha-satellite HOR array of chrX's centromere, as aSatHOR reads land there (chrX:58.0-63.0 Mb of GRCh38, the
+# centromere model): the aSatHOR sink intervals that lie inside that window.
+# Measures: the total DXZ1 array mass over all X chromosomes of the genome (twice a man's in a woman with two X).
+# Costs 9.5 MB (6.6-15.4), 0.05% of a 30x CRAM, none of it in today's fetch. Held-out share of aSatHOR: men 0.021, women 0.043;
+# reads per control 5' end, women / men median 2.02.
+# Truth: the HPRC release-2 CenSat active HOR array of chrX (S3CXH1L), both haplotypes summed, for the scanned genomes with
+# an assembly: n = 124, Pearson r 0.992, Spearman 0.989 (men n = 60, r 0.981; women n = 64, r 0.955); and sex.
+chrX	58379000	58391000	aSatHOR
+chrX	58429000	58561000	aSatHOR
+chrX	58599000	62421000	aSatHOR
+chrX	62459000	62701000	aSatHOR

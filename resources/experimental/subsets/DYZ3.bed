@@ -1,0 +1,18 @@
+# A named subset of the learned sinks in ../sinks.satellites.bed (NYGC bwa-mem alignments of the 1000 Genomes 30x cohort to the
+# GRCh38 analysis set; learned from 100 whole-file scans, engine fae1124): the fourth column names the class, so a fetch counts
+# that class inside these intervals, and `ngsdose estimate` reports DYZ3.mass_Mb, DYZ3.reads and DYZ3.status for any counts
+# file (scan or fetch) from the class's placements inside them (a placement bin counts only when all of it lies inside).
+# Numbers below: held-out scans are the 1,648 cohort scans not among those 100; MB = bytes of the CRAM slices the intervals
+# overlap with their containers' compression headers (as fetchplan counts them), median (range) over 13 NYGC .crai; reads
+# per control 5' end is the class's reads inside / the control-region 5' ends.
+# DYZ3: the alpha-satellite HOR array of chrY's centromere, as aSatHOR reads land there (chrY:10.0-10.7 Mb of GRCh38, the
+# centromere model): the aSatHOR sink intervals that lie inside that window.
+# Measures: the DYZ3 array mass of the Y chromosome(s); near zero without a Y.
+# Costs 3.3 MB (2.1-6.8), 2.2 MB beyond today's fetch. Held-out reads median: men 101,635, women 1,586; per control 5' end,
+# 88.5% of men lie above the largest female value and 99.9% of women below the smallest male one.
+# Truth: sex; the HPRC release-2 CenSat HOR array of chrY (S4CYH1L), men with an assembly: n = 60, Pearson r 0.835,
+# Spearman 0.874.
+chrY	10069000	10091000	aSatHOR
+chrY	10199000	10271000	aSatHOR
+chrY	10309000	10551000	aSatHOR
+chrY	10589000	10631000	aSatHOR

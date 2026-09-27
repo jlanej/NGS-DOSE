@@ -131,3 +131,60 @@ def test_sinks_to_stdout_leaves_stdout_open(tmp_path, capsys):
     assert not sys.stdout.closed
     print("after")
     assert capsys.readouterr().out == "c1\t99000\t102000\tunit\nafter\n"
+
+
+def with_all(s, all_of):
+    """The scan with 'all' counts (every mapped read of the bin) set per (class, start)."""
+    for p in s["placements"]:
+        p["all"] = all_of.get((p["class"], p["start"]), p["reads"])
+    return s
+
+
+def test_interval_stats_add_up_to_the_capture_and_rank_by_share_per_read(tmp_path):
+    """Two TEL sinks: one small and pure, one larger in share but among 100 times as many other reads.
+    Per scan the shares add up to the capture; the pure one ranks first; the curve ends at the capture."""
+    import numpy as np
+    s = [with_all(scan("a", [(990_000, 2000), (500_000, 6000), (200_000, 3)], [(100_000, 1000)]), {("TEL", 500_000): 600_000}),
+         with_all(scan("b", [(990_000, 1000), (500_000, 5000), (200_000, 4)], [(100_000, 900)]), {("TEL", 500_000): 500_000})]
+    rows, cap = sinks.learn(s, classes=["TEL"])
+    t = sinks.interval_stats(s, rows)
+    tel = [r for r in t if r["class"] == "TEL"]
+    assert [(r["rank"], r["start"], r["end"]) for r in tel] == [(1, 989_000, 1_000_000), (2, 499_000, 511_000)]
+    sh_a, sh_b = [2000 / 8003, 6000 / 8003], [1000 / 6004, 5000 / 6004]
+    assert tel[0]["share_median"] == pytest.approx(np.median([sh_a[0], sh_b[0]])) and tel[1]["reads_median"] == 550_000
+    assert tel[0]["share_p10"] == pytest.approx(np.quantile([sh_a[0], sh_b[0]], 0.1))
+    assert tel[-1]["cum_capture_median"] == pytest.approx(np.median(list(cap["TEL"].values())))
+    assert tel[-1]["cum_capture_p10"] == pytest.approx(np.quantile(list(cap["TEL"].values()), 0.1))
+    assert tel[0]["cum_capture_median"] == pytest.approx(tel[0]["share_median"]) and all(r["scans"] == 2 for r in tel)
+    unit = [r for r in t if r["class"] == "unit"]
+    assert len(unit) == 1 and unit[0]["cum_capture_median"] == 1.0
+    # the CLI: learning, and evaluating a BED, write the same statistics; read_stats reads them back
+    paths = []
+    for x in s:
+        paths.append(tmp_path / f"{x['sample']}.json")
+        paths[-1].write_text(json.dumps(x))
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", *map(str, paths), "--classes", "TEL", "-o", str(tmp_path / "s.bed"),
+                        "--stats", str(tmp_path / "learn.tsv")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", *map(str, paths), "--evaluate", str(tmp_path / "s.bed"),
+                        "--stats", str(tmp_path / "eval.tsv")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    a, b = sinks.read_stats(tmp_path / "learn.tsv"), sinks.read_stats(tmp_path / "eval.tsv")
+    assert a == b and [x["start"] for x in a["TEL"]] == [989_000, 499_000]
+    assert a["TEL"][1]["cum_capture_median"] == pytest.approx(tel[1]["cum_capture_median"], rel=1e-5)
+
+
+def test_interval_stats_attribute_a_bin_once_and_need_classes(tmp_path):
+    """Overlapping intervals of a class: a bin is counted once, for the interval holding its start;
+    a bin running past the class's intervals counts for none. A BED row without a class is refused."""
+    s = scan("a", [(20_000, 10), (30_000, 20), (60_000, 40)], [], length=100_000)
+    bed = [("c1", 15_000, 35_000, "TEL"), ("c1", 25_000, 45_000, "TEL"), ("c1", 55_000, 65_000, "TEL")]
+    t = {(r["start"], r["end"]): r for r in sinks.interval_stats([s], bed)}
+    assert t[(15_000, 35_000)]["share_median"] == pytest.approx(10 / 70) and t[(25_000, 45_000)]["share_median"] == pytest.approx(20 / 70)
+    assert t[(55_000, 65_000)]["share_median"] == 0.0                     # 60,000-70,000 runs past 65,000
+    assert max(r["cum_capture_median"] for r in t.values()) == pytest.approx(sinks.capture(s, bed)["TEL"][1] / 70)
+    with pytest.raises(ValueError, match="no class column"):
+        sinks.IntervalTally([("c1", 0, 10, "")])
+    (tmp_path / "x.tsv").write_text("class\trank\n")
+    with pytest.raises(ValueError, match="not a sinks statistics file"):
+        sinks.read_stats(tmp_path / "x.tsv")

@@ -1,0 +1,93 @@
+# A named subset of the learned sinks in ../sinks.satellites.bed (NYGC bwa-mem alignments of the 1000 Genomes 30x cohort to the
+# GRCh38 analysis set; learned from 100 whole-file scans, engine fae1124): the fourth column names the class, so a fetch counts
+# that class inside these intervals, and `ngsdose estimate` reports DYZ2.mass_Mb, DYZ2.reads and DYZ2.status for any counts
+# file (scan or fetch) from the class's placements inside them (a placement bin counts only when all of it lies inside).
+# Numbers below: held-out scans are the 1,648 cohort scans not among those 100; MB = bytes of the CRAM slices the intervals
+# overlap with their containers' compression headers (as fetchplan counts them), median (range) over 13 NYGC .crai; reads
+# per control 5' end is the class's reads inside / the control-region 5' ends.
+# DYZ2: the male-specific HSat1B (the DYZ2 repeat of Yq12), as HSat1B reads land: mostly not on chrY (the 13 chrY HSat1B sinks
+# hold 0.16% of it) but on autosomes, chrX and decoys. The 78 HSat1B sink intervals chosen on the 100 training scans (50 men, 50
+# women) by: men's median >= 100 HSat1B reads, and women's median < 2% of men's: 66 autosomal, 7 on chrX, 3 on decoys, 2 on chrY.
+# Measures: an index of male-specific (Y-derived) HSat1B: its part in these male-only intervals, about a quarter of the
+# Y-derived part (21.7% of men's HSat1B), not the whole of it; near zero without Yq12 heterochromatin.
+# Costs 34.3 MB (22.6-52.1). Held-out share of HSat1B: men 0.217, women 0.003; reads median men 313,740, women 587; per
+# control 5' end, 69.6% of men lie above the largest female value.
+# Truth: sex only (the HPRC release-2 assemblies rarely close Yq12: r 0.07 against annotated Y HSat1B, men, n = 27).
+chr1	10179000	10191000	HSat1B
+chr1	52789000	52801000	HSat1B
+chr10	12689000	12701000	HSat1B
+chr10	102629000	102641000	HSat1B
+chr10	108079000	108091000	HSat1B
+chr10	108569000	108581000	HSat1B
+chr10	114079000	114091000	HSat1B
+chr11	125239000	125251000	HSat1B
+chr11	129669000	129681000	HSat1B
+chr12	6899000	6911000	HSat1B
+chr12	26029000	26041000	HSat1B
+chr13	70849000	70861000	HSat1B
+chr13	86769000	86781000	HSat1B
+chr15	65799000	65811000	HSat1B
+chr16	7289000	7301000	HSat1B
+chr17	50879000	50891000	HSat1B
+chr17	72319000	72331000	HSat1B
+chr18	49439000	49451000	HSat1B
+chr19	179000	191000	HSat1B
+chr19	7029000	7041000	HSat1B
+chr19	8049000	8061000	HSat1B
+chr2	18749000	18761000	HSat1B
+chr2	124449000	124461000	HSat1B
+chr2	125889000	125901000	HSat1B
+chr2	167459000	167471000	HSat1B
+chr2	212189000	212201000	HSat1B
+chr2	213829000	213841000	HSat1B
+chr2	217119000	217131000	HSat1B
+chr20	16139000	16151000	HSat1B
+chr20	54809000	54821000	HSat1B
+chr3	509000	531000	HSat1B
+chr3	18819000	18831000	HSat1B
+chr3	28849000	28861000	HSat1B
+chr3	51519000	51531000	HSat1B
+chr3	62589000	62601000	HSat1B
+chr3	74079000	74091000	HSat1B
+chr3	107579000	107591000	HSat1B
+chr3	147929000	147941000	HSat1B
+chr3	157779000	157791000	HSat1B
+chr3	160939000	160951000	HSat1B
+chr3	173919000	173931000	HSat1B
+chr4	5309000	5321000	HSat1B
+chr4	17939000	17951000	HSat1B
+chr4	31829000	31841000	HSat1B
+chr4	46759000	46771000	HSat1B
+chr4	110079000	110091000	HSat1B
+chr4	137159000	137171000	HSat1B
+chr4	150479000	150491000	HSat1B
+chr5	55999000	56011000	HSat1B
+chr5	84169000	84181000	HSat1B
+chr5	145369000	145381000	HSat1B
+chr5	167789000	167801000	HSat1B
+chr6	73429000	73441000	HSat1B
+chr6	118639000	118651000	HSat1B
+chr6	129709000	129721000	HSat1B
+chr6	138189000	138201000	HSat1B
+chr6	160649000	160661000	HSat1B
+chr6	161899000	161911000	HSat1B
+chr7	4539000	4551000	HSat1B
+chr7	24349000	24361000	HSat1B
+chr7	56199000	56211000	HSat1B
+chr7	145299000	145311000	HSat1B
+chr8	106889000	106901000	HSat1B
+chr8	112909000	112921000	HSat1B
+chr9	78779000	78791000	HSat1B
+chr9	93739000	93751000	HSat1B
+chrUn_JTFH01000876v1_decoy	0	1067	HSat1B
+chrUn_JTFH01001478v1_decoy	0	1432	HSat1B
+chrUn_JTFH01001512v1_decoy	0	1367	HSat1B
+chrX	29349000	29361000	HSat1B
+chrX	39089000	39101000	HSat1B
+chrX	57689000	57701000	HSat1B
+chrX	67409000	67421000	HSat1B
+chrX	68479000	68491000	HSat1B
+chrX	78259000	78271000	HSat1B
+chrX	104579000	104591000	HSat1B
+chrY	12369000	12381000	HSat1B
+chrY	17269000	17281000	HSat1B
