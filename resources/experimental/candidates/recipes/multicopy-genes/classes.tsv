@@ -1,0 +1,41 @@
+#name	contig	start0	end	circular	build_mode	role	description
+KIV2	chr6	160617276	160622822	1	plain	class	LPA kringle IV type 2 unit (KIV-2b; GRCh38 carries 6 KIV-2 units at chr6:160,611,722-160,645,006)
+C4	chr6	31982056	32002681	0	nwin:2627-8994	class	C4A gene (RefSeq NM_001252204); unit offsets 2,627-8,994, the HERV-K(C4) insertion, are class HERVC4 and N-masked here
+HERVC4	chr6	31984683	31991050	0	plain	class	HERV-K(C4) insertion of C4A intron 9 (6,367 bp; absent from short C4 genes, e.g. chr6_GL000251v2_alt)
+CYP21A2	chr6	32038414	32041642	0	plain	class	CYP21A2 gene; CYP21A1P is background
+AMY1	chr1	103655518	103664551	0	plain	class	AMY1A gene (AMY1A/B/C are 99.9% identical)
+AMY2B	chr1	103554643	103579534	0	plain	class	AMY2B gene
+AMY2A	chr1	103617426	103625780	0	plain	dropped	AMY2A gene (tested; the AMY2Ap partial copies are background)
+SMN	chr5	70924940	70953012	0	diffN:SMN2g	class	SMN1 gene; every base where GRCh38 SMN2 differs N-masked: k-mers common to SMN1 and SMN2 (total SMN)
+SMN1	chr5	70924940	70953012	0	psvonly:SMN2g	class	SMN1 gene; only k-mers covering a base where GRCh38 SMN2 differs (32 sites incl. c.840C>T at chr5:70,951,946)
+RHD	chr1	25272485	25330445	0	plain	class	RHD gene; RHCE and the Rhesus boxes are background
+HBA	chr16	171826	173726	0	plain	class	HBA2 homology block (Z box + HBA2), duplicated at HBA1 chr16:175,385-177,538
+GSTM1	chr1	109687816	109693745	0	plain	class	GSTM1 gene; GSTM2/4/5 are background
+GSTT1	chr22_KI270879v1_alt	270307	278486	0	plain	class	GSTT1 gene, only on the alt contig in GRCh38 (primary chr22 carries the deletion)
+UGT2B17	chr4	68537172	68576322	0	plain	class	UGT2B17 gene; UGT2B15 is background
+LCE3BC	chr1	152583066	152615264	0	plain	class	LCE3C_LCE3B deletion interval (1KGP 30x SV HGSV_11490)
+APOBEC3B	chr22	38961989	38992269	0	plain	class	APOBEC3B deletion interval (phase-3 29.5-kb deletion lifted to GRCh38, trimmed 300 bp each side)
+HPR	chr16	72063225	72077245	0	plain	class	HPR gene; HP is background
+HPdup	chr16	72056410	72058130	0	plain	class	HP exon 3-4 segment duplicated in the Hp2 allele (GRCh38 is Hp2: second copy chr16:72,058,135-72,059,845)
+CCL3L	chr17	36190000	36216000	0	plain	class	CCL3L3-CCL4L2 duplication block; CCL3/CCL4 (94.5%) are background
+ORM1	chr9	114323097	114327479	0	plain	class	ORM1 gene and 1 kb downstream; ORM2 is background. The 1-kb upstream flank is left out: in real reads ORM2-locus alleles carry its k-mers (NA12878: 58 reads at ORM2)
+DEFB	chr8	7805000	7900000	0	plain	class	8p23.1 beta-defensin repeat core in REPP (DEFB107A-DEFB4A); REPD copy at chr8:7.41-7.52 Mb
+FCGR3	chr1	161623195	161631047	0	plain	class	FCGR3B gene; FCGR3A (98%) is a co-copy (FCGR3A+B together)
+DEFA1A3	chr8	6976262	6995379	1	plain	class	DEFA1A3 tandem unit (19,117 bp, one period: the next unit starts at chr8:6,995,380; 2 full + 1 partial unit in GRCh38)
+NPY4R	chr10	46396228	46514258	0	plain	class	NPY4R segmental duplication copy 1 (inverted copy 2 at chr10:47.87-47.99 Mb holds NPY4R2)
+SULT1A	chr16	28590812	28615634	0	plain	class	SULT1A2+SULT1A1 tandem duplicon pair (one class; k-mers shared by the two duplicons occur twice and drop)
+RASA4	chr7	102481214	102580391	0	plain	class	7q22.1 99-kb SD copy A (RASA4B, UPK3BL2, SPDYE2, POLR2J3); copy B chr7:102,580,392-102,679,452
+NOTCH2NL	chr1	146148864	146229021	0	plain	class	NOTCH2NLA gene; NOTCH2NLB/C/R and the NOTCH2 5' region are co-copies
+TBC1D3	chr17	36165682	36176636	0	plain	class	TBC1D3B gene; the 17q12 TBC1D3 paralogs are co-copies, the 17q23 pseudogenes background
+SMN2g	chr5	70049522	70077595	0	-	paralog	SMN2 gene (defines the SMN1/SMN2 sites)
+CYP21A1P	chr6	32005635	32008909	0	-	paralog	CYP21A1P pseudogene (leakage check)
+RHCE	chr1	25362248	25420825	0	-	paralog	RHCE gene (leakage check)
+HPgene	chr16	72054504	72061055	0	-	paralog	HP gene (leakage check for HPR)
+HPRgene	chr16	72063225	72077245	0	-	paralog	HPR gene (leakage check for HPdup)
+ORM2	chr9	114328868	114334251	0	-	paralog	ORM2 gene +-1 kb (leakage check)
+KIVflank5	chr6	160560000	160611721	0	-	paralog	LPA KIV-4..KIV-10 and KIV-3 (leakage check)
+KIVflank3	chr6	160645006	160680000	0	-	paralog	LPA KIV-1 to the 5' end (leakage check)
+AMY2Ap	chr1	103713474	103719905	0	-	paralog	AMY2A partial copy (AMYP1 region; leakage check)
+CCL3blk	chr17	36083697	36108730	0	-	paralog	CCL3-CCL4 block (leakage check for CCL3L)
+UGT2B15	chr4	68640000	68680000	0	-	paralog	UGT2B15 region (leakage check)
+GSTM2to5	chr1	109660000	109687000	0	-	paralog	GSTM4/GSTM2 region (leakage check)

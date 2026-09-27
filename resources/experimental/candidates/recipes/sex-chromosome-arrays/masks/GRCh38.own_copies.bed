@@ -1,0 +1,10 @@
+# Own copies of the paralog-pair classes, one class per build (build.sh step 4b): CDY1 and CDY2 loci as in
+# GRCh38.sexarr_loci.bed; OPN1LW/OPN1MW the exon-5 +-300 bp window of each LW / MW gene, padded 500 bp.
+chrY	24044264	24049016	CDY1
+chrY	25621114	25625866	CDY1
+chrY	17876445	17881220	CDY2
+chrY	18024786	18029561	CDY2
+chrX	154155493	154157333	OPN1LW
+chrX	154192607	154194447	OPN1MW
+chrX	154229747	154231587	OPN1MW
+chrX	154267551	154269391	OPN1MW
