@@ -184,7 +184,10 @@ fraction of the class's reads in those bins, is reported as `gc_supported_fracti
 A class whose counts cannot be trusted is reported with every value NaN and a `status`, never
 with a number: a fetch that lacked sinks for it (`no_sinks_in_fetch`) or left some of them out
 because the file's header lacks their contigs (`sinks_skipped`), or counts made with a panel whose
-k, unit length or k-mer count differs from the bundle's (`panel_mismatch`). A positional class
+k, unit length or k-mer count differs from the bundle's (`panel_mismatch`); or a satellite
+family with sub-options that a fetch read only at them (`subset_only`), or through a sinks BED
+`estimate` does not know, so that which of its intervals were read cannot be told (`unverified`:
+aSatHOR, HSat1B and HSat3, until `--fetch-sinks` names the BED; section 4). A positional class
 that the bundle has no panel entry or unit for is listed in `skipped_classes`.
 
 The denominator is not a separate quantity: it is the level of λ. It is made robust by
@@ -293,15 +296,157 @@ touches the alignment again, so models can be revised without re-reading a bioba
   A class can be fetched only if the sinks BED has intervals for it; in the shipped bundle these
   are the positional classes (rDNA45S, rDNA5S, DJ) and TEL. The satellite families have no
   shipped sinks and are measured by scan, unless sinks are learned for them from scans of the
-  same pipeline (`ngsdose sinks --classes`; section 5). Sink intervals on contigs the file's
+  same pipeline (`ngsdose sinks --classes`; section 5); for NYGC bwa-mem an experimental set,
+  learned from 100 cohort scans, is in `resources/experimental/sinks.satellites.bed`, and no
+  fetch through it has been compared with a scan yet. Sink intervals on contigs the file's
   header lacks cannot be fetched: they are left out with a warning and recorded per class
   (`sinks_skipped`: intervals and bp), and `ngsdose estimate` reports such a class as NaN
-  (section 3). When the sinks BED names its classes, a fetch refuses a loaded class that keeps
-  no interval, whether the BED lacks it or every interval of it is on an absent contig, unless
-  `--allow-missing-sinks` is given; the gap is then recorded in `sinks_missing_classes`.
+  (section 3). When the sinks BED names its classes, a fetch by an engine since 645ae55 refuses a
+  loaded class that keeps no interval, whether the BED lacks it or every interval of it is on an
+  absent contig. With `--allow-missing-sinks` (also since 645ae55) it is counted, and the gap is
+  recorded in `sinks_missing_classes`; `--classes` (engines from 2026-09-26 on) can leave such a
+  class out: it is then neither counted nor listed. fae1124, the engine of the running cohort, has
+  none of the three: it does not refuse, it counts such a class only where its reads fall inside
+  other intervals without saying so, so `ngsdose fetchplan` refuses to plan such a fetch for it
+  (below: what a fetch costs).
   `ngs-dose plan` writes the same interval set (without the unmapped bin) as BED. Sites that must
   cut the reads out with `samtools view -M -L` then count the cut in fetch mode (section 15);
   `plan --unmapped` prints the samtools steps that add the unmapped bin to the cut.
+
+### What a fetch costs, and how it is chosen
+
+A fetch decodes whole CRAM slices, so its cost is the bytes of every slice whose alignment span
+overlaps one of its intervals, not the bases of the intervals. `ngsdose/cost.py` computes it from
+a CRAM's own index: slices are keyed by container and slice offset, so a slice that several
+intervals or options share is counted once (in HG00096, 327 slices, 190 MB, are each listed under
+2 to 329 contigs, median 6, one under 329 of which 328 are HLA contigs; the listings are on decoy,
+HLA, alt and unplaced contigs), a long slice behind short ones is still
+found, and each container's compression header is added once (109 MB, 0.7%, of HG00096's
+15.74-GB file). The index numbers contigs by their place in the header, so the contig order comes
+from the reference's `.fai` or `.dict`, or `samtools view -H`; a counts file's `contigs` list will
+not do, as it holds only the contigs that held reads (2,168 of 3,366 for HG00096). The index must
+be the CRAM's own: an index of another file of the same sample gave wrong numbers, and nothing in
+the index alone shows it. `ngsdose fetchplan` uses these costs to choose what a fetch reads.
+
+- **Where the bytes go.** On 13 NYGC bwa-mem CRAMs (median 16.5 GB), the controls with all of the
+  bundle's sinks (rDNA45S, rDNA5S, DJ, TEL: the `core_tel` preset, NGS-DOSE-1000G's fetch
+  configuration on an image newer than fae1124) read 522.7 MB per genome, 3.09% of the file
+  (medians). What each option costs alone, and what other plans cost, is in
+  [fetch_examples.md](fetch_examples.md), which `resources/build/fetch_examples.sh` writes from
+  `fetchplan` on the same 13 indexes; this document does not repeat those figures. The control
+  file is always read; alone, its 800 control regions cost 179.1 MB, the 180 truth regions
+  38.2 MB and chrM and chrEBV 10.0 MB (medians over the 13, padded as fetched). The bytes are
+  set by the reads the intervals share their slices with. The smallest possible cost of a class
+  is its share of the primary reads times the file size; against it, rDNA45S costs 3.7 times that
+  floor (a floor of 57.7 MB), HSat2 2.9, the α-satellite HORs 1.9, but TEL 115 (a floor of
+  1.2 MB) and SATR 160. The ten satellite
+  families are 4.79% of all reads, so no fetch of all of them can be cheap. One 12-kb pile-up
+  bin, chr2:32,909,000–32,921,000 (1.3 M reads in HG00096's scan, few of any class, and inside the
+  sinks of TEL, rDNA45S and eight satellite families), costs 95.4 MB alone (69.5–126.2); without
+  it the lowest held-out capture (1,375 scans) would fall from 99.39% to 96.46% for TEL and from
+  99.89% to 99.80% for rDNA45S. It stays in the sinks; a capture target can drop it from rDNA45S, but TEL keeps it
+  at targets above about 0.979 (below).
+- **The menu.** `resources/fetch_menu.tsv` lists every option: the controls, the unmapped bin, each
+  class with its panel, sinks file and interval statistics, a status (`shipped`: sinks in the bundle;
+  `experimental`: sinks learned from scans, not in the bundle; `candidate`: no sinks), a tier (A
+  core, B shipped and measured, C experimental with a named question and truth data, D
+  experimental, costly or of lower capture) and presets. A row of kind `subset` names part of a
+  class's sinks as an option of its own (below). Its tiers and presets are a first assignment,
+  meant to be edited. `fetchplan --classes` and `--preset` select by name; `--budget-mb` adds
+  options in tier order, cheapest first within a tier, and stops at the first that does not fit,
+  so a lower tier never displaces a higher one (`--fill` goes on past it); the controls count
+  toward the budget. A candidate is never fetched: its panel goes to `PREFIX.scan_panels.txt`, for
+  the scans that will learn its sinks. `shipped` does not mean that a fetch has been compared with
+  a scan for every such class: for rDNA45S, rDNA5S and DJ the cohort's fetches return what the
+  scans placed in the sinks (fetch / scan reads inside them 1.00000–1.00019 over 1,748 genomes),
+  but those fetches did not load TEL, so TEL's support is, as for the satellites, the capture of
+  scan placements (99.39 / 99.86% held out, min / median).
+- **Capture targets.** `ngsdose sinks --evaluate BED --stats FILE` writes, per interval, its share
+  of the class in each scan (median, 10th percentile and the largest in any one scan), the reads of
+  any class in its placement bins, and the cumulative capture with intervals ranked by share of the
+  class per read of any class; `--held-out` records that the scans were not used to learn the
+  intervals, and `fetchplan` says for each class whether its expected capture is held out, in-sample
+  or of unrecorded provenance. A bin is scored as in `capture` and attributed to one interval, so in
+  each scan the shares add up to the capture exactly, and the full-set cumulative capture equals
+  `--evaluate`'s median and 10th percentile. The bundle's sinks have such statistics from 1,375
+  cohort scans that none of their intervals was learned from (`resources/GRCh38/sinks.stats.tsv`:
+  the 1,748 counted by 2026-09-25, less the 372 TEL was learned from and HG02258); held-out capture,
+  min / 10th percentile / median, is 99.89 / 99.93 / 99.95% for rDNA45S, 99.93 / 99.97 / 99.98% for
+  rDNA5S, 99.65 / 99.72 / 99.76% for DJ and 99.39 / 99.79 / 99.86% for TEL. The satellites' come
+  from the 1,648 scans held out from their sinks (`resources/experimental/sinks.satellites.stats.tsv`,
+  marked `# held-out: yes`). Both files carry the largest share (`share_max`), so every class of the
+  menu can be trimmed per byte. `fetchplan --capture F` keeps, per class, the
+  intervals of highest yield until the capture reaches F at the 10th percentile (or the median).
+  Without an index, yield is share per read and the expected capture is the curve's. With `--crai`,
+  yield is share per byte of the interval's own slices, so an interval of low share on costly
+  slices (a decoy slice shared with other contigs, a pile-up bin) is among the first dropped. The
+  chr2:32.91 Mb pile-up bin is one of rDNA45S's first drops, but it holds 1.3% of TEL's reads in
+  the median held-out scan (up to 3.4%), so TEL keeps it at targets above about 0.979 and drops it
+  below that. The stats file holds quantiles of the per-read curve, not per-scan shares, so the
+  per-byte expected capture is a lower bound that holds scan by scan: the larger of the full
+  capture less the largest share of each dropped interval, and the per-read curve up to the first
+  interval not kept. Summing median shares instead overstated HSat3 by up to 0.28. Against each
+  held-out scan's own capture, at targets of 0.95–0.999, the bound was never above the truth for
+  the bundle's classes, and for the satellites never by more than the file's six-digit rounding.
+  Because the bound is conservative, the per-read set can reach the target with fewer bytes;
+  `fetchplan` then keeps it (`order` in the plan says which), so an index never makes a plan
+  dearer. Classes share intervals and slices. An interval that another selected class keeps is read
+  anyway, so every class that has it keeps it; with `--crai`, so is any interval whose slices the
+  plan reads for another option, and each class is trimmed again with those slices free. A class
+  can therefore keep more intervals in a larger plan: at 0.995 rDNA45S drops the pile-up bin when
+  TEL is not in the plan, and keeps it, read for TEL at no extra cost, when TEL is. Per option, the plan
+  reports `mb_saved`, what its trimming saved of the plan with the rest of the plan as it is
+  (slices another option reads are no saving, so the options' savings need not add up to the
+  plan's, which a note gives), and `capture_lost`. A sub-option is never trimmed: it is fetched
+  whole. HSat1B is not trimmed at the default 10th-percentile statistic: all its sinks hold
+  97.17% there, so any target above 0.9717 keeps all its intervals. With `--capture-stat median`
+  its full capture is 0.990, so a target up to 0.990 does trim it.
+  [fetch_examples.md](fetch_examples.md) shows trimmed plans (examples 4, 6, 11 and 13). The
+  expected capture leaves out a class's reads in other options' intervals, which a fetch also
+  counts.
+- **Sub-options.** The sinks hold the arrays the reads are placed on, so a family's reads can be
+  split by array without a new panel. `resources/experimental/subsets/` names four such parts of
+  the NYGC satellite sinks, each a menu row of kind `subset` (preset `xy_arrays`): DXZ1 and DYZ3
+  (the aSatHOR intervals at the chrX and chrY centromere models), DYZ1 (the Yq12 HSat3 interval)
+  and DYZ2 (78 HSat1B intervals, mostly on autosomes and chrX: 66 autosomal, 7 on chrX, 3 on
+  decoys, 2 on chrY; where men carry reads and women do not: 21.7% of men's HSat1B, about a
+  quarter of its Y-derived part, so an index of it rather than its whole mass). A plan fetches a sub-option whole
+  and writes it under its family in `PREFIX.sinks.bed`; `ngsdose estimate` reports `DXZ1.reads` and
+  `DXZ1.mass_Mb` (the family's mass per read times the reads inside) for scans and fetches alike. A
+  fetch of a sub-option without the rest of its family counts the family only there, so the family
+  itself is marked `subset_only` and not measured. `estimate` knows a fetch's sinks BED by the
+  sha256 the counts record (the bundle's, `resources/experimental/*.bed` and the sub-options' own);
+  a fetchplan BED is given with `--fetch-sinks`. Without it, a fetch through a BED it does not know
+  leaves the sub-options `unverified` (reads, no mass), and the families that have sub-options
+  (aSatHOR, HSat1B, HSat3) `unverified` too (NaN) wherever the fetch counted them, even in a plan
+  that selected no sub-option: the placements alone do not show which intervals were read. Their
+  costs are in [fetch_examples.md](fetch_examples.md) (examples 7, 15 and 16).
+- **Partial panels.** Fetching a subset of a panel's classes (HSat2 without the other satellites)
+  loads the whole panel. `ngs-dose count --classes A,B` (the fae1124 engine predates it) counts only
+  the named classes, each exactly as the full load does (every panel is still loaded and merged,
+  so k-mers shared between panels are dropped as before, and every compositional family keeps its
+  k-mers when a compositional class is named, since families compete for a read), and a fetch
+  then reads and checks only the named classes' sinks; the counts record `classes_selected`.
+  When the panels a plan loads define classes it does not select, `fetchplan --engine` runs
+  `ENGINE count --help` and writes what that engine takes to `PREFIX.count_flags.txt`: an engine
+  with `--classes` (from 2026-09-26 on) gets `--classes=...`, and the others are neither counted nor
+  listed; one with only `--allow-missing-sinks` (645ae55 up to that change, e.g. 7772e32) gets that flag,
+  the counts list the others in `sinks_missing_classes`, and `ngsdose estimate` leaves them NA
+  (`no_sinks_in_fetch`); fae1124, the cohort's engine, takes neither, and `fetchplan` refuses the
+  plan. `--unmarked-companions` writes it anyway: the fetch then counts those classes only inside
+  the plan's intervals and the counts do not say so, and only `estimate --fetch-sinks
+  PREFIX.sinks.bed` marks them `no_sinks_in_fetch`. A plan of whole panel files (`core`, `core_tel`)
+  has no such classes and needs no flag, so fae1124 runs it. Without an engine to probe,
+  `fetchplan` writes `--allow-missing-sinks`, which fae1124 rejects as an unknown option, so that fetch fails at once rather than undercounting.
+- **The controls.** They are the largest fixed cost, and a lighter set is a named subset of the
+  bundle's (section 6 gives its cost and what it changes). `fetchplan --controls` costs a plan on
+  it and writes the FASTA the fetch must use to `PREFIX.controls.txt`.
+
+These costs belong to one pipeline and one file layout: another aligner puts the reads elsewhere
+and another writer cuts slices differently, so a site costs its options on its own indexes
+(`fetchplan --crai`, the median over several) with sinks learned from its own scans (`--sinks`).
+The experimental sinks and sub-options here were learned from NYGC bwa-mem scans of the GRCh38
+analysis set and are for those CRAMs only.
 
 ## 5. k-mer panels
 
@@ -337,10 +482,44 @@ elsewhere. One locus *is* exempted: chr21:8,986,604–8,988,749 is a 99.6%-ident
 piece of genuine rDNA that GRCh38 happens to place outside the annotated copies; without the
 exemption the 18S keeps a third of its k-mers.
 
-A positional class can be added later and fetched from the few places its reads land, but its
-unit sequence and panel entry must be in the bundle that estimates it: `ngsdose estimate` lists
-a class the bundle lacks in `skipped_classes` instead of estimating it (a custom bundle, given
-with `-r`, carries them).
+**A new class is added scan first.** Its panel is loaded in whole-file scans, which classify
+every read wherever the aligner put it, the unmapped ones included. Its sinks are learned from
+those scans (`ngsdose sinks`: a 10-kb neighbourhood becomes a sink where it holds at least 1e-5 of
+the class's reads and at least 25 reads in any training scan; the sink keeps the placement bins
+that hold reads, 1 kb for a positional class and 10 kb for a compositional one, padded by 1 kb).
+Their capture is checked on held-out scans (`ngsdose sinks --evaluate`, with `--stats` for the
+per-interval statistics that capture targets use; section 4). Only then does the class get a sinks
+file in the fetch menu and become fetchable. A class's reference coordinates are never taken as
+its sinks: the aligner places reads by what it can place them on, which depends on the pipeline
+(alt, decoy and unplaced contigs, alt-aware or alt-masked alignment) and on the person. In one
+whole-file scan of NA12878 with the candidate panels below, 58 of the 72 classes with at least 25
+reads had at least 98% of them at their GRCh38 reference copies, and 14 did not: GSTT1 65%
+(GRCh38 carries it only on `chr22_KI270879v1_alt`, and ALT-aware bwa moves reads off it), the 4qA
+D4Z4 end 81%, CCL3L 85%, eight others 90.5–97.6%: reads placed away from the reference copies. Three
+more had few or none there, which measures panel specificity, not placement: UGT2B17 (0% of 174;
+deleted in NA12878), DAZ (0.9% of 109) and RBMY (0% of 47) in a female. The first build also gave
+HHV7, which has no GRCh38 copy, 283 reads at chromosome ends from simple-repeat k-mers; the
+periodic-k-mer filter now applied to every candidate panel (below) removed them. Among the satellites,
+about 87% of male HSat1B is Y-derived (DYZ2), yet it lands on autosomes, chrX and decoys, not on
+chrY; the DYZ2 sub-option (78 intervals where men carry reads and women do not) holds 21.7% of
+men's HSat1B, a male-specific index rather than the whole Y-derived mass
+(`resources/experimental/README.md`).
+`candidates/reference_copies.GRCh38.bed` holds each candidate's reference copies on the placement
+grid, so that `--evaluate` can measure on held-out scans what fetching them would lose.
+
+To estimate a positional class, the estimator needs its unit sequence (expected counts per window)
+and its panel entry (which read starts are callable). The bundle's classes have both. For another
+positional class, `ngsdose estimate` takes them from experimental units
+(`resources.ExperimentalUnits`: `<class>.fa` in `resources/experimental/candidates/units/` or a
+directory in `NGSDOSE_EXTRA_UNITS`, one record, and the panel file beside it, which must be among
+the panels whose sha256 the counts record, with the counts' k and the unit's length). Such a class
+is estimated with the same windows, masks and GC model as a bundle class, but with no anchor
+windows and no cohort calibration: status `experimental`, `cn` = `cn_all`, and a per-sample
+`cn_se_rel` (the windows' log-SD over the square root of their number, plus the Poisson term). An
+all-window estimate can sit off the anchored one by a level: in 60 cohort genomes the all-window
+45S estimate is 0.935–0.978 of the anchored one (median 0.958), DJ's 0.996–1.025 (median 1.012).
+Without a unit, or a custom bundle (`-r`) that carries the class, it is reported as `skipped: not in
+the bundle panel`, with where a unit was looked for.
 
 Dispersed sequence — the satellite families — is compositional. Its reads are spread over hundreds
 of loci, on unplaced, unlocalized and decoy contigs as much as on the chromosomes: by family, a
@@ -362,7 +541,16 @@ histograms, with a placement bin counted as captured only when all of it lies in
 satellite fetch has been run yet. Sinks depend on the aligner and the reference (section 12), so
 they are learned where files are scanned whole: in a whole cohort, or in a biobank's scanned subset.
 That is why a cohort that is scanned once is scanned with the **experimental** panels under
-`resources/experimental/` loaded. No satellite sinks ship with this bundle.
+`resources/experimental/` loaded. No satellite sinks ship with this bundle. An experimental set
+for NYGC bwa-mem sits beside the panels (`resources/experimental/sinks.satellites.bed`, with
+`sinks.satellites.stats.tsv`): learned by the same rule from 100 cohort scans (25 per release
+batch and inferred sex, 15 populations), 2,189 intervals, 85.1 Mb summed over the families. In the
+1,648 cohort scans not used to learn it, it holds at the lowest 99.83% (SATR) to 99.99% (HSat2) of
+nine families and 96.59% of HSat1B (97.92% with the unmapped bin); the medians are 99.89–100.00%,
+and 99.02% for HSat1B. What fetching each family costs, alone and under a capture target, is in
+[fetch_examples.md](fetch_examples.md) (examples 11 and 12). For the shipped positional classes
+the fetch returns what the placements say (fetch / scan reads inside the sinks 1.00000–1.00019 in
+1,748 genomes); for the satellites that has still to be shown with real fetches.
 
 The telomeric repeat turned out not to be dispersed: in 372 NYGC scans the aligner put 92% of its
 reads within 25 kb of a chromosome end and 60% into one 10-kb bin of chr5p, essentially none on
@@ -409,6 +597,57 @@ mode measures the class, to that capture, when its panel is loaded.
   chromosome-end windows an NGS-TL/TelSeq-style query would retrieve agree at r = 0.9997 across
   the 372 scans.
 
+**Candidate classes** (`resources/experimental/candidates/`): 83 classes in seven panel files,
+5,076,728 k-mers, built from a literature assessment of which multi-copy sequence has truth data
+for 1000 Genomes samples. None has sinks; they are for the scans that will learn them. The files
+are final for the cohort's remaining scans; their sha256 are listed in `candidates/README.md`.
+
+| panel | classes | k-mers | what |
+| --- | --- | --- | --- |
+| macrosatellites | 12 positional | 45,362 | DXZ4, CT47, RS447, MSR5p, FLJ40296, RNU2, D4Z4, ZAV, REXO1L1, and the 4qA, 4qB and 10q D4Z4 ends |
+| multicopy-genes | 27 positional | 544,098 | LPA KIV-2, C4 and its HERV-K insertion, CYP21A2, AMY1, AMY2B, SMN, SMN1, RHD, HBA, the common deletions (GSTM1, GSTT1, UGT2B17, LCE3B/C, APOBEC3B), HPR, CCL3L, DEFB, NOTCH2NL, ... |
+| sex-chromosome-arrays | 12 positional, 1 compositional | 126,346 | TSPY, RBMY, DAZ, BPY2, CDY1, CDY2, DYZ19; the opsin array and its LW/MW exon 5, GAGE, CT45, SPANXB |
+| rna-arrays | 5 positional | 148,026 | the 1q23 tRNA-gene array, U1 and U3 snRNA units, SNORD116, SNORD115 |
+| nonhuman | 5 positional, 1 compositional | 395,211 | HHV-6A, HHV-6B, HHV-7, SMRV, phiX, EBV type 2 |
+| nonhuman-myco | 1 compositional | 3,731,523 | culture Mycoplasma, five species as one class |
+| coding-vntrs | 19 compositional | 86,162 | long-unit coding VNTRs (ACAN, MUC1, MUC19, FLG, NEB, ...), measured as array length |
+
+Each group was built with the panel builder against GRCh38 (analysis set) and CHM13 at
+`--max-bg 0`, with only the class's own copies masked, so a k-mer a paralog also carries is
+dropped; the RNA arrays went through one more filter that also drops a k-mer one substitution
+away from a background occurrence, after a first scan put 0.1–0.4% of each class's reads at single
+foreign loci. The assembly step then removes from every candidate panel each k-mer that is
+periodic with a period of 1–6 bp at ≤ 2 mismatches (78 k-mers, 55 of them viral), which took
+the simple-repeat floor of HHV7 and HHV6A in NA12878 to 0. Of the 17 circular units, the 14 cut from
+an assembly are each one exact period of their array (the first 31-mer recurs at the base after the
+unit; REXO1L1 was re-cut, and TSPY, OPN1, CT45 and DEFA1A3 trimmed by 1–22 bp); of the GenBank
+units, the RNU2 clone was trimmed of the 6 bp its ends repeat, D4Z4 needed no trim, and PHIX is a
+whole circular genome. Two joins remain partial because of allele differences, not unit ends: 17 of
+RNU2's 30 junction 31-mers are in the arrays, and 12 of DEFA1A3's in CHM13 (30 in GRCh38). The two
+hs38d1 decoys that are pieces of the MUC19 and MUC6 arrays are masked as those classes' own copies.
+No candidate k-mer is in a shipped panel, and none is in two candidate files, so a class has the
+same k-mers whichever panels a run loads. Loading all seven changed no count of a shipped class, on
+the test fixture with three engine builds (fae1124, 7772e32 and the fetch-menu build) and on a whole 30×
+NA12878 CRAM, and each class counted, in all three builds, exactly the reads cut from its unit that
+the classification rule predicts. With the final files, fae1124 scanned that CRAM in 119.5 s and
+1.65 GB of peak memory, against 106.1 s and 1.43 GB without them (the fetch-menu build: 122.9 s and 1.55 GB
+with them). fae1124 runs repeated over the review rounds on the same shared machine gave
+109.6–119.5 s and 1.49–1.81 GB with them (the fetch-menu build 107.0–122.9 s, 1.48–1.71 GB). The
+Mycoplasma file, 74% of the k-mers, is most of the memory and can be left out.
+`candidates/candidates.tsv` gives each class's unit, recall of reads cut from its copies, tier
+(A: per-sample truth for cohort members, B partial, C relative or technical, D exploratory), what
+it measures, the truth available and its caveats; several are kept below 50% recall on an argument
+recorded there (SMN1, whose k-mers sit only over the 32 sites where it differs from SMN2; RNU1;
+the D4Z4 ends). Some classes carry a floor of off-target reads that the cohort's scans must size:
+one-substitution alleles at other loci (UGT2B17, GSTM1, APOBEC3B, the chrY classes in women) and,
+for EBV type 2, type-1 reads carrying a sequencing error or a minor variant at a site where the
+types differ, 1.9e-5 of chrEBV records in NA12878, so type 2 is called from the EBV2/chrEBV ratio,
+not from a count. From the placement
+bins of the one NA12878 scan, fetching all 83 would add about 109 MB to the controls and the
+bundle's sinks (38 tier-A classes: 33 MB; medians over 13 NYGC bwa-mem CRAMs): planning figures,
+not sinks, and from one female genome, so the chrY candidates have no bins there apart from
+off-target reads (DAZ 0.27 MB) and their real sinks are not priced.
+
 ## 6. Controls and the fragment-GC model
 
 `resources/build/select_controls.py` chooses the controls deterministically from the complement
@@ -440,6 +679,37 @@ per sample instead (`gc_curve_max_se`). The headline
 estimate is insensitive to the size of the control set — 508.0, 508.3 and 508.2 with 800, 400
 and 200 regions (513 with 100) — because moderate-GC windows sit where the curve is best
 determined; GC-rich features move by 3–4%, which is one reason they are not the headline.
+
+**A lighter control set.** The controls are the largest fixed cost of a fetch (section 4), so the
+bundle carries a named subset, `controls.lite200.bed` / `controls.lite200.fa.gz`: 200 of the 800
+control regions with all 182 truth and dosage regions, chosen from the reference alone (at least
+three regions per chromosome, both of chr22's two, GC strata within each, and of 300 such draws the one whose
+position-GC distribution at L = 150, 400 and 450 is closest to the 800's), its records
+byte-identical to the bundle's. It reads 93.1 MB instead of 231.4 (median of 13 NYGC CRAMs). The
+estimator accepts counts whose control regions are exactly the bundle's or exactly one named subset
+(`controls.<name>.bed` in the bundle, or `control_subsets` in `bundle.json`), and still refuses any
+other set; the result records `controls_used` and `controls_subset`. On the 1,748 cohort genomes
+(the subset's tables rebuilt from each scan's per-region counts, a rebuild checked against real
+engine runs on the pilot's region cuts to an SD of 0.2–0.6%), lite200 against all 800:
+
+- 45S copy number +0.21% (median; SD 0.30%, largest 1.1%), against a cross-library SD of 3.8–3.9%
+  in the pilot; 5S −0.06% (SD 0.67%); DJ +0.16% (SD 0.27%); truth.auto +0.11% (SD 0.19%); the
+  satellite masses SD 0.25–0.78%, except HSat1B (+1.45%, SD 2.27%, one genome 23%).
+- Transmission reliability in 385 trios: 45S 0.9993 and 0.9992, 5S 0.945 and 0.937, DJ 0.751 and
+  0.752, HSat1B 0.969 and 0.985 (bootstrap intervals about ±0.1 or wider).
+- The GC support narrows from 12–82% to 18–78%, so 45S's usable fraction falls from 0.852 to 0.790
+  and its all-window estimate rises by 1.48% (the anchored headline does not).
+- The aneuploidy test flags 20 genomes, all among the 32 the full set flags: 12 are missed.
+
+A choice of the widest GC support instead kept a region with odd AT-rich positions and made HSat1B
+unstable (SD 13%, one sample off by 2.7×). Below 200 regions the gain is small and the losses grow:
+100 regions save a further 22.2 MB (median of the same 13 CRAMs: 70.9 MB against 93.1), but the chromosome test raises 14 new flags and DJ's
+reliability falls to 0.731; at 50, 5S has outliers of 15% and 14 chromosomes cannot be tested.
+Thinning the truth regions as well (20 per set) would save 24 MB more in HG00096 and nearly doubles
+truth.auto's SD (0.008 to 0.015); it is not shipped. A cohort should not mix fetches with the two
+control sets: lite200 shifts the median level of each headline class by up to about 0.3% (SST1
++0.29%, 45S +0.21%), but the all-window 45S estimate and HSat1B by about 1.5%, and `ngsdose estimate` warns when its
+inputs were made with different sets.
 
 ## 7. Window efficiencies and the anchor
 
@@ -760,14 +1030,27 @@ threads.
   - *always fetched*: the controls, the truth regions, chrM and chrEBV are reference regions and
     part of every fetch (identical counts in fetch and scan);
   - *fetched through the shipped sinks*: rDNA45S, rDNA5S and DJ (DJ at a steady 99.6–99.8% of its
-    scan count, an offset a scanned subset can calibrate), and TEL when its panel is loaded;
-  - *fetchable through sinks learned from the scanned subset* (section 5; none ship): HSat1A,
-    HSat2, HSat3, α-satellite HORs (60 Mb of intervals), β-satellite, ACRO, SST1, CER and SATR;
-  - *fetchable with a calibrated capture*: HSat1B, from learned sinks plus the unmapped bin
-    (`count --unmapped`; htslib region `*`, 0.10–0.26% of primary reads in the NYGC CRAMs,
-    1st–99th percentile);
-  - *scan-only*: nothing on this pipeline, but the satellite and TEL figures rest on scan
-    placements, and no satellite fetch has been compared with its scan yet.
+    scan count, an offset a scanned subset can calibrate), and TEL when its panel is loaded (its
+    sinks ship, but no fetch through them has yet been compared with its scan);
+  - *fetchable in principle (sinks learned and checked on scans; no fetch compared yet)*
+    (section 5; an experimental NYGC set learned from 100 scans is in `resources/experimental/`,
+    not in the bundle): HSat1A, HSat2, HSat3, α-satellite HORs (60 Mb of intervals),
+    β-satellite, ACRO, SST1, CER and SATR;
+  - *fetchable with a lower capture*, on the same footing: HSat1B (all its sinks hold 97.17% at
+    the 10th percentile of held-out scans), from learned sinks plus the unmapped bin (`count --unmapped`; htslib region `*`, 0.10–0.26% of primary reads in the NYGC
+    CRAMs, 1st–99th percentile);
+  - *scan-only*: the 83 candidate classes, until sinks are learned for them from scans that load
+    their panels.
+
+  No fetch through the satellite sinks has been compared with its scan, so the satellite (and
+  TEL) figures rest on scan placements.
+
+  What is fetched is then a matter of bytes (section 4). On the NYGC CRAMs the controls with the
+  bundle's four classes read 3.09% of a file; the lite control set and capture targets (by the
+  held-out statistics that ship with the sinks) read less, and the satellite families several
+  times more ([fetch_examples.md](fetch_examples.md));
+  `ngsdose fetchplan` chooses between them by name, preset or budget. Each biobank pipeline has to
+  cost its own files: slice sizes and read placement are properties of the aligner and the writer.
 
   Under DRAGEN 3.7.x (UK Biobank, All of Us) the positional sinks carried over in the one genome
   tested, with DJ's offset larger (98.9%); satellites and TEL are unmeasured there. Under DRAGEN
@@ -788,7 +1071,8 @@ threads.
   barely tracks the assembly from person to person (r = 0.09), so its mass is not yet confirmed.
   SST1 and SATR (0.27, 0.09) cannot be judged in absolute terms, because HPRC annotates them
   several times more generously than the CHM13 annotation the panels came from. None of the ten
-  has shipped sinks yet (section 5). There is also a telomeric-repeat class that is a relative
+  has sinks in the bundle; the experimental NYGC set (section 5) has been checked on scan
+  placements only. There is also a telomeric-repeat class that is a relative
   measure only (exact 31-mers are less tolerant of sequencing error than TelSeq's hexamer count;
   for each class the counts keep an eleven-bin histogram (`hit_frac`) of the share of each
   assigned read's k-mers that hit the panel, in tenths, so that a stricter share threshold can be
@@ -805,6 +1089,26 @@ threads.
   generation and batch largely go together. A batch that reads on a different scale moves R,
   which is why the page also reports s and R with the children rescaled to their parents'
   spread; these bracket the reliability rather than remove the batch effect.
+- **Fetch costs are estimates from the index.** `ngsdose.cost` counts every slice whose span
+  overlaps an interval as read whole, which is what the engine decodes; it does not model the
+  bytes htslib reads ahead, retries, or the index requests. It reads CRAM indexes only (no
+  `.bai`/`.csi`). A capture target's expected capture comes from the scans behind the statistics;
+  kept per byte it is a lower bound (section 4). The costs and the experimental sinks are those of NYGC bwa-mem CRAMs of the GRCh38 analysis set, and
+  no fetch through the satellite or TEL sinks, or through a sub-option, has yet been compared with
+  a scan of the same genome.
+- **Candidate classes and experimental units.** The 83 candidates have been scanned in one genome
+  only (NA12878), and their sinks, capture and costs are unknown until the cohort's scans carry
+  them. Estimates of positional candidates are single-sample all-window estimates without an
+  anchor or calibration, and may carry a level offset of several per cent (section 5); `ngsdose
+  cohort` does not calibrate them (their status is not `ok`). Loading candidate
+  panels part way through a cohort changes `panel_sha256` in the counts files. Scans with and
+  without the candidates can still be pooled, because one set of panels holds the other;
+  `ngsdose sinks --allow-mixed-panels` is needed only when two scans loaded different candidate
+  subsets, neither of which holds the other.
+- **The lite control set** keeps 45S copy number within 0.3% (SD) of the full set, 5S within 0.67%
+  and the satellites within 0.78%, except HSat1B (2.3%), but loses power in
+  the aneuploidy test (12 of 32 flagged genomes missed) and widens HSat1B's spread (section 6). Its
+  numbers come from rebuilt GC tables, not yet from fetches of whole CRAMs with the lite FASTA.
 
 ## 13. What comes next
 
@@ -831,10 +1135,11 @@ threads.
      (i) **Targeted fetch**, which exists: about half a gigabyte and a minute per genome, no file
      staged; the cohort says what it loses, sample by sample, and the sinks re-learned on the 1-kb
      grid say how much smaller the retrieval can be made. For the satellite families the scans
-     already say what sinks would hold (section 5); what remains is a satellite sinks file learned
-     from the cohort scans, kept apart from the bundle's `sinks.bed` so that fetches without the
-     satellite panel neither change their `sinks_sha256` nor read several times more, and real
-     fetches of about a hundred genomes compared with their scans (`--unmapped` for HSat1B). (ii)
+     already say what sinks would hold (section 5), and the sinks file learned from 100 cohort
+     scans now exists, kept apart from the bundle's `sinks.bed` so that fetches without the
+     satellite panel neither change their `sinks_sha256` nor read several times more
+     (`resources/experimental/sinks.satellites.bed`); what remains is real fetches of about a
+     hundred genomes through it, compared with their scans (`--unmapped` for HSat1B). (ii)
      **A depth proxy from bins a cohort already has.** NGS-PCA's mosdepth run (1-kb bins, all
      contigs, no MAPQ filter, duplicate-flagged reads excluded) is kept for this cohort. In
      NA12878, 99.8% of the aligned 45S reads fall in 273 of those bins (chr21's rDNA models,
@@ -844,10 +1149,14 @@ threads.
      10.8% of single-copy reads in that sample, a different gap in every sample — and the scans,
      the kept mosdepth outputs and the census are what it takes to put numbers on each. Within one
      library type and one pipeline several of those terms are constants, which is the case for
-     trying. (iii) **Less of everything**: fewer controls, smaller sinks, lower depth — all
-     of which can be tried on the counts files alone, because they hold positions and not
-     summaries. None of this needs an answer before the run; it needs the run to keep what the
-     answers will be computed from, and it does.
+     trying. (iii) **Less of everything**: fewer controls, smaller sinks, lower depth, all of
+     which can be tried on the counts files alone, because they hold positions and not summaries.
+     The first two now have tools and first numbers (sections 4 and 6): the lite control set and
+     capture targets of 0.995 take the controls and the bundle's sinks from 3.09% to 2.13% of a
+     NYGC 1000 Genomes CRAM ([fetch_examples.md](fetch_examples.md), examples 2 and 13), and fetching about ten genomes with
+     both control sets on the cluster would confirm the lite set on whole files. None of this
+     needs an answer before the run; it needs the run to keep what the answers will be computed
+     from, and it does.
    - *A Mendelian test on integer states.* DJ windows carry inherited ±1-copy steps (section 8).
      Across 602 trios, a step present in a child and in neither parent is either a de novo
      event or an error, and a step in a parent is transmitted half the time: that calibrates
@@ -874,6 +1183,20 @@ threads.
    trios included, are where DRAGEN sinks can be learned from scans and checked, with
    `--unmapped` for DRAGEN 4.x, before any biobank access.
 4. An orthogonal rDNA calibration wider than the twelve ddPCR lines.
+5. **New classes through the scans still to run.** About 1,450 genomes of the cohort are still to
+   be scanned. Loading the final candidate panels in them (NGS-DOSE-1000G's `CANDIDATE_PANELS`;
+   fae1124 loads them unchanged, with identical shipped counts) gives every candidate its scans: 30 are
+   enough for `pipeline/06_learn_sinks.sh` to learn sinks from half of them and check the rest,
+   and every further scan is another held-out check. A class whose capture holds gets sinks and
+   statistics in its menu row (status `experimental`, from `candidate`) and can be fetched; one
+   that does not stays scan-only. Several candidates have per-sample truth
+   among genomes not yet counted (the Schaap 2013 HapMap macrosatellite sizes, the 12 CEU lines in
+   which Kojima 2021 found SMRV, Telford 2018's HHV-6A carrier NA18999), so the rest of the run is
+   also their first validation.
+6. **The fetch menu's open ends.** Real fetches through the TEL and satellite sinks and the
+   sub-options, compared with the scans of the same genomes (needs an image newer than fae1124);
+   and the costs of a DRAGEN pipeline, from its own indexes and sinks learned
+   from its own scans.
 
 ## 14. Relation to prior work
 
@@ -1079,7 +1402,7 @@ counted; none of them changes a count the engine has written.
 | The Marchenko–Pastur law can be fitted to a coverage spectrum to choose the number of PCs | simulated noise with unequal variances (rows ±40%, columns ±30%) and planted components; NGS-PCA's 1000 Genomes spectrum truncated at 100, 150, 200 values | **false**: the median- or quantile-matched fit called 34 components for 7 planted and 148 for 5, and 59 / 66 / 80 on the real spectrum depending on the truncation | the edge is fitted from its universal square-root shape instead, with a 1% margin (section 9): exact on those simulations, none in that noise, 38–40 on the real spectrum at every truncation. It still leans high when bins have heavy-tailed variances (a few components in noise alone), and components beyond the leading 20–25 are not reproducible between SVD runs - so `ngsdose pcsweep` lets known truths and transmission decide; all asserted in CI |
 | A known truth's error under adjustment can be read off a regression of the estimate | review of `pcsweep`: a two-valued truth (chrX: 1 or 2), PCs unrelated to it, n = 3,200 | **false**: the estimate carries the variance of the truth itself (SD of log truth 0.35), every regressor adds 0.35·√(k/n) of estimation noise out of fold, and the reported error rose 0.010 → 0.040 at 46 PCs - adjustment would always have looked harmful for chrX | the error, log(estimate / truth), is what is regressed; asserted in CI, including a PC that follows sex. (Same review: one `N_PC` knob for two PC sets of different size killed NGS-DOSE-1000G's `pipeline/02_cohort.sh` at its last step - now `N_PC` and `N_CTRL_PC`, and a number beyond what a table holds is clamped with a warning; the one-standard-error band used 1.25 instead of 1.65 for a MAD-based SD.) |
 | The experimental satellite panel measures array mass | whole-file scans of two 1000 Genomes samples that have HPRC release-2 assemblies (HG02258, ACB male; HG01884, ACB female) | HSat3 0.97, 0.98 of the assembly; HSat1A 0.93, 0.97; α-satellite HORs 0.97, 1.03; HSat1B 0.90, 0.83; β-satellite 0.69, 0.76 - and its k-mer recall on CHM13 itself is 0.69. **My first reading of HSat2 (1.52, 1.73: "not usable") was wrong**: the comparison script dropped arrays annotated together with an assembly gap ("GAP,HSat2": 17 and 9 Mb), and an array with a gap in it is no truth | the script tallies gap-containing arrays separately and compares a class only where it has none. In the cohort run so far (96 HPRC samples; NGS-DOSE-1000G `docs/data/satellites_hprc.tsv`), 43 assemblies have no gap-containing HSat2 array at all. There NGS-DOSE reads a median 1.07 of the assembly, but it follows the assembly poorly across people (r = 0.18, SD of the log ratio 0.28). HSat2 is heritable, but the assemblies do not yet confirm that it measures HSat2 mass (NGS-DOSE-1000G `docs/EVIDENCE.md`). Each class's recall is measured and documented (`resources/build/panel_recall.py`). 200 cohort members have assemblies (NGS-DOSE-1000G `pipeline/04_hprc_satellites.sh`) |
-| Every loaded class has sinks in fetch mode | fetch with a panel class the sinks BED names nowhere (a satellite or telomere panel against an older sinks file) | **false**: the class was counted only where its reads fell inside other intervals, and nothing said so | the engine refuses; `--allow-missing-sinks` continues and lists the class in `sinks_missing_classes`, and `ngsdose estimate` reports it as NaN with status `no_sinks_in_fetch` |
+| Every loaded class has sinks in fetch mode | fetch with a panel class the sinks BED names nowhere (a satellite or telomere panel against an older sinks file) | **false**: the class was counted only where its reads fell inside other intervals, and nothing said so | the engine refuses (since 645ae55; fae1124 still undercounts silently, so `fetchplan` refuses such a plan for it); `--allow-missing-sinks` continues and lists the class in `sinks_missing_classes`, and `ngsdose estimate` reports it as NaN with status `no_sinks_in_fetch` |
 | A trio table survives a column without variance | `ngsdose trios` on a constant column (EBV in blood-derived DNA) and on one with too few complete trios | **false**: division by the parents' variance raised, and one column's error ended the run | NaN for what cannot be estimated, a note for what cannot be run, the other columns unaffected; the pedigree may also be a PLINK PED/FAM, a child/father/mother table or the tab-separated 1000 Genomes `.ped` with its multi-word header (a file without a header never supplies a population; `--population` can) |
 | A site that cannot let the engine read CRAMs can reproduce a fetch | - | the fetch intervals (controls padded by 600 bp, the sinks, merged) existed only inside the engine | `ngs-dose plan` writes them as BED, dropping contigs the input's header lacks (samtools passes over such a region and exits 0) and reporting the sink intervals it drops per class; the cut is counted in fetch mode, which reproduces the whole-file fetch exactly, except for the unmapped bin, which `-L` never outputs (`plan --unmapped` prints the samtools steps that add it; tested equal to a whole-file `fetch --unmapped`); a cut counted in scan mode is refused by `ngsdose sinks` (control ends above 5% of primary reads) |
 | `ngs-dose plan` needs no input | the GRCh38 bundle without `-i` | **false**: every contig was filed under one id and the controls' overlap check faulted regions on different chromosomes against each other | an id per contig name |
@@ -1088,7 +1411,7 @@ counted; none of them changes a count the engine has written.
 | The satellite families can only be scanned (this document said so before this revision: "no sinks to fetch") | review of the cohort's scans: sinks learned with `ngsdose sinks --classes` from 30 scans, capture in 200 others | **false** for this pipeline: ≥ 99.8% of nine families in every held-out genome (≥ 99.85% in two of three draws), HSat1B ≥ 96.6% (part of it unmapped) | section 5 rewritten; no satellite sinks ship until a real satellite fetch has been compared with its scan (section 13) |
 | Sinks learned from 40 scans held ≥ 99.87% of TEL in each of the other 332 (as first recorded here and in `bundle.json`) | TEL sinks learned from 40 of the 372 learning scans (the first 40, and ten random draws), each scored on the other 332 | **false**: the lowest capture in the other 332 is 99.42–99.59% across the eleven draws (99.48% for the first 40), the median about 99.8%; 99.87% is the median in-sample capture of the 372-scan set. For context, the shipped 372-scan set over all 1,748 cohort scans: median 99.87%, minimum 99.39%, 1st percentile 99.68% | the figures quoted are the measured ones (section 5) |
 | A capture score says what a fetch retrieves | review of `ngsdose sinks`: a 10-kb placement bin counted as captured when only its start fell inside a sink | **false** at the margin: a fetch reads only the part of the bin inside the sink | a bin counts only when all of it (clipped at the contig end) lies inside; TEL capture moves by at most 5.5 × 10⁻⁴ over 1,748 scans, the positional classes not at all |
-| A fetch that cannot read a sink says so | sinks on contigs the file's header lacks | **false**: the intervals were skipped with a note, the class undercounted, and a class with every interval skipped was not refused | skipped intervals recorded per class (`sinks_skipped`), a class that keeps none refused unless `--allow-missing-sinks`, and `ngsdose estimate` reports such classes as NaN (section 4) |
+| A fetch that cannot read a sink says so | sinks on contigs the file's header lacks | **false**: the intervals were skipped with a note, the class undercounted, and a class with every interval skipped was not refused | skipped intervals recorded per class (`sinks_skipped`), a class that keeps none refused unless `--allow-missing-sinks` (engines since 645ae55; fae1124 neither refuses nor takes the flag), and `ngsdose estimate` reports such classes as NaN (section 4) |
 | Control QC flags a whole-chromosome aneuploidy | HG00096 with one chromosome's control counts scaled by 0.5–1.5 | **false** for a full trisomy (scaled 1.45 and above) or monosomy (0.5): its regions were trimmed as outliers against the genome's median, out of their own chromosome's test | regions trimmed against their own chromosome's median, and the genome level taken without flagged chromosomes (section 3); on the 1,748 counted genomes one flag is added (HG03363, a chr11 gain over 9 of its 38 regions) and chr22, with 2 control regions, is reported as untestable |
 | One estimate per sample reaches the cohort | the same genome's scan and fetch estimates given to `ngsdose cohort` together | **false**: rows with one sample id were merged | a repeated sample id is refused, and `ngsdose estimate` names each estimate after its input file |
 

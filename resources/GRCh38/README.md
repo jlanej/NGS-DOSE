@@ -17,7 +17,9 @@ be low. For such a reference, re-learn the sinks (see "When to rebuild what" bel
 | `units/` | unit sequences of the positional classes | GenBank KY962518.1 (45S), X12811.1 (5S); CHM13v2.0 chr21:2,708,299-3,108,298 (distal junction) |
 | `features.tsv` | named features in unit coordinates (18S, 5.8S, 28S, spacers) | KY962518.1 feature table; 5S gene located by sequence |
 | `controls.bed`, `controls.fa.gz` | 800 control regions (10.1 Mb); 80 held-out autosomal, 60 chrX and 40 chrY known-truth regions; one dosage region each on chrM and chrEBV; all with 1 kb flanks | `resources/build/select_controls.py` on the complement of NGS-PCA's exclusion set, then `ngs-dose controls` |
+| `controls.lite200.bed`, `controls.lite200.fa.gz` | a named subset of the controls (`Bundle.control_subsets`): 200 of the 800 control regions and all 182 known-truth and dosage regions, for a lighter fetch (93.1 MB of CRAM slices instead of 231.4, median of 13 NYGC bwa-mem CRAMs; `docs/fetch_examples.md` prices whole plans with it); `ngsdose estimate` accepts counts made with it and records `controls_used` 200, `controls_subset` lite200 | at least three control regions per chromosome (both of chr22's two), GC strata within each, the draw of 300 whose position-GC distribution is closest to all 800's (reference only, no sample data); FASTA by `ngs-dose controls -b controls.lite200.bed --flank 1000`, its records byte-identical to `controls.fa.gz`'s |
 | `sinks.bed` | where the aligner puts each class's reads (fetch mode retrieves only these): 80 intervals for the positional classes (`rDNA45S` 19, `rDNA5S` 2, `DJ` 59; 3.34 Mb as written, of which 40.6 kb run past the ends of eight short contigs and are clipped when fetched) and, since 2026-09-22, 63 intervals (810 kb) for the telomeric repeat (`TEL`), so a fetch with `resources/experimental/telomere.k31.panel.tsv.gz` loaded measures it. Share of each class's reads inside its sinks over the 1,748 cohort scans counted by 2026-09-25 (mean / 1st percentile / minimum): `rDNA45S` 99.95 / 99.92 / 99.89%, `rDNA5S` 99.98 / 99.96 / 99.93%, `DJ` 99.76 / 99.68 / 99.65%, `TEL` 99.86 / 99.68 / 99.39% (15 of the 1,748 below 99.67%) | positional classes: `ngsdose sinks` on whole-file scans of NA12878 (CEU, female) and HG02258 (ACB, male), NYGC pipeline (bwa-mem 0.7.15, ALT-aware), on a 10-kb placement grid (scans now record 1 kb, on which the cohort run re-learns them tighter); they held ≥ 99.94% of 45S, 99.98% of 5S and 99.77% of DJ reads in those two, and 99.96 / 99.99 / 99.75% in HG01884, which they never saw. `TEL`: `ngsdose sinks --classes TEL` on the first 372 cohort scans (`bundle.json`, `sinks_learned_from.TEL`) |
+| `sinks.stats.tsv` | per-interval statistics of `sinks.bed` for `ngsdose fetchplan --capture` (the fetch menu names it for `rDNA45S`, `rDNA5S`, `DJ` and `TEL`): each interval's share of its class (median, 10th percentile, largest in any one scan), the reads of any class in its placement bins, and the capture curve with intervals ranked by share per read. Held out for all four classes: 1,375 cohort scans, none used to learn an interval (`# held-out: yes`). Capture of all the intervals, min / 10th percentile / median: `rDNA45S` 99.89 / 99.93 / 99.95%, `rDNA5S` 99.93 / 99.97 / 99.98%, `DJ` 99.65 / 99.72 / 99.76%, `TEL` 99.39 / 99.79 / 99.86%. For NYGC bwa-mem alignments to this reference only, like the sinks | `ngsdose sinks SCANS --evaluate sinks.bed --held-out --stats sinks.stats.tsv` on the 1,748 cohort scans counted by 2026-09-25 less the 372 the `TEL` sinks were learned from (NGS-DOSE-1000G fd39309) and HG02258, from which the positional sinks were learned (the file's header records it) |
 | `anchors.json` | the 45S windows that set the absolute level | windows on which the pilot's three sequencing chemistries agree (NovaSeq against HiSeq 2500 and HiSeq 2000), from its replicate pairs (NGS-DOSE-1000G: `python pilot/evaluate_pilot.py --write-anchors`) |
 | `build_inputs/` | class loci masked in the background genomes, the DJ core positions, the class manifest | see `resources/build/build_grch38_bundle.sh` |
 
@@ -65,10 +67,17 @@ and deletions of single junctions. The 10 holds for CHM13 in aggregate.
   with an alt-masked reference, the one genome checked had most of its 45S and DJ reads, and 64–90%
   of its HSat1A, HSat1B, β-satellite, ACRO and TEL reads, fully unmapped, but almost none of its
   HSat2 or α-satellite HOR reads. A scan classifies unmapped reads; a fetch reads them only with
-  `count --unmapped`. A fetch refuses a loaded class the sinks say nothing about, or whose intervals
-  all lie on contigs the input lacks (`--allow-missing-sinks` overrides and records it in
-  `sinks_missing_classes`), so a panel added later needs its sinks learned first
-  (`ngsdose sinks --classes`). Intervals on absent contigs are left out and recorded as
+  `count --unmapped`. An engine since 645ae55 refuses a fetch with a loaded class the sinks say nothing
+  about, or whose intervals all lie on contigs the input lacks (`--allow-missing-sinks`, also since
+  645ae55, overrides and records it in `sinks_missing_classes`; `count --classes`, in engines from
+  2026-09-26 on, leaves such classes uncounted). fae1124, the cohort's engine, has none of these: it
+  counts such a class only where its reads fall inside other intervals, without saying so, and
+  `ngsdose fetchplan` refuses to plan such a fetch for it. Either way a panel added later needs its
+  sinks learned first
+  (`ngsdose sinks --classes`). Re-learned sinks need their own statistics
+  (`ngsdose sinks --evaluate --held-out --stats` on other scans) before `fetchplan --capture` can
+  trim them (per byte of their CRAM slices with `--crai`, which needs the statistics' largest share,
+  `share_max`); the shipped `sinks.stats.tsv` belongs to the shipped `sinks.bed`. Intervals on absent contigs are left out and recorded as
   `sinks_skipped`, and `ngsdose estimate` leaves such a class unestimated.
 - **Different library chemistry**: re-learn window efficiencies with `ngsdose cohort`; check the
   known-truth columns; treat absolute values with caution until anchors have been confirmed for
