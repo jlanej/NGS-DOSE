@@ -81,6 +81,8 @@ pub struct Panel {
     pub classes: Vec<ClassDef>,
     pub map: FxHashMap<u64, Entry>,
     pub header: Vec<String>,
+    /// Classes whose reads are counted and listed: all of them, unless `select` named some.
+    pub counted: Vec<bool>,
     /// One-hash bitset over the panel k-mers, sized for a ~1.5% false-positive rate. Every k-mer
     /// of every read is tested against it, and only positives reach the hash map, so that
     /// classification is exact (no k-mer is skipped) at a few nanoseconds per k-mer.
@@ -406,7 +408,47 @@ impl Panel {
             let h = (kmer.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
             filter[h >> 6] |= 1u64 << (h & 63);
         }
-        Panel { k, classes, map, header, filter, filter_shift: shift }
+        let counted = vec![true; classes.len()];
+        Panel { k, classes, map, header, counted, filter, filter_shift: shift }
+    }
+
+    /// Count only the named classes (`count --classes`), after the panels were merged, so that the
+    /// k-mers two panels share are gone just as in the full load. Each named class keeps the entry and
+    /// placements the full load gives it: a positional class is judged on its own hits, so the
+    /// k-mers of the other positional classes are dropped; compositional families compete for a read,
+    /// so when a named class is compositional every family keeps its k-mers, and a read that an
+    /// unnamed family wins is not counted. An unknown name is an error.
+    pub fn select(self, names: &[String]) -> Result<Panel> {
+        let mut counted = vec![false; self.classes.len()];
+        let mut unknown: Vec<&str> = Vec::new();
+        for n in names {
+            match self.classes.iter().position(|c| &c.name == n) {
+                Some(i) => counted[i] = true,
+                None => unknown.push(n),
+            }
+        }
+        if !unknown.is_empty() || names.is_empty() {
+            bail!(
+                "--classes names {}; the panels loaded define {}",
+                if names.is_empty() {
+                    "no class".to_string()
+                } else {
+                    format!("{}, which no loaded panel defines", unknown.iter().map(|n| format!("'{}'", n)).collect::<Vec<_>>().join(", "))
+                },
+                self.classes.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        let contest = self.classes.iter().zip(&counted).any(|(c, &s)| s && c.kind == Kind::Compositional);
+        let (k, classes, mut map, header) = (self.k, self.classes, self.map, self.header);
+        map.retain(|_, e| counted[e.class()] || (contest && classes[e.class()].kind == Kind::Compositional));
+        let mut p = Panel::from_parts(k, classes, map, header);
+        p.counted = counted;
+        Ok(p)
+    }
+
+    /// The counted classes' names, in panel order.
+    pub fn counted_names(&self) -> Vec<String> {
+        self.classes.iter().zip(&self.counted).filter(|(_, &s)| s).map(|(c, _)| c.name.clone()).collect()
     }
 
     /// False means the k-mer is certainly not in the panel.

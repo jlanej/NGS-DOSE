@@ -50,6 +50,15 @@ enum Cmd {
         /// k-mer panel; repeat to merge several (e.g. the bundle panel and a satellite panel)
         #[arg(short, long, required = true)]
         panel: Vec<PathBuf>,
+        /// count only these classes (comma-separated names from the loaded panels). The panels are
+        /// loaded and merged as without it, k-mers shared between panels dropped, and each named class
+        /// is counted as in the full load; the other classes are not counted or listed. A fetch reads
+        /// the sinks of the named classes only (when the sinks BED names classes) and checks only them
+        /// for missing sinks, so a sinks BED made for a subset of a panel file needs no
+        /// --allow-missing-sinks. An unknown name is an error; the counts file records the selection
+        /// in classes_selected
+        #[arg(long, value_delimiter = ',')]
+        classes: Option<Vec<String>>,
         #[arg(short, long)]
         controls: PathBuf,
         /// BED of class sink intervals; required for --mode fetch
@@ -143,12 +152,17 @@ enum Cmd {
     /// joined to the cut with `samtools cat` or `samtools merge` before indexing) and pass --unmapped
     /// when counting the cut; `plan --unmapped` prints these steps. Counted in scan mode the cut
     /// would pass for a whole-file scan, which it is not (`ngsdose sinks` refuses such a file).
+    /// With --classes, as `count --classes`, only the named classes' sink intervals are kept.
     Plan {
         #[arg(short, long)]
         controls: PathBuf,
         /// BED of class sink intervals (the bundle's sinks.bed)
         #[arg(long)]
         sinks: PathBuf,
+        /// keep only the sink intervals of these classes (comma-separated), as `count --classes` does:
+        /// the sinks BED must name its classes, and a class it gives no interval is an error
+        #[arg(long, value_delimiter = ',')]
+        classes: Option<Vec<String>>,
         /// a BAM/CRAM whose header decides which contigs the plan keeps (samtools ignores a region
         /// on a contig a CRAM lacks and exits 0, so an unfiltered plan can lose intervals silently).
         /// The sink intervals left out are reported per class, and, for a BAM, the reads without a
@@ -194,6 +208,17 @@ fn sample_from_header(header: &rust_htslib::bam::HeaderView) -> Option<String> {
         }
     }
     None
+}
+
+/// `--classes` values: trimmed, empty ones dropped, each name once, in the order given.
+fn names(v: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in v.iter().map(|n| n.trim()).filter(|n| !n.is_empty()) {
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_string());
+        }
+    }
+    out
 }
 
 fn at_least_one(s: &str) -> std::result::Result<usize, String> {
@@ -272,7 +297,7 @@ fn run(cli: Cli) -> Result<()> {
             let n = controls::build(&bed, &reference, flank, &out)?;
             eprintln!("wrote {} control regions to {}", n, out.display());
         }
-        Cmd::Plan { controls: controls_path, sinks, input, index, reference, pad, unmapped, out } => {
+        Cmd::Plan { controls: controls_path, sinks, classes, input, index, reference, pad, unmapped, out } => {
             let inp = input.map(|path| count::Input::new(path, index, reference));
             let probe = match &inp {
                 Some(i) => Some(i.probe(true, false, count::DEFAULT_RETRIES)?),
@@ -291,7 +316,27 @@ fn run(cli: Cli) -> Result<()> {
                 }
             };
             let ctrl = controls::Controls::load(&controls_path, &tid_of)?;
-            let sk = count::load_sinks(&sinks, &tid_of)?;
+            let mut sk = count::load_sinks(&sinks, &tid_of)?;
+            let classes = classes.map(|v| names(&v));
+            if let Some(names) = &classes {
+                if names.is_empty() {
+                    bail!("--classes names no class");
+                }
+                if !sk.named {
+                    bail!("--classes keeps the sink intervals of the named classes, but {} gives no class (BED column 4)", sinks.display());
+                }
+                let have = sk.class_names();
+                let unknown: Vec<&str> = names.iter().map(|n| n.as_str()).filter(|n| !have.contains(n)).collect();
+                if !unknown.is_empty() {
+                    bail!(
+                        "{} has no sink interval for {}; the classes it gives are {}",
+                        sinks.display(),
+                        unknown.join(", "),
+                        have.iter().copied().collect::<Vec<_>>().join(", ")
+                    );
+                }
+                sk.select(names);
+            }
             let iv = sk.intervals();
             let skipped: u64 = sk.skipped.values().map(|s| s.intervals).sum();
             let absent = ctrl.regions.iter().filter(|r| r.absent).count();
@@ -307,12 +352,13 @@ fn run(cli: Cli) -> Result<()> {
             }
             let bp: i64 = plan.iter().map(|(_, s, e)| e - s).sum();
             eprintln!(
-                "[plan] {} intervals, {:.1} Mb: {} control regions padded by {} bp, {} sink intervals{}{}",
+                "[plan] {} intervals, {:.1} Mb: {} control regions padded by {} bp, {} sink intervals{}{}{}",
                 plan.len(),
                 bp as f64 / 1e6,
                 ctrl.regions.len() - absent,
                 pad,
                 iv.len(),
+                classes.as_ref().map(|c| format!(" (of {})", c.join(", "))).unwrap_or_default(),
                 if absent as u64 + skipped > 0 {
                     format!(
                         "; dropped {} control regions and {} sink intervals on contigs the input lacks{}",
@@ -357,6 +403,7 @@ fn run(cli: Cli) -> Result<()> {
             index,
             reference,
             panel: panel_path,
+            classes,
             controls: controls_path,
             sinks,
             mode,
@@ -376,7 +423,15 @@ fn run(cli: Cli) -> Result<()> {
             stall_timeout,
         } => {
             let t0 = std::time::Instant::now();
-            let panel = panel::Panel::load_many(&panel_path)?;
+            let mut panel = panel::Panel::load_many(&panel_path)?;
+            // after the merge: shared k-mers are dropped between all the loaded classes, as in the full load
+            let selected = match classes {
+                Some(v) => {
+                    panel = panel.select(&names(&v))?;
+                    Some(panel.counted_names())
+                }
+                None => None,
+            };
             let mut inp = count::Input::new(input, index, reference);
             if stall_timeout > 0 {
                 count::spawn_watchdog(stall_timeout, inp.display());
@@ -415,17 +470,31 @@ fn run(cli: Cli) -> Result<()> {
                 Mode::Scan => count::scan(&inp, &panel, &ctrl, &params)?,
                 Mode::Fetch => {
                     // intervals on contigs the header lacks cannot be fetched: left out, and recorded
-                    let sk = count::load_sinks(sinks.as_ref().unwrap(), &tid_of)?;
+                    let mut sk = count::load_sinks(sinks.as_ref().unwrap(), &tid_of)?;
+                    if let Some(names) = &selected {
+                        if sk.named {
+                            let dropped = sk.select(names);
+                            eprintln!(
+                                "[count] --classes: the fetch reads the sinks of the selected classes only ({} intervals of other classes left out)",
+                                dropped
+                            );
+                        } else {
+                            eprintln!(
+                                "[count] note: the sinks BED carries no class column, so --classes cannot choose among its intervals: all are read"
+                            );
+                        }
+                    }
                     // every loaded class must keep sinks, or its reads are counted only where they
                     // happen to fall inside other intervals, an undercount nothing would report
                     if sk.named {
                         let have: std::collections::HashSet<&str> = sk.kept.iter().map(|r| r.name.as_str()).collect();
-                        sinks_missing = panel.classes.iter().map(|c| c.name.clone()).filter(|n| !have.contains(n.as_str())).collect();
+                        sinks_missing = panel.counted_names().into_iter().filter(|n| !have.contains(n.as_str())).collect();
                         if !sinks_missing.is_empty() {
                             let lost: Vec<&str> = sinks_missing.iter().map(|s| s.as_str()).filter(|n| sk.skipped.contains_key(*n)).collect();
                             let msg = format!(
-                                "the sinks BED has no interval {}for the loaded class(es) {}{}: a fetch would count their reads only where they fall inside other intervals",
+                                "the sinks BED has no interval {}for the {} class(es) {}{}: a fetch would count their reads only where they fall inside other intervals",
                                 if lost.is_empty() { "" } else { "on this file's contigs " },
+                                if selected.is_some() { "selected" } else { "loaded" },
                                 sinks_missing.join(", "),
                                 if lost.is_empty() {
                                     String::new()
@@ -441,7 +510,7 @@ fn run(cli: Cli) -> Result<()> {
                             } else {
                                 bail!(
                                     "{}. Learn sinks for them from whole-file scans (`ngsdose sinks scan*.json.gz --classes ...`), load a panel without them, \
-                                     or pass --allow-missing-sinks to record the gap and continue",
+                                     name the classes to count with --classes, or pass --allow-missing-sinks to record the gap and continue",
                                     msg
                                 );
                             }
@@ -519,6 +588,7 @@ fn run(cli: Cli) -> Result<()> {
                 eof_marker,
                 t0.elapsed().as_secs_f64(),
             );
+            o.classes_selected = selected;
             o.sinks_missing_classes = sinks_missing;
             o.sinks_skipped = sinks_skipped;
             o.pipeline = count::pipeline(&header);
@@ -612,6 +682,20 @@ mod tests {
         }
         let plan = |pad: &str| Cli::try_parse_from(["ngs-dose", "plan", "-c", "c.fa.gz", "--sinks", "s.bed", pad]);
         assert!(plan("--pad=100").is_err() && plan("--pad=-5000").is_err() && plan("--pad=600").is_ok());
+    }
+
+    #[test]
+    fn classes_are_a_comma_separated_list() {
+        let Cmd::Count { classes, .. } = count(&["--classes", "TEL,DJ", "--classes", " HSat2 ,,TEL"]).unwrap().cmd else { panic!() };
+        assert_eq!(names(&classes.unwrap()), vec!["TEL", "DJ", "HSat2"], "trimmed, empty names dropped, each once, in order");
+        let Cmd::Count { classes, .. } = count(&[]).unwrap().cmd else { panic!() };
+        assert!(classes.is_none());
+        let Cmd::Plan { classes, .. } =
+            Cli::try_parse_from(["ngs-dose", "plan", "-c", "c.fa.gz", "--sinks", "s.bed", "--classes", "rDNA45S"]).unwrap().cmd
+        else {
+            panic!()
+        };
+        assert_eq!(classes.unwrap(), vec!["rDNA45S"]);
     }
 
     #[test]

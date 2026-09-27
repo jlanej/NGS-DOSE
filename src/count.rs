@@ -401,6 +401,9 @@ pub struct Unassigned {
 /// (a read can mark a fragment end in one and add mass to a family). Only compositional
 /// families compete with one another, winner takes all, because a read's bases can belong to
 /// one family only; a read split more evenly than 5:1 between two families is left unassigned.
+///
+/// Classes left out by `Panel::select` get no assignment and add nothing to the diagnostics: a read
+/// is below threshold or ambiguous here only when a counted class had hits in it.
 pub fn classify(panel: &Panel, p: &Params, s: &mut Scratch, out: &mut Vec<Assignment>) -> Unassigned {
     let k = panel.k;
     out.clear();
@@ -424,12 +427,14 @@ pub fn classify(panel: &Panel, p: &Params, s: &mut Scratch, out: &mut Vec<Assign
     }
     let passes = |h: u32| h as usize >= p.min_hits && (h as f64) >= p.min_frac * valid as f64;
     let (mut comp_best, mut comp_best_hits, mut comp_second) = (usize::MAX, 0u32, 0u32);
+    let mut comp_counted = false;
     for (class, &h) in s.class_hits.iter().enumerate() {
         if h == 0 {
             continue;
         }
         match panel.classes[class].kind {
             Kind::Compositional => {
+                comp_counted |= panel.counted[class];
                 if h > comp_best_hits {
                     comp_second = comp_best_hits;
                     comp_best_hits = h;
@@ -439,6 +444,9 @@ pub fn classify(panel: &Panel, p: &Params, s: &mut Scratch, out: &mut Vec<Assign
                 }
             }
             Kind::Positional => {
+                if !panel.counted[class] {
+                    continue;
+                }
                 if !passes(h) {
                     un.below = true;
                     continue;
@@ -461,10 +469,10 @@ pub fn classify(panel: &Panel, p: &Params, s: &mut Scratch, out: &mut Vec<Assign
     }
     if comp_best != usize::MAX {
         if !passes(comp_best_hits) {
-            un.below = true;
+            un.below |= comp_counted;
         } else if comp_second * 5 > comp_best_hits {
-            un.ambiguous = true;
-        } else {
+            un.ambiguous = comp_counted;
+        } else if panel.counted[comp_best] {
             out.push(Assignment { class: comp_best, pos5: 0, reverse: false, hits: comp_best_hits as usize, valid });
         }
     }
@@ -1244,6 +1252,19 @@ impl Sinks {
     pub fn intervals(&self) -> Vec<(String, i64, i64)> {
         self.kept.iter().map(|r| (r.chrom.clone(), r.start, r.end)).collect()
     }
+    /// Keep only the intervals of the named classes (`--classes`), on this file's contigs or not,
+    /// and those without a class, which serve every class (as `ngsdose sinks` reads them): the
+    /// other classes' intervals are not read. Returns how many intervals on this file's contigs were dropped.
+    pub fn select(&mut self, names: &[String]) -> usize {
+        let n = self.kept.len();
+        self.kept.retain(|r| r.name.is_empty() || names.contains(&r.name));
+        self.skipped.retain(|c, _| c.is_empty() || names.contains(c));
+        n - self.kept.len()
+    }
+    /// The class names the BED gives, on this file's contigs or not.
+    pub fn class_names(&self) -> std::collections::BTreeSet<&str> {
+        self.kept.iter().map(|r| r.name.as_str()).chain(self.skipped.keys().map(|c| c.as_str())).filter(|c| !c.is_empty()).collect()
+    }
     /// "DJ 2 (1.5 kb), rDNA45S 1 (40.0 kb)"
     pub fn skipped_summary(&self) -> String {
         self.skipped
@@ -1548,13 +1569,19 @@ pub struct Output {
     pub min_frac: f64,
     pub panel: String,
     pub panel_sha256: Vec<String>,
+    /// `count --classes`: the classes counted, in panel order; the others were loaded (and their
+    /// shared k-mers dropped, as in the full load) but are not counted or listed, and their reads do
+    /// not enter ambiguous_reads or below_threshold_reads. Absent without --classes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classes_selected: Option<Vec<String>>,
     pub controls_sha256: String,
     pub sinks_sha256: Option<String>,
     pub controls: String,
     pub sinks: Option<String>,
     pub unmapped_fetched: bool,
-    /// fetch mode: loaded panel classes for which the sinks BED had no interval, counted only where
-    /// their reads fall inside other intervals (only with --allow-missing-sinks; otherwise refused)
+    /// fetch mode: loaded panel classes (with --classes, the selected ones) for which the sinks BED had
+    /// no interval, counted only where their reads fall inside other intervals (only with
+    /// --allow-missing-sinks; otherwise refused)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sinks_missing_classes: Vec<String>,
     /// fetch mode: sink intervals left out, per class, because their contig is not in the alignment
@@ -1722,7 +1749,9 @@ pub fn make_output(
         .classes
         .iter()
         .zip(acc.classes)
-        .map(|(c, a)| ClassOut {
+        .zip(&panel.counted)
+        .filter(|(_, &counted)| counted)
+        .map(|((c, a), _)| ClassOut {
             name: c.name.clone(),
             kind: c.kind.as_str().to_string(),
             length: c.length,
@@ -1788,6 +1817,7 @@ pub fn make_output(
         min_frac: p.min_frac,
         panel: panel_path,
         panel_sha256: hashes.0,
+        classes_selected: None,
         controls_sha256: hashes.1,
         sinks_sha256: hashes.2,
         controls: controls_path,
@@ -2068,6 +2098,118 @@ mod tests {
         assert_eq!(read_length_mode(&h), 151);
         h[100] = 9;
         assert_eq!(read_length_mode(&h), 151); // a tie goes to the longer length, as in earlier builds
+    }
+
+    /// unit(): A positional (k-mers starting at 0..120), B positional (120..200), C and D
+    /// compositional families (200..300 and 300..400)
+    fn four_class_panel(k: usize) -> Panel {
+        let mut map = FxHashMap::default();
+        for km in KmerIter::new(&encode_ascii(&unit()), k) {
+            let (class, pos) = match km.offset {
+                o if o < 120 => (0, o),
+                o if o < 200 => (1, o - 120),
+                o if o < 300 => (2, 0),
+                _ => (3, 0),
+            };
+            map.insert(km.canon, Entry::new(class, pos, km.fwd_is_canon));
+        }
+        let cd =
+            |n: &str, kind, length| ClassDef { name: n.into(), kind, length, circular: false, source: "t".into(), n_kmers_input: 0, n_kmers_kept: 7 };
+        let classes =
+            vec![cd("A", Kind::Positional, 120), cd("B", Kind::Positional, 80), cd("C", Kind::Compositional, 100), cd("D", Kind::Compositional, 100)];
+        Panel::from_parts(k, classes, map, vec![])
+    }
+
+    #[test]
+    fn a_selection_counts_each_named_class_as_the_full_load_does() {
+        let (k, u) = (15, unit());
+        let full = four_class_panel(k);
+        assert!(full.counted.iter().all(|&c| c));
+        // reads of every kind: in one class, across two, split evenly between C and D (ambiguous),
+        // with too few k-mers of a class (below threshold), on both strands
+        let mut reads: Vec<Vec<u8>> = Vec::new();
+        for len in [100, 40, 22] {
+            for start in (0..=u.len() - len).step_by(3) {
+                reads.push(u[start..start + len].to_vec());
+                reads.push(revcomp_ascii(&u[start..start + len]));
+            }
+        }
+        let names = ["A", "B", "C", "D"];
+        let (mut s_full, mut s_sel) = (Scratch::new(4), Scratch::new(4));
+        let (mut o_full, mut o_sel) = (Vec::new(), Vec::new());
+        let mut seen = (0, 0, 0); // assignments, ambiguous and below-threshold reads under a selection
+        for mask in 1..16u32 {
+            let chosen: Vec<String> = (0..4).filter(|i| mask >> i & 1 == 1).map(|i| names[i].to_string()).collect();
+            let sel = four_class_panel(k).select(&chosen).unwrap();
+            assert_eq!(sel.counted_names(), chosen);
+            assert!(sel.classes.iter().all(|c| c.n_kmers_kept == 7), "the full load's k-mer counts are kept");
+            // positional classes left out lose their k-mers; compositional ones keep theirs while a
+            // named family has to compete with them
+            let contest = mask & 0b1100 != 0;
+            let want = |c: usize| mask >> c & 1 == 1 || (contest && c >= 2);
+            assert!(sel.map.values().all(|e| want(e.class())));
+            assert_eq!(sel.map.len(), full.map.values().filter(|e| want(e.class())).count());
+            for r in &reads {
+                s_full.codes = encode_ascii(r);
+                s_sel.codes = s_full.codes.clone();
+                let un_full = classify(&full, &params(), &mut s_full, &mut o_full);
+                let un_sel = classify(&sel, &params(), &mut s_sel, &mut o_sel);
+                o_full.retain(|a| mask >> a.class & 1 == 1);
+                assert_eq!(o_sel, o_full, "selection {:?}", chosen);
+                if mask == 15 {
+                    assert_eq!(un_sel, un_full);
+                }
+                // a diagnostic under a selection is one the full load has too, and about a named class
+                assert!(!un_sel.ambiguous || (un_full.ambiguous && contest));
+                assert!(!un_sel.below || un_full.below);
+                seen.0 += o_sel.len();
+                seen.1 += un_sel.ambiguous as usize;
+                seen.2 += un_sel.below as usize;
+            }
+        }
+        assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "every outcome occurs: {:?}", seen);
+        // a C/D read split evenly is ambiguous for C, and no concern of A's
+        let even = encode_ascii(&u[250..350]);
+        for (chosen, ambiguous) in [(vec!["C"], true), (vec!["A"], false), (vec!["A", "D"], true)] {
+            let sel = four_class_panel(k).select(&chosen.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+            s_sel.codes = even.clone();
+            let un = classify(&sel, &params(), &mut s_sel, &mut o_sel);
+            assert!(o_sel.is_empty() && un.ambiguous == ambiguous, "{:?}", chosen);
+        }
+        // a read that D wins is not counted when only C is named
+        s_sel.codes = encode_ascii(&u[300..400]);
+        classify(&four_class_panel(k).select(&["C".into()]).unwrap(), &params(), &mut s_sel, &mut o_sel);
+        assert!(o_sel.is_empty());
+    }
+
+    #[test]
+    fn a_selection_names_loaded_classes_only() {
+        for bad in [vec!["A", "E"], vec![], vec!["a"]] {
+            let e = four_class_panel(15).select(&bad.iter().map(|s| s.to_string()).collect::<Vec<_>>()).err().unwrap().to_string();
+            assert!(e.contains("define A, B, C, D"), "{}", e);
+            if bad.len() == 2 {
+                assert!(e.contains("'E'") && !e.contains("'A'"), "{}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn a_selection_keeps_the_sinks_of_the_named_classes() {
+        let dir = std::env::temp_dir().join(format!("ngsdose_sinks_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bed = dir.join("s.bed");
+        std::fs::write(&bed, "chr1\t0\t10\tA\nchr1\t20\t30\tB\nchrZ\t0\t5\tB\nchrZ\t0\t7\tC\nchr1\t40\t50\nchr1\t60\t70\tA\nchrZ\t9\t19\n").unwrap();
+        let tid_of = |c: &str| (c == "chr1").then_some(0);
+        let mut sk = load_sinks(&bed, &tid_of).unwrap();
+        assert!(sk.named);
+        assert_eq!(sk.class_names().into_iter().collect::<Vec<_>>(), vec!["A", "B", "C"]);
+        assert_eq!(sk.select(&["A".into(), "C".into()]), 1, "B's interval on chr1 is dropped");
+        assert_eq!(
+            sk.intervals(),
+            vec![("chr1".into(), 0, 10), ("chr1".into(), 40, 50), ("chr1".into(), 60, 70)],
+            "a row without a class serves every class"
+        );
+        assert_eq!(sk.skipped.keys().collect::<Vec<_>>(), vec!["", "C"]);
     }
 
     #[test]
