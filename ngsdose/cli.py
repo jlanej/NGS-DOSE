@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -25,7 +26,13 @@ def _estimate_init(a):
     panel, units = io.load_panel(res.panel), res.units()
     res.check_units(panel, units)
     sub_options, known_sinks = estimate.fetch_context(res.dir, res.sinks, getattr(a, "fetch_sinks", None) or ())
+    ex_dir, looked = estimate.experimental_layout(res.dir)
     _EST.update(args=a, res=res, panel=panel, units=units, feats=res.features(),
+                # a bare copy of the bundle's directory has no experimental resources: say so, and let estimate_sample
+                # treat fetches through other sinks BEDs as unverified rather than measured
+                experimental_missing=None if ex_dir is not None else str(looked),
+                bundle_sinks_sha256=hashlib.sha256(Path(res.sinks).read_bytes()).hexdigest(),
+                sinks_pipeline=(res.meta.get("sinks_learned_from") or {}).get("pipeline"),
                 anchors={} if a.gc_rule_anchors else res.anchors(), tables={}, lengths=res.contig_lengths(),
                 regions=None if a.no_control_qc else res.regions(),
                 # a fetch made with a lighter controls file the bundle names, and units of positional
@@ -66,7 +73,9 @@ def _estimate_one(job):
                                      window=a.window, min_kmers=a.min_kmers, anchors=_EST["anchors"],
                                      contig_lengths=_EST["lengths"], regions=_EST["regions"],
                                      control_subsets=_EST["subsets"], experimental=_EST["experimental"],
-                                     sub_options=_EST["sub_options"], known_sinks=_EST["known_sinks"])
+                                     sub_options=_EST["sub_options"], known_sinks=_EST["known_sinks"],
+                                     experimental_missing=_EST["experimental_missing"], bundle_sinks_sha256=_EST["bundle_sinks_sha256"],
+                                     sinks_pipeline=_EST["sinks_pipeline"])
         r["resources"] = {k: counts.get(k) for k in ("panel_sha256", "controls_sha256", "sinks_sha256")}
         unverified = {k: v["parent"] for k, v in (r.get("sub_options") or {}).items() if v["status"] == "unverified"}
         parents = sorted(n for n, c in r["classes"].items() if c.get("status") == "unverified")
@@ -129,6 +138,9 @@ def _mixed_resources(done: list[dict]) -> list[str]:
 
 
 def cmd_estimate(a):
+    for p in getattr(a, "fetch_sinks", None) or ():           # a path that is not there would be passed over without a word
+        if not Path(p).is_file():
+            raise SystemExit(f"ngsdose estimate: --fetch-sinks {p}: no such file")
     names = [_output_name(p) for p in a.counts] if a.outdir else [None] * len(a.counts)
     if a.outdir:
         dup = sorted(n for n, k in Counter(names).items() if k > 1)
@@ -142,6 +154,11 @@ def cmd_estimate(a):
         _estimate_init(a)                                   # the bundle is checked once, before any worker starts
     except (OSError, ValueError) as e:
         raise SystemExit(f"ngsdose estimate: {e}") from None
+    if _EST["experimental_missing"]:
+        print(f"[estimate] WARNING: no experimental resources beside the bundle (looked for {_EST['experimental_missing']}): the sub-options, "
+              "the experimental sinks and the candidate units are unknown here, so a fetch made with a sinks BED other than the bundle's "
+              "gets its satellite families reported unverified, and positional candidates are skipped. Keep resources/experimental beside "
+              "the bundle's directory, or set NGSDOSE_EXPERIMENTAL", file=sys.stderr)
     out = []
     with contextlib.ExitStack() as stack:
         if a.jobs > 1 and len(jobs) > 1:
@@ -226,10 +243,17 @@ def _read_table(path) -> tuple[list[str], list[dict]]:
     return header, rows
 
 
-def _need_columns(header, columns, path, cmd):
+def _need_columns(header, columns, path, cmd, strict=True) -> list[str]:
+    """The requested columns the table lacks. Strict (adjust): the run stops, since its output would lack
+    what was asked for. Otherwise (trios, pcsweep) a column that is not there is that column's failure, not
+    the run's: it is said once, the caller gives it an NA row with the reason or leaves it out of the sweep,
+    and stops only when no column is left."""
     missing = [c for c in dict.fromkeys(columns) if c not in header]
-    if missing:
+    if missing and strict:
         raise SystemExit(f"ngsdose {cmd}: no column {', '.join(missing)} in {path}")
+    if missing:
+        print(f"[{cmd}] WARNING: no column {', '.join(missing)} in {path}", file=sys.stderr)
+    return missing
 
 
 def _values(rows, column, path):
@@ -246,32 +270,41 @@ def _values(rows, column, path):
 
 @contextlib.contextmanager
 def _pedigree_warnings(cmd):
-    """The pedigree's and the trio analysis's warnings, each printed once, as the command's own."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", trios.PedigreeWarning)
-        try:
+    """The pedigree's and the trio analysis's warnings, each printed once, as the command's own. Any other
+    warning raised inside (numpy's, a library's) is shown as usual - after the recording context has been
+    left: shown inside it, each would be recorded again into the very list being walked, without end."""
+    caught: list = []
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", trios.PedigreeWarning)
             yield
-        finally:
-            said = set()
-            for w in caught:
-                if issubclass(w.category, trios.PedigreeWarning):
-                    if str(w.message) not in said:
-                        said.add(str(w.message))
-                        print(f"[{cmd}] WARNING: {w.message}", file=sys.stderr)
-                else:
-                    warnings.showwarning(w.message, w.category, w.filename, w.lineno)
+    finally:
+        said = set()
+        for w in caught:
+            if issubclass(w.category, trios.PedigreeWarning):
+                if str(w.message) not in said:
+                    said.add(str(w.message))
+                    print(f"[{cmd}] WARNING: {w.message}", file=sys.stderr)
+            else:
+                warnings.showwarning(w.message, w.category, w.filename, w.lineno)
 
 
 def cmd_trios(a):
     header, rows = _read_table(a.table)
-    _need_columns(header, list(a.columns) + ([a.compare_to] if a.compare_to else []), a.table, "trios")
-    out, failed = {}, {}
+    if a.compare_to and a.compare_to not in header:
+        raise SystemExit(f"ngsdose trios: --compare-to: no column {a.compare_to} in {a.table}")
+    absent = _need_columns(header, a.columns, a.table, "trios", strict=False)
+    if len(absent) == len(set(a.columns)):
+        raise SystemExit(f"ngsdose trios: none of the columns ({', '.join(dict.fromkeys(a.columns))}) is in {a.table}")
+    out, failed = {}, {c: f"no column {c} in {a.table}" for c in absent}
     with _pedigree_warnings("trios"):
         ped, pop = trios.load_pedigree(a.pedigree, population=a.population)
         if not ped:
             raise SystemExit(f"ngsdose trios: {a.pedigree} holds no complete trio (a child with both parents given); check its layout")
         centre = None if a.no_population_centring else pop
         for col in a.columns:
+            if col in failed:
+                continue
             try:
                 out[col] = trios.transmission(_values(rows, col, a.table), ped, centre, n_perm=a.perm)
             except (ValueError, KeyError) as err:           # too few complete trios, or no numbers: the other columns still get their row
@@ -478,7 +511,12 @@ def cmd_pcsweep(a):
         if not sep or not col or not (np.isfinite(v) and v > 0):
             raise SystemExit(f"ngsdose pcsweep: --truth {spec!r}: expected COLUMN=VALUE with a positive number")
         extra[col] = v
-    _need_columns(header, list(a.columns) + list(extra), a.table, "pcsweep")
+    absent = _need_columns(header, list(a.columns) + list(extra), a.table, "pcsweep", strict=False)
+    if any(c in absent for c in extra):
+        raise SystemExit(f"ngsdose pcsweep: --truth names a column {a.table} lacks: {', '.join(c for c in extra if c in absent)}")
+    a.columns = [c for c in a.columns if c not in absent]     # the others are swept; a column that is not there is left out
+    if not a.columns:
+        raise SystemExit(f"ngsdose pcsweep: none of the columns is in {a.table}")
     if a.population and not a.pedigree:
         raise SystemExit("ngsdose pcsweep: --population needs --pedigree")
     pcs, k_mp, how = _pcs_and_choice(a, rows)

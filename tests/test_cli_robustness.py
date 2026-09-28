@@ -202,8 +202,11 @@ def test_trios_centres_within_a_population_file(family):
 
 def test_trios_fails_when_nothing_could_be_analysed(family):
     d = family
-    r = ngsdose("trios", d / "t.tsv", "-p", d / "ped.txt", "-c", "var", "nosuch")
-    assert r.returncode == 1 and "no column nosuch" in r.stderr and "Traceback" not in r.stderr
+    r = ngsdose("trios", d / "t.tsv", "-p", d / "ped.txt", "-c", "var", "nosuch", "--perm", "0")
+    assert r.returncode == 0 and "no column nosuch" in r.stderr and "Traceback" not in r.stderr    # an NA row, the other column analysed
+    assert "\nnosuch\t0\tNA" in r.stdout and "# no column nosuch" in r.stdout
+    r = ngsdose("trios", d / "t.tsv", "-p", d / "ped.txt", "-c", "nosuch")
+    assert r.returncode == 1 and "none of the columns" in r.stderr and "Traceback" not in r.stderr
     r = ngsdose("trios", d / "t.tsv", "-p", d / "ped.txt", "--no-population-centring", "-c", "empty", "few", "--json", d / "e.json")
     assert r.returncode == 1 and "none of the 2 columns could be analysed" in r.stderr
     assert "# need at least 3 complete trios" in r.stdout and "# no numeric values" in r.stdout

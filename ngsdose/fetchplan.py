@@ -56,6 +56,9 @@ def default_menu() -> Path:
         p = Path(env).parent / "fetch_menu.tsv"
         if p.exists():
             return p
+        # not the source checkout's: its rows would name the checkout's panels and sinks, and the plan would mix two bundles
+        raise ValueError(f"no fetch menu beside the resource bundle ({p}, NGSDOSE_RESOURCES={env}): pass one with --menu, or keep "
+                         "resources/fetch_menu.tsv beside the bundle's directory as the repository, the image and the release tarball do")
     return Path(__file__).resolve().parent.parent / "resources" / "fetch_menu.tsv"
 
 

@@ -10,6 +10,23 @@ from dataclasses import dataclass
 import numpy as np
 
 COUNTS_FORMAT = "ngs-dose-counts/1"
+EXPERIMENTAL_ENV = "NGSDOSE_EXPERIMENTAL"
+
+
+def experimental_dir(bundle_dir):
+    """The experimental resources that go with a bundle (the sub-option BEDs, the experimental sinks, the
+    candidate units): $NGSDOSE_EXPERIMENTAL when set, else `experimental` beside the bundle's directory,
+    as the repository, the image and the release tarball lay them out. Returns the directory named by the
+    variable whether or not it exists (so that a wrong setting is reported by name), or the sibling when
+    it exists, or None: a bare copy of the bundle's directory has no experimental resources, and a caller
+    must then say what it cannot check rather than check nothing."""
+    import os
+    from pathlib import Path
+    env = os.environ.get(EXPERIMENTAL_ENV)
+    if env:
+        return Path(env)
+    d = Path(bundle_dir).resolve().parent / "experimental"
+    return d if d.is_dir() else None
 
 
 class CountsError(ValueError):

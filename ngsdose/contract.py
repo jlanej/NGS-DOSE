@@ -94,13 +94,16 @@ def subset_only(counts: dict, sub_options: dict, known_sinks: dict | None = None
         names = ", ".join(sorted(o.name for o in subs))
         if bed is not None:
             top = {x["name"]: x["len"] for x in counts.get("contigs", ()) if isinstance(x, dict) and "len" in x}
-            own = [(c, s, min(e, top.get(c, e))) for c, s, e, n in bed if n == parent and s < top.get(c, e)]
+            # a row without a class serves every class (the engine, incomplete_sinks and estimate.sub_option_values
+            # read it so): it is one of the parent's intervals here too
+            own = [(c, s, min(e, top.get(c, e))) for c, s, e, n in bed if n in (parent, "") and s < top.get(c, e)]
             if own and all(sinks._inside(index, parent, c, s, e) for c, s, e in own):
                 out[parent] = (f"the fetch's sinks BED holds no {parent} interval outside those of its sub-option(s) {names}: {parent} was "
                                "read only there (the sub-options' values are reported, the class's is not)")
             continue
         placed = [p for p in counts.get("placements", []) if p["class"] == parent and p["contig"] != "*"]
-        if all(_overlaps(index.get((parent, p["contig"])), p["start"], p["start"] + width) for p in placed):
+        # no placed bin says nothing (all([]) would): the class is then unverified, not subset-only
+        if placed and all(_overlaps(index.get((parent, p["contig"])), p["start"], p["start"] + width) for p in placed):
             out[parent] = (f"every {parent} placement of this fetch ({len(placed)} bins) lies at the intervals of its sub-option(s) {names}: "
                            f"the fetch read those, not {parent}'s sinks (the sub-options' values are reported, the class's is not)")
     return out
@@ -125,6 +128,37 @@ def unverified_parents(counts: dict, sub_options: dict, known_sinks: dict | None
                 f"it may have read {p}'s whole sinks or only the intervals of its sub-option(s) {', '.join(sorted(subs))}, so its value is "
                 "not reported; pass that BED to `ngsdose estimate --fetch-sinks`")
             for p, subs in parents.items() if p in counted and p not in (only or {})}
+
+
+def pipeline_check(counts: dict, learned: dict | None) -> str | None:
+    """Whether a fetch's input came from the pipeline its sinks were learned under. `learned` is the
+    bundle's `sinks_learned_from.pipeline`: the aligner's @PG program name and the engine's `sq_sha256`
+    of the reference's @SQ lines (names, lengths, M5). Sinks are where one aligner put a class's reads
+    on one reference; another aligner, or another reference, puts them elsewhere, and a fetch through
+    these sinks then undercounts with no other sign (DESIGN.md section 12: under DRAGEN 4.x most 45S
+    reads are unmapped). None when either side lacks the record (counts written by engines before it,
+    a bundle without one, a scan); 'ok' when they agree; otherwise what differs."""
+    if not learned or counts.get("mode") != "fetch":
+        return None
+    rec = counts.get("pipeline") or {}
+    if not rec:
+        return None
+    bad, checked = [], False
+    want = str(learned.get("aligner") or "").lower()
+    pns = sorted({str(p.get("pn") or p.get("id") or "").lower() for p in rec.get("pg", [])} - {""})
+    if want and pns:                                       # a header without @PG lines (a stripped test file) names no aligner
+        checked = True
+        if not any(want in pn for pn in pns):
+            bad.append(f"aligned by {', '.join(pns)}, not {learned['aligner']}, which the sinks were learned under")
+    # the @SQ hash is comparable only between whole headers: a file whose header keeps a subset of the contigs
+    # (a cut, the test fixture) hashes differently without being from another reference
+    if learned.get("sq_sha256") and rec.get("sq_sha256") and (learned.get("sq_n") is None or rec.get("sq_n") == learned.get("sq_n")):
+        checked = True
+        if rec["sq_sha256"] != learned["sq_sha256"]:
+            bad.append("its reference's @SQ lines (names, lengths, M5) are not those the sinks were learned under")
+    if not checked:
+        return None
+    return "ok" if not bad else "; ".join(bad)
 
 
 def _panel(x) -> io.Panel:
@@ -233,4 +267,10 @@ def issues(counts: dict, bundle=None, known_sinks: dict | None = None) -> list[t
     recorded = [recorded] if isinstance(recorded, str) else (recorded or [])
     if recorded and not bundle._panel_hashes & set(recorded):
         out.append(("warn", f"{s}: none of the panels it was counted with is the bundle's panel file ({bundle.panel.name})"))
+    learned = (bundle.meta.get("sinks_learned_from") or {}).get("pipeline") if hasattr(bundle, "meta") else None
+    why = pipeline_check(counts, learned)
+    if why and why != "ok":
+        out.append(("warn", f"{s}: this fetch's input is not from the pipeline the sinks were learned under ({why}). The sinks may not "
+                            "hold its class reads; learn sinks from whole-file scans of this pipeline (ngsdose sinks) before trusting its "
+                            "fetches (the table records the verdict in sinks_pipeline)"))
     return out

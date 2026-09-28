@@ -334,7 +334,11 @@ def test_the_default_menu_is_found_beside_the_bundle(tmp_path, monkeypatch):
     monkeypatch.setenv("NGSDOSE_RESOURCES", str(tmp_path / "GRCh38"))
     assert fetchplan.default_menu() == tmp_path / "fetch_menu.tsv"
     monkeypatch.setenv("NGSDOSE_RESOURCES", str(tmp_path / "elsewhere" / "GRCh38"))
-    assert fetchplan.default_menu() == ROOT / "resources" / "fetch_menu.tsv"         # nothing there: the source checkout's
+    with pytest.raises(ValueError, match="no fetch menu beside the resource bundle"):   # nothing there: not the checkout's, silently
+        fetchplan.default_menu()
+    monkeypatch.delenv("NGSDOSE_RESOURCES")
+    assert fetchplan.default_menu() == ROOT / "resources" / "fetch_menu.tsv"         # no bundle configured: the source checkout's
+    monkeypatch.setenv("NGSDOSE_RESOURCES", str(tmp_path / "elsewhere" / "GRCh38"))
     with pytest.raises(ValueError, match="pass it with --menu"):
         fetchplan.read_menu(tmp_path / "none.tsv")
 

@@ -100,7 +100,7 @@ jobs:
         run: |
           pip install build
           python -m build --outdir dist
-          tar czf dist/ngs-dose-resources-${{ needs.version.outputs.version }}.tar.gz resources/GRCh38 resources/experimental
+          tar czf dist/ngs-dose-resources-${{ needs.version.outputs.version }}.tar.gz resources/GRCh38 resources/experimental resources/fetch_menu.tsv
       - uses: actions/download-artifact@v4
         with:
           name: engine-linux
@@ -119,6 +119,10 @@ jobs:
           ./ngs-dose count -m fetch -i NA12878.subsample.bam -p $R/panel.k31.tsv.gz -c $R/controls.fa.gz --sinks $R/sinks.bed -o counts.json.gz
           venv/bin/ngsdose selftest
           venv/bin/ngsdose estimate counts.json.gz -t estimate.tsv
+          # the fetch menu ships with the resources: a plan from the release alone, and a fetch through it
+          venv/bin/ngsdose fetchplan --preset core_tel -o plan
+          ./ngs-dose count -m fetch -i NA12878.subsample.bam -c "$(cat plan.controls.txt)" --sinks plan.sinks.bed $(sed 's/^/-p /' plan.panels.txt) $(cat plan.count_flags.txt) -o plan.json.gz
+          venv/bin/ngsdose estimate plan.json.gz --fetch-sinks plan.sinks.bed -t plan.tsv
           # the copy numbers the fixture is known to give, from the engine of this commit
           python3 "$check" --engine "${{ needs.version.outputs.version }}+${GITHUB_SHA::7}" < estimate.tsv
       - uses: actions/upload-artifact@v4

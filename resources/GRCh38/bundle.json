@@ -14,6 +14,13 @@
   },
   "sinks_learned_from": {
     "aligner": "bwa mem 0.7.15 -Y, ALT-aware (NYGC 1000 Genomes 30x pipeline)",
+    "pipeline": {
+      "aligner": "bwa",
+      "aligner_version": "0.7.15-r1140",
+      "sq_sha256": "48c53b725ed4ef69ee42f47c8216c4cdc28a9f2db4bd2af5d6cdc21f8a650d38",
+      "sq_n": 3366,
+      "note": "what a fetch's counts must record in `pipeline` to be from this pipeline: a @PG line whose program is the aligner, and the engine's hash of the reference's @SQ lines (GRCh38_full_analysis_set_plus_decoy_hla: 3,366 contigs with M5). ngsdose estimate warns, and records sinks_pipeline in the table, when a fetch's input differs in either"
+    },
     "samples": [
       "NA12878 (CEU, female)",
       "HG02258 (ACB, male)"

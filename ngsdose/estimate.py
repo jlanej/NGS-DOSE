@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from . import contract, gcmodel, sinks
+from . import io as _io
 from .io import Panel, PanelClass
 
 ANCHOR_GC = (0.40, 0.60)
@@ -393,9 +394,18 @@ class SubOption:
     path: str = ""
 
 
+def experimental_layout(bundle_dir) -> tuple[Path | None, Path]:
+    """The experimental resources that go with the bundle (io.experimental_dir: $NGSDOSE_EXPERIMENTAL, or
+    `experimental` beside the bundle's directory), and where they were looked for: (directory or None, path)."""
+    ex = _io.experimental_dir(bundle_dir)
+    looked = ex if ex is not None else Path(bundle_dir).resolve().parent / "experimental"
+    return (ex if ex is not None and ex.is_dir() else None), looked
+
+
 def sub_option_dir(bundle_dir) -> Path:
-    """resources/experimental/subsets beside the bundle's directory, as the repository and the image lay them out."""
-    return Path(bundle_dir).resolve().parent / "experimental" / "subsets"
+    """`subsets` of the bundle's experimental resources (experimental_layout), as the repository, the image
+    and the release tarball lay them out: resources/experimental/subsets beside resources/GRCh38."""
+    return experimental_layout(bundle_dir)[1] / "subsets"
 
 
 def load_sub_options(directory) -> dict[str, SubOption]:
@@ -434,7 +444,7 @@ def fetch_context(bundle_dir, bundle_sinks, fetch_sinks=()) -> tuple[dict[str, S
     `fetch_sinks` (e.g. a fetchplan PREFIX.sinks.bed). Without them a fetch of a plan that read a family
     only at its sub-options would report the family as measured."""
     d = sub_option_dir(bundle_dir)
-    return load_sub_options(d), sinks_by_hash([bundle_sinks, *sorted(Path(bundle_dir).resolve().parent.joinpath("experimental").glob("*.bed")),
+    return load_sub_options(d), sinks_by_hash([bundle_sinks, *sorted(experimental_layout(bundle_dir)[1].glob("*.bed")),
                                                *sorted(d.glob("*.bed")), *fetch_sinks])
 
 
@@ -507,7 +517,9 @@ def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features:
                     region_tables: np.ndarray | None = None, L: int | None = None, window: int = 250,
                     min_kmers: int = 20, anchors: dict | None = None, contig_lengths: dict | None = None,
                     regions: list[tuple[str, str]] | None = None, control_subsets: dict[str, frozenset] | None = None,
-                    experimental=None, sub_options: dict[str, SubOption] | None = None, known_sinks: dict | None = None) -> dict:
+                    experimental=None, sub_options: dict[str, SubOption] | None = None, known_sinks: dict | None = None,
+                    experimental_missing: str | None = None, bundle_sinks_sha256: str | None = None,
+                    sinks_pipeline: dict | None = None) -> dict:
     """`regions`: the bundle's (name, role) list in the row order of `region_tables`; with it the
     tables are matched to the counts by name, without it they must correspond row for row.
     `control_subsets`: the named subsets of the bundle's control regions that counts may have been
@@ -595,6 +607,19 @@ def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features:
     mismatch = contract.panel_mismatch(counts, panel)
     only = contract.subset_only(counts, sub_options, known_sinks) if sub_options else {}
     unsure = contract.unverified_parents(counts, sub_options, known_sinks, only) if sub_options else {}
+    if experimental_missing and counts.get("mode") == "fetch" and counts.get("sinks_sha256") != bundle_sinks_sha256:
+        # without the experimental resources (a bare copy of the bundle's directory) the sub-options are not known
+        # here, so a fetch through any sinks BED but the bundle's own may have read a family only at them: the
+        # family is then not measured, rather than a count at its X and Y arrays passing for its whole mass
+        for cls in counts["classes"]:
+            if cls["kind"] != "positional" and cls["name"] not in incomplete and cls["name"] not in only and cls["name"] not in unsure:
+                unsure[cls["name"]] = (f"the sub-option definitions were not found ({experimental_missing}): whether this fetch, made with "
+                                       f"a sinks BED other than the bundle's ({counts.get('sinks')}), read {cls['name']}'s whole sinks or "
+                                       "only some of them cannot be told; keep resources/experimental beside the bundle's directory, "
+                                       "or set NGSDOSE_EXPERIMENTAL")
+    check = contract.pipeline_check(counts, sinks_pipeline)
+    if check is not None:
+        res["sinks_pipeline"] = check
     for cls in counts["classes"]:
         name = cls["name"]
         pc = panel.classes.get(name)

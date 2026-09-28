@@ -202,7 +202,8 @@ def experimental_unit_dirs(bundle_dir) -> list[Path]:
     """Where units of experimental positional classes are looked for, in order: the repository's
     `resources/experimental/candidates/units` (beside the bundle's directory), then every directory
     named by NGSDOSE_EXTRA_UNITS (several separated by the path separator, ':')."""
-    dirs = [Path(bundle_dir).resolve().parent / "experimental" / "candidates" / "units"]
+    ex = io.experimental_dir(bundle_dir)
+    dirs = [(ex if ex is not None else Path(bundle_dir).resolve().parent / "experimental") / "candidates" / "units"]
     dirs += [Path(d) for d in os.environ.get(EXTRA_UNITS_ENV, "").split(os.pathsep) if d]
     return dirs
 

@@ -32,8 +32,9 @@ def dump(obj, path):
 
 
 def load_result(path) -> dict:
+    from .io import _open                                  # gzip told by the magic bytes, not the name, as counts files are
     try:
-        with (gzip.open(path, "rt") if str(path).endswith(".gz") else open(path)) as fh:
+        with _open(path) as fh:
             return json.load(fh)
     except zlib.error as e:
         raise ValueError(f"{path}: corrupt gzip stream ({e})") from e

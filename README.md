@@ -106,7 +106,12 @@ apptainer exec ngs-dose.sif ngs-dose count --help
 container is the only no-compile route today) makes a
 [release](https://github.com/jlanej/NGS-DOSE/releases) that carries the engine for Linux (glibc
 2.28 and newer, curl and TLS built in) and for macOS on Apple silicon, the Python wheel, and the
-resource bundle (`export NGSDOSE_RESOURCES=/path/to/resources/GRCh38`).
+resource bundle (`export NGSDOSE_RESOURCES=/path/to/resources/GRCh38`). The experimental
+resources (`resources/experimental`: the satellite sinks, the sub-option BEDs, the candidate units)
+are looked for beside the bundle's directory, or where `NGSDOSE_EXPERIMENTAL` points; a bare copy
+of the bundle's directory alone works, but `ngsdose estimate` then says so and reports a fetch made
+with a sinks BED other than the bundle's own as unverified rather than measured, since the
+sub-options are unknown to it.
 
 ```bash
 B=resources/GRCh38
@@ -146,7 +151,9 @@ A cohort takes one estimate per sample (`cohort` refuses a sample given twice). 
 `pcsweep` centre values within the populations of the pedigree's population column, or of a
 `--population` file, and warn when the samples are not labelled with at least two populations of
 five or more (a cohort whose samples all share one label is not warned about); the bootstrap resamples
-whole families.
+whole families. A column the table lacks gets an NA row with the reason in `trios` and is left
+out of a `pcsweep`; the run stops only when no column is left (`adjust` still stops, since its
+output would lack what was asked for).
 
 ```bash
 ngsdose selftest        # simulation checks of the statistics; needs no data
@@ -205,8 +212,11 @@ records the gap in the counts (`sinks_missing_classes`), and `--classes A,B` (en
 fetch-menu change of 2026-09-26 on) counts only the named classes, so only their sinks are read and checked. fae1124, the
 cohort's engine, has none of the three: it does not refuse, it undercounts such a class without
 saying so, which is why `fetchplan` refuses to plan such a fetch for it (below). Sink intervals on contigs the header
-lacks are always left out, with a warning, and recorded per class (`sinks_skipped`); `ngsdose
-estimate` reports such a class as NA rather than as an undercount.
+lacks cannot be read: a class that loses any of them is refused like a class without sinks,
+unless `--allow-missing-sinks`, which records them per class (`sinks_skipped`) and fetches the
+rest; `ngsdose estimate` reports such a class as NA rather than as an undercount, so the flag
+spends a fetch on a class that will not be measured (engines from 0.1.1 on; the build of
+2026-09-26 warned and fetched).
 
 Where the engine cannot read the CRAMs itself, `ngs-dose plan` writes the intervals a fetch reads
 as BED, to cut them out with samtools and count the cut in fetch mode with the same bundle, sinks
@@ -225,7 +235,12 @@ target/release/ngs-dose count -m fetch -i sample.cut.bam -p $B/panel.k31.tsv.gz 
 
 Each counts file also records the input's pipeline from its header (`pipeline`: the @PG
 programs, and a hash of the @SQ names, lengths and M5 checksums), so that counts from different
-alignments can be told apart.
+alignments can be told apart. A fetch's record is compared with the pipeline the bundle's sinks
+were learned under (`bundle.json`, `sinks_learned_from.pipeline`: the aligner named in @PG and the
+hash of the analysis set's @SQ lines): `ngsdose estimate` warns when either differs and records
+the verdict in `sinks_pipeline`, since sinks learned under one aligner and reference do not hold
+another's reads (DESIGN.md §12). Counts from engines before the record, and headers stripped of
+their @PG lines or of contigs, are not compared.
 
 The 1000 Genomes cohort run - its pipeline for SLURM or a plain loop, its pilot, its counts files
 and the page built from them - is [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G),
@@ -242,7 +257,10 @@ because they share their slices with piles of other reads. `ngsdose fetchplan` p
 (`.crai`), counting a slice that several options share once and adding each container's
 compression header, and writes the files that `ngs-dose count -m fetch` takes. The options are
 the rows of `resources/fetch_menu.tsv`; its header documents the format, and its tiers and presets
-are meant to be edited.
+are meant to be edited. The menu is found beside the bundle's directory (the repository, the image
+and the release tarball keep it there) or in a source checkout; with `NGSDOSE_RESOURCES` set and no
+menu beside it, `fetchplan` stops rather than take the checkout's, whose rows would name another
+bundle's files (`--menu` names one outright).
 
 The options, and the capture of their sinks in held-out cohort scans (min / median):
 
@@ -353,7 +371,9 @@ ngsdose estimate sample.json.gz --fetch-sinks plan.sinks.bed -o estimates/
   probe, `fetchplan` writes `--allow-missing-sinks`, which fae1124 rejects as an unknown option, so that fetch fails at once rather than undercounting.
 - **Counting some classes only.** `ngs-dose count --classes A,B` loads and merges every panel as
   without it, so the k-mers shared between panels are dropped as in the full load, and counts each
-  named class exactly as the full load does; the counts file records the selection
+  named class exactly as the full load does in scan mode; in a fetch, the named class's reads that
+  lie inside other classes' sink intervals are not read (1 of 54,767 rDNA45S reads in the test
+  fixture), which `classes_selected` records; the counts file records the selection
   (`classes_selected`) and lists only those classes. In a fetch it reads only the named classes'
   sink intervals (and rows without a class) when the BED names its classes, so the bundle's own
   `sinks.bed` can be fetched for fewer classes and fewer bytes; `ngs-dose plan --classes` writes
@@ -455,7 +475,7 @@ reason says where a unit was looked for.
 | `depth`, `ctrl_dup_frac`, `gc_rel_35`, `gc_rel_65`, `ctrl_region_sd`, `flagged_chromosomes` | library and sample QC; an aneuploid chromosome, or a large arm-level gain, is reported and excluded from the denominator |
 | `untestable_chromosomes` | chromosomes with too few control regions (fewer than 3 after outlier trimming) to be tested for aneuploidy: chr22 in the GRCh38 bundle |
 | `*.profile_sd`, `*.profilePC*` | how far the sample's window profile departs from the cohort's |
-| `ctrlPC1…`, `ctrlPC_mp` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run; `ctrlPC_mp` is how many of them stand above the noise edge (what `adjust` uses by default). None below 10 samples with control residuals; NA for a sample without them |
+| `ctrlPC1…`, `ctrlPC_mp` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run; `ctrlPC_mp` is how many of them stand above the noise edge (what `adjust` uses by default). None below 10 samples with control residuals; NA for a sample without them, or whose control regions are not the same set in the same order as the others' (the `region_order_sha256` an estimate records: another controls file or bundle revision), which are named |
 | `gc_curve_max_se` | how well the sample's GC curve is determined (large at very low depth) |
 
 For a class estimated from an experimental unit, the per-sample estimate files

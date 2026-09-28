@@ -248,6 +248,7 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
     from .tables import summary_row
     say = log or (lambda *a, **k: None)
     rows, order, classes, win, layout, lacking, ctrl = {}, [], [], {}, {}, {}, []
+    ctrl_key = []                                          # which control regions, in which order, per sample
     for r in results:
         s = r["sample"]
         if s in rows:
@@ -276,8 +277,11 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
                 lacking.setdefault(cls, {})[s] = "no usable window"
                 continue
             win.setdefault(cls, []).append((s, y, gc))
-        x = (r.get("control_qc") or {}).get("region_log_ratio")
+        qc = r.get("control_qc") or {}
+        x = qc.get("region_log_ratio")
         ctrl.append(None if x is None else np.asarray(x, float))
+        # the hash `estimate` writes of the regions' names in order (estimates written before it: their count)
+        ctrl_key.append(None if x is None else (qc.get("region_order_sha256") or f"{len(x)} regions"))
     eff, info = {}, {}
     for cls in classes:
         per = win.pop(cls, [])
@@ -321,15 +325,21 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
     want = None if str(n_control_pcs).lower() == "mp" else int(n_control_pcs)
     if want == 0:
         return [rows[s] for s in order], eff, info
-    lengths = Counter(len(x) for x in ctrl if x is not None)
-    m = lengths.most_common(1)[0][0] if lengths else None
-    use = [i for i, x in enumerate(ctrl) if x is not None and len(x) == m]
-    no_qc = [order[i] for i, x in enumerate(ctrl) if x is None]
-    other = [order[i] for i, x in enumerate(ctrl) if x is not None and len(x) != m]
-    if no_qc or other:
+    # one set of control regions in one order for all: the residual vectors are matched by position, so a sample
+    # whose regions differ in set or order (another controls file, another bundle revision) must stay out
+    keys = Counter(k for k in ctrl_key if k is not None)
+    m = keys.most_common(1)[0][0] if keys else None
+    use = [i for i, k in enumerate(ctrl_key) if k is not None and k == m]
+    m_len = len(ctrl[use[0]]) if use else None
+    no_qc = [order[i] for i, k in enumerate(ctrl_key) if k is None]
+    other_n = [order[i] for i, k in enumerate(ctrl_key) if k is not None and k != m and len(ctrl[i]) != m_len]
+    other_set = [order[i] for i, k in enumerate(ctrl_key) if k is not None and k != m and len(ctrl[i]) == m_len]
+    if no_qc or other_n or other_set:
         say("[cohort] WARNING: control-region PCs: " + "; ".join(
             ([f"{_n(no_qc)} no control residuals (estimated with --no-control-qc, or counts without regions): {_few(no_qc)}"] if no_qc else [])
-            + ([f"{_n(other)} a number of control regions other than {m} (another controls file): {_few(other)}"] if other else []))
+            + ([f"{_n(other_n)} a number of control regions other than {m_len} (another controls file): {_few(other_n)}"] if other_n else [])
+            + ([f"{_n(other_set)} {m_len} control regions that are not the same regions in the same order as the other "
+                f"{len(use)} samples' (another controls file or bundle revision): {_few(other_set)}"] if other_set else []))
             + f"; their ctrlPC columns are NA, the PCs are computed on the other {len(use)}")
     if len(use) < 10:
         msg = f"control-region PCs need at least 10 samples with control residuals of one length; {len(use)} of {len(order)} have them"
@@ -353,6 +363,7 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
             rows[s][f"ctrlPC{k + 1}"] = round(float(scores[j, k]), 5)
     info = dict(mp=sel.n_pc, describe=sel.describe(), n_written=n_write, variance=[round(float(v), 5) for v in var[:n_write]],
                 singular_values=[round(float(v), 5) for v in sv], shape=list(shape))
+    other = other_n + other_set
     if no_qc or other:
         info["excluded"] = no_qc + other
     say(f"[cohort] control-region PCs: {sel.describe()}; {n_write} written (ctrlPC1..), variance explained: "
