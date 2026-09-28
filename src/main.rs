@@ -110,11 +110,12 @@ enum Cmd {
         /// at least 400, the longest read span it has to cover
         #[arg(long, default_value_t = count::DEFAULT_PAD, value_parser = clap::value_parser!(i64).range(count::READLEN_MAX as i64..))]
         pad: i64,
-        /// fetch mode: go on when a loaded panel class has no interval in the sinks BED, or none on a
-        /// contig of this file's header. Its reads are then counted only where they fall inside other
-        /// intervals - an undercount - and the class is listed in the output's sinks_missing_classes.
-        /// Without this flag the run refuses. (Sink intervals on contigs the header lacks are always
-        /// left out and recorded per class in sinks_skipped.)
+        /// fetch mode: go on when a loaded panel class has no interval in the sinks BED, or loses any
+        /// of its intervals to a contig this file's header lacks. Its reads are then counted only where
+        /// they fall inside the intervals read - an undercount, which `ngsdose estimate` reports as NA -
+        /// and the class is listed in the output's sinks_missing_classes (no interval kept) or
+        /// sinks_skipped (intervals left out, per class). Without this flag the run refuses either,
+        /// before it reads a byte
         #[arg(long)]
         allow_missing_sinks: bool,
         /// give up with exit status 75 when nothing has been read for this many seconds (a dead
@@ -299,6 +300,9 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Plan { controls: controls_path, sinks, classes, input, index, reference, pad, unmapped, out } => {
             let inp = input.map(|path| count::Input::new(path, index, reference));
+            if let Some(i) = &inp {
+                i.quiet_htslib_for_signed_urls("plan");
+            }
             let probe = match &inp {
                 Some(i) => Some(i.probe(true, false, count::DEFAULT_RETRIES)?),
                 None => None,
@@ -433,6 +437,7 @@ fn run(cli: Cli) -> Result<()> {
                 None => None,
             };
             let mut inp = count::Input::new(input, index, reference);
+            inp.quiet_htslib_for_signed_urls("count");
             if stall_timeout > 0 {
                 count::spawn_watchdog(stall_timeout, inp.display());
             }
@@ -484,17 +489,24 @@ fn run(cli: Cli) -> Result<()> {
                             );
                         }
                     }
-                    // every loaded class must keep sinks, or its reads are counted only where they
-                    // happen to fall inside other intervals, an undercount nothing would report
+                    // every loaded class must keep its sinks whole: one that keeps none, or loses
+                    // intervals to contigs the header lacks, is counted only where its reads happen
+                    // to fall inside the intervals read - an undercount that `ngsdose estimate`
+                    // reports as NaN (sinks_skipped) once the bytes are spent - so either is refused
+                    // up front unless told to go on: the engine and `ngsdose estimate`
+                    // (contract.incomplete_sinks) share one definition of an incomplete class
+                    let counted = panel.counted_names();
+                    let which = if selected.is_some() { "selected" } else { "loaded" };
+                    let mut incomplete: Vec<String> = Vec::new();
                     if sk.named {
                         let have: std::collections::HashSet<&str> = sk.kept.iter().map(|r| r.name.as_str()).collect();
-                        sinks_missing = panel.counted_names().into_iter().filter(|n| !have.contains(n.as_str())).collect();
+                        sinks_missing = counted.iter().filter(|n| !have.contains(n.as_str())).cloned().collect();
                         if !sinks_missing.is_empty() {
                             let lost: Vec<&str> = sinks_missing.iter().map(|s| s.as_str()).filter(|n| sk.skipped.contains_key(*n)).collect();
-                            let msg = format!(
-                                "the sinks BED has no interval {}for the {} class(es) {}{}: a fetch would count their reads only where they fall inside other intervals",
+                            incomplete.push(format!(
+                                "the sinks BED has no interval {}for the {} class(es) {}{}",
                                 if lost.is_empty() { "" } else { "on this file's contigs " },
-                                if selected.is_some() { "selected" } else { "loaded" },
+                                which,
                                 sinks_missing.join(", "),
                                 if lost.is_empty() {
                                     String::new()
@@ -504,24 +516,41 @@ fn run(cli: Cli) -> Result<()> {
                                         lost.join(", ")
                                     )
                                 }
-                            );
-                            if allow_missing_sinks {
-                                eprintln!("[count] WARNING: {}; recorded in sinks_missing_classes (--allow-missing-sinks)", msg);
-                            } else {
-                                bail!(
-                                    "{}. Learn sinks for them from whole-file scans (`ngsdose sinks scan*.json.gz --classes ...`), load a panel without them, \
-                                     name the classes to count with --classes, or pass --allow-missing-sinks to record the gap and continue",
-                                    msg
-                                );
-                            }
+                            ));
                         }
                     } else {
                         eprintln!("[count] note: the sinks BED carries no class column; whether every loaded class has sinks is not checked");
                     }
+                    let partial: Vec<&str> = sk.losing(&counted).into_iter().filter(|n| !sinks_missing.iter().any(|m| m == n)).collect();
+                    if !partial.is_empty() {
+                        incomplete.push(format!(
+                            "the {} class(es) {} lose sink intervals on contigs absent from the alignment header ({})",
+                            which,
+                            partial.join(", "),
+                            sk.lost_summary(&partial)
+                        ));
+                    }
+                    if !incomplete.is_empty() && !allow_missing_sinks {
+                        bail!(
+                            "{}: a fetch would count their reads only where they fall inside the intervals it reads, and `ngsdose estimate` would \
+                             report them as NA. Learn sinks for them from whole-file scans (`ngsdose sinks scan*.json.gz --classes ...`), load a \
+                             panel without them, name the classes to count with --classes, or pass --allow-missing-sinks to record the gap and continue",
+                            incomplete.join("; ")
+                        );
+                    }
+                    if !sinks_missing.is_empty() {
+                        eprintln!(
+                            "[count] WARNING: {}: a fetch counts their reads only where they fall inside other intervals; recorded in \
+                             sinks_missing_classes (--allow-missing-sinks)",
+                            incomplete[0]
+                        );
+                    }
                     if !sk.skipped.is_empty() {
                         eprintln!(
-                            "[count] WARNING: sink intervals on contigs absent from this file's header are left out (recorded as sinks_skipped): {}. \
-                             Their classes lose whatever reads those intervals hold; sinks are specific to a reference and an aligner",
+                            "[count] WARNING: sink intervals on contigs absent from this file's header are left out (recorded as sinks_skipped{}): {}. \
+                             Their classes lose whatever reads those intervals hold, and `ngsdose estimate` reports them as NA; sinks are specific \
+                             to a reference and an aligner",
+                            if partial.is_empty() { "" } else { "; --allow-missing-sinks" },
                             sk.skipped_summary()
                         );
                     }

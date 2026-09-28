@@ -113,14 +113,17 @@ def test_a_fetch_reads_and_counts_the_named_classes_only(fx, unmapped):
     assert r.returncode == 1 and "no interval" in r.stderr and "--classes" in r.stderr
     full = count(d / f"fetch{tag}.full.part.json", *extra, "--sinks", part, "--allow-missing-sinks")
     assert set(full["sinks_missing_classes"]) == {c["name"] for c in full["classes"]} - set(chosen)
-    # ... the selection needs no flag, and counts each named class as that full load does
-    sub = count(d / f"fetch{tag}.sub.part.json", *extra, "--sinks", part, "--classes", ",".join(chosen))
+    # ... the selection needs no flag for the classes it leaves out; it still needs one for HSat2, two of
+    # whose sinks are on contigs the fixture lacks (an engine since 0.1.1 refuses a class that loses any)
+    r = engine("count", "-i", BAM, "-c", B / "controls.fa.gz", *panel_args(PANELS), *extra, "--sinks", part, "--classes", ",".join(chosen), "-o", d / "x.json")
+    assert r.returncode == 1 and "HSat2 lose sink intervals" in r.stderr and "no interval" not in r.stderr, r.stderr
+    sub = count(d / f"fetch{tag}.sub.part.json", *extra, "--sinks", part, "--classes", ",".join(chosen), "--allow-missing-sinks")
     assert "sinks_missing_classes" not in sub
     check_selection(full, sub, chosen, SELECTION | {"sinks_missing_classes"})
     # with the whole sinks BED it reads the chosen classes' intervals only: the same counts
-    whole = count(d / f"fetch{tag}.sub.all.json", *extra, "--sinks", fx["sinks"], "--classes", ",".join(chosen))
+    whole = count(d / f"fetch{tag}.sub.all.json", *extra, "--sinks", fx["sinks"], "--classes", ",".join(chosen), "--allow-missing-sinks")
     check_selection(full, whole, chosen, SELECTION | SINKS_FILE)
-    assert whole["sinks_skipped"] == full["sinks_skipped"] and set(whole["sinks_skipped"]) <= set(chosen)
+    assert whole["sinks_skipped"] == full["sinks_skipped"] and set(whole["sinks_skipped"]) == {"HSat2"}
     assert sum(c["reads"] for c in sub["classes"]) > 0
 
 

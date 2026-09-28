@@ -602,8 +602,11 @@ def test_a_plan_runs_on_the_engine_it_was_made_for(eng, tmp_path):
     flags = Path(f"{pre}.count_flags.txt").read_text().split()
     panels = [a for x in Path(f"{pre}.panels.txt").read_text().split() for a in ("-p", x)]
     out = tmp_path / "fetch.json"
+    # the fixture lacks three decoy contigs that carry DYZ2 (HSat1B) sinks: an engine since 0.1.1 refuses to fetch a
+    # class that loses any sink interval to them unless told to go on (the plan itself is for inputs that have them)
+    lacks = ["--allow-missing-sinks"] if "--allow-missing-sinks" in opts and "--allow-missing-sinks" not in flags else []
     r = subprocess.run([str(eng), "count", "-m", "fetch", "-i", str(FIXTURE), *panels, "-c", Path(f"{pre}.controls.txt").read_text().strip(),
-                        "--sinks", f"{pre}.sinks.bed", *flags, "-o", str(out)], capture_output=True, text=True, timeout=600)
+                        "--sinks", f"{pre}.sinks.bed", *flags, *lacks, "-o", str(out)], capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stderr
     counts = json.loads(out.read_text())
     selected = {"rDNA45S", "rDNA5S", "DJ", "TEL", "aSatHOR", "HSat3", "HSat1B"}
