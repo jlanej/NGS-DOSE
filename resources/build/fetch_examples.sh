@@ -93,12 +93,12 @@ strip() {  # repository and engine paths out of the text
 }
 table() {  # plan TSV -> Markdown, the columns a reader needs
   awk -F'\t' '
-    NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; n = split("option status tier intervals dropped capture_target expected_capture capture_lost mb_median mb_saved cum_mb_median cum_pct_median order note", k, " ")
+    NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; n = split("option status tier intervals dropped capture_target expected_capture capture_lost mb_median mb_saved cum_mb_median cum_mb_floor cum_pct_median order note", k, " ")
               h = "|"; s = "|"; for (j = 1; j <= n; j++) { h = h " " k[j] " |"; s = s " --- |" } print h; print s; next }
     { r = "|"; for (j = 1; j <= n; j++) { v = $(c[k[j]]); gsub(/\|/, "\\|", v); r = r " " v " |" } print r }'
 }
-total() {  # the last cumulative row: MB and percent of the CRAM
-  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; next } $(c["cum_mb_median"]) != "NA" { m = $(c["cum_mb_median"]); p = $(c["cum_pct_median"]) } END { print m "\t" p }'
+total() {  # the last cumulative row: MB as the engine reads it, percent of the CRAM, and the floor with every slice once
+  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; next } $(c["cum_mb_median"]) != "NA" { m = $(c["cum_mb_median"]); p = $(c["cum_pct_median"]); f = $(c["cum_mb_floor"]) } END { print m "\t" p "\t" f }'
 }
 
 {
@@ -113,16 +113,21 @@ total() {  # the last cumulative row: MB and percent of the CRAM
   echo "Medians of cumulative totals are not additive: the difference between two rows, or between two plans'"
   echo "totals, is not the median of what an option adds per CRAM."
   echo
-  echo "Costs are the CRAM slices a fetch reads, in MB (1e6 bytes), median over ${#CRAI[@]} CRAM indexes:"
+  echo "Costs are what \`ngs-dose count -m fetch\` reads: the CRAM slices its fetches decode, in MB (1e6 bytes), median over"
+  echo "${#CRAI[@]} CRAM indexes:"
   echo "$(for c in "${CRAI[@]}"; do basename "$c" .crai; done | paste -sd, - | sed 's/,/, /g')"
   echo "(\`resources/build/fetch_examples.sh --get DIR\` downloads them; sha256 of their concatenation"
   echo "\`$(cat "${CRAI[@]}" | "${SHA[@]}" | cut -c1-16)\`)."
   echo "These are NYGC 30x CRAMs of the 1000 Genomes high-coverage release (bwa-mem, GRCh38 with decoys"
   echo "and HLA; contigs from \`$(basename "$CONTIGS")\`). The sinks, their statistics and so these costs belong to"
   echo "that aligner and reference: another pipeline learns its own sinks from its own scans. Percentages are of"
-  echo "each whole CRAM. In each table, mb_median is the option's own intervals alone and cum_mb_median the plan up to"
-  echo "and including that row, each CRAM slice counted once. Candidate classes have no sinks yet: a plan lists them for"
-  echo "the whole-file scans only."
+  echo "each whole CRAM. The engine merges a plan's intervals where they touch or overlap and makes one indexed fetch per"
+  echo "run, and each fetch decodes every slice that overlaps its interval (with its container's compression header),"
+  echo "so a slice under several runs is decoded once per run. In each table, mb_median is the option's own intervals"
+  echo "alone and cum_mb_median the plan up to and including that row, both priced so; cum_mb_floor is the plan with"
+  echo "every slice decoded once, the floor a reader that sorted the plan's slices would reach (the engine does not:"
+  echo "the gap is a few percent in men and about 10-15% in women, whose few sparse chrY slices are decoded once per"
+  echo "chrY truth region). Candidate classes have no sinks yet: a plan lists them for the whole-file scans only."
   echo
   if "$ENGINE" count --help 2>/dev/null | grep -q -- '--classes'; then takes="takes"; else takes="does not take"; fi
   echo "Engine for count_flags.txt: \`$(basename "$ENGINE")\` ($("$ENGINE" --version 2>/dev/null || echo unknown); the binary's sha256 begins"
@@ -130,8 +135,8 @@ total() {  # the last cumulative row: MB and percent of the CRAM
   echo "\`count --classes\` is in engines from the fetch-menu change of 2026-09-26 on; fae1124 lacks it. The engine changes only count_flags.txt, and whether fetchplan accepts a plan whose"
   echo "panels define classes it does not select (\`ngsdose fetchplan --help\`, --engine)."
   echo
-  echo "| example | MB per genome | % of the CRAM |"
-  echo "| --- | ---: | ---: |"
+  echo "| example | MB per genome | % of the CRAM | floor: every slice once |"
+  echo "| --- | ---: | ---: | ---: |"
 } > "$TMP/head.md"
 : > "$TMP/body.md"
 
@@ -141,9 +146,9 @@ for e in "${EXAMPLES[@]}"; do
   # shellcheck disable=SC2086
   $NGSDOSE fetchplan --menu "$MENU" $args --crai "${CRAI[@]}" --contigs "$CONTIGS" --engine "$ENGINE" -o "$TMP/p$i" \
     > "$TMP/p$i.tsv" 2> "$TMP/p$i.err" || { cat "$TMP/p$i.err" >&2; echo "error: example $i ($args) failed" >&2; exit 1; }
-  IFS=$'\t' read -r mb pct < <(total < "$TMP/p$i.tsv")
+  IFS=$'\t' read -r mb pct floor < <(total < "$TMP/p$i.tsv")
   shown="$(echo "ngsdose fetchplan $args" | strip) --crai CRAI... --contigs $(basename "$CONTIGS") --engine ENGINE"
-  echo "| [$i. $name](#example-$i) | $mb | $pct |" >> "$TMP/head.md"
+  echo "| [$i. $name](#example-$i) | $mb | $pct | $floor |" >> "$TMP/head.md"
   {
     echo
     echo "<a id=\"example-$i\"></a>"
@@ -153,7 +158,7 @@ for e in "${EXAMPLES[@]}"; do
     echo "$shown"
     echo '```'
     echo
-    echo "**$mb MB per genome ($pct% of the CRAM).**"
+    echo "**$mb MB per genome ($pct% of the CRAM; $floor MB with every slice decoded once).**"
     echo
     table < "$TMP/p$i.tsv" | strip
     echo
