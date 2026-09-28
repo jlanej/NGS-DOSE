@@ -212,7 +212,10 @@ touches the alignment again, so models can be revised without re-reading a bioba
   records only (secondary, supplementary and QC-fail records are skipped); duplicate flag
   ignored; no MAPQ filter (class reads are MAPQ 0 by construction; 0.2% of control reads are
   below 20); the unit of counting is the fragment 5′ end with soft clips restored (a hard clip,
-  whose bases the record no longer holds, is not). Unmapped reads are k-mer classified like any
+  whose bases the record no longer holds, is not; a soft clip behind a hard clip is restored from
+  0.1.1 on - `5H10S85M` starts at pos − 10, where 0.1.0 restored only an outermost soft clip -
+  which changes counts only for hard-clipped primary alignments, of which bwa `-Y` and DRAGEN's
+  default output have none). Unmapped reads are k-mer classified like any
   other read and count toward class totals. One that carries its mate's position is placed at
   that position, and a fetch whose interval holds that position returns it. A fully unmapped
   read is placed under contig `*` and is read in fetch mode only with `--unmapped`. Unmapped
@@ -286,7 +289,11 @@ touches the alignment again, so models can be revised without re-reading a bioba
   open and per interval) ends the process with exit status 75 (`EX_TEMPFAIL`), so that the caller
   can try again later; a missing file, a refused request (404, 403) or a wrong reference exits 1 at
   once, as does a remote file with no index beside it. A lost index request (a 503 on a remote
-  BAM's `.csi`, for one) is retried like any other open. One transient failure still exits 1 at
+  BAM's `.csi`, for one) is retried like any other open. The engine's own messages and the counts'
+  `input` carry a URL with its query string, fragment and user information redacted; for an input
+  or index URL with a query string (a signed URL) htslib's own messages, which print the URL in
+  full, are turned off before the first open, and one line on stderr says so (a URL without a
+  query keeps them). One transient failure still exits 1 at
   once, without a retry: a read error in the middle of a remote scan, which cannot resume. A dead connection does not fail, it waits, and the thread that would retry is
   the one that is blocked: a watchdog therefore ends the process with exit status 75 when nothing
   has been read for `--stall-timeout` seconds (default 300), and the 1000 Genomes cohort script
@@ -299,12 +306,14 @@ touches the alignment again, so models can be revised without re-reading a bioba
   same pipeline (`ngsdose sinks --classes`; section 5); for NYGC bwa-mem an experimental set,
   learned from 100 cohort scans, is in `resources/experimental/sinks.satellites.bed`, and no
   fetch through it has been compared with a scan yet. Sink intervals on contigs the file's
-  header lacks cannot be fetched: they are left out with a warning and recorded per class
-  (`sinks_skipped`: intervals and bp), and `ngsdose estimate` reports such a class as NaN
-  (section 3). When the sinks BED names its classes, a fetch by an engine since 645ae55 refuses a
-  loaded class that keeps no interval, whether the BED lacks it or every interval of it is on an
-  absent contig. With `--allow-missing-sinks` (also since 645ae55) it is counted, and the gap is
-  recorded in `sinks_missing_classes`; `--classes` (engines from 2026-09-26 on) can leave such a
+  header lacks cannot be fetched. When the sinks BED names its classes, a fetch by an engine since
+  645ae55 refuses a loaded class that keeps no interval, whether the BED lacks it or every interval
+  of it is on an absent contig, and from 0.1.1 on also a class that loses any interval to such a
+  contig (a lost row without a class counts against every class): `ngsdose estimate` reports such
+  a class as NaN (section 3), so the fetch would be spent for nothing. With `--allow-missing-sinks`
+  (also since 645ae55) it is counted: a class without any interval is recorded in
+  `sinks_missing_classes`, the intervals lost are recorded per class (`sinks_skipped`: intervals
+  and bp) with a warning; `--classes` (engines from 2026-09-26 on) can leave such a
   class out: it is then neither counted nor listed. fae1124, the engine of the running cohort, has
   none of the three: it does not refuse, it counts such a class only where its reads fall inside
   other intervals without saying so, so `ngsdose fetchplan` refuses to plan such a fetch for it
@@ -1018,10 +1027,11 @@ threads.
   9.7% of 45S and 43% of DJ: most of those reads are fully unmapped there, and the 4.2.7 unmapped
   bin also holds 64–90% of HSat1A, β-satellite, ACRO, HSat1B and TEL (but almost no HSat2 or
   α-satellite HORs). With `--unmapped`, a DRAGEN 4.4.7 fetch recovered 99.7 / 99.9 / 99.6% of 45S
-  / 5S / DJ, 72 / 38 / 53% of it from the unmapped bin. A fetch leaves out sink intervals on
-  contigs the file lacks (two DJ sinks are on hs38d1 decoy contigs, absent from a no-alt
-  reference), records them in `sinks_skipped` and warns, and `ngsdose estimate` reports those
-  classes as NaN; a class that loses all its sinks is refused. The counts' `pipeline` record
+  / 5S / DJ, 72 / 38 / 53% of it from the unmapped bin. A fetch of such a file is refused from 0.1.1 on
+  unless `--allow-missing-sinks` (two DJ sinks are on hs38d1 decoy contigs, absent from a no-alt
+  reference), which leaves those intervals out, records them in `sinks_skipped` and warns;
+  `ngsdose estimate` reports those classes as NaN either way, so a pipeline fetching no-alt or
+  DRAGEN inputs passes the flag only for classes it can do without, or plans with `--classes`. The counts' `pipeline` record
   (`@PG` lines, `@SQ` hash) says which pipeline a file came from. DRAGEN, or a different decoy
   set, needs its own scanned subset and `ngsdose sinks` (`--classes TEL ...` for compositional
   classes).
@@ -1415,7 +1425,7 @@ for hard-clipped primary alignments, below, touches none of its bwa `-Y` alignme
 | The satellite families can only be scanned (this document said so before this revision: "no sinks to fetch") | review of the cohort's scans: sinks learned with `ngsdose sinks --classes` from 30 scans, capture in 200 others | **false** for this pipeline: ≥ 99.8% of nine families in every held-out genome (≥ 99.85% in two of three draws), HSat1B ≥ 96.6% (part of it unmapped) | section 5 rewritten; no satellite sinks ship until a real satellite fetch has been compared with its scan (section 13) |
 | Sinks learned from 40 scans held ≥ 99.87% of TEL in each of the other 332 (as first recorded here and in `bundle.json`) | TEL sinks learned from 40 of the 372 learning scans (the first 40, and ten random draws), each scored on the other 332 | **false**: the lowest capture in the other 332 is 99.42–99.59% across the eleven draws (99.48% for the first 40), the median about 99.8%; 99.87% is the median in-sample capture of the 372-scan set. For context, the shipped 372-scan set over all 1,748 cohort scans: median 99.87%, minimum 99.39%, 1st percentile 99.68% | the figures quoted are the measured ones (section 5) |
 | A capture score says what a fetch retrieves | review of `ngsdose sinks`: a 10-kb placement bin counted as captured when only its start fell inside a sink | **false** at the margin: a fetch reads only the part of the bin inside the sink | a bin counts only when all of it (clipped at the contig end) lies inside; TEL capture moves by at most 5.5 × 10⁻⁴ over 1,748 scans, the positional classes not at all |
-| A fetch that cannot read a sink says so | sinks on contigs the file's header lacks | **false**: the intervals were skipped with a note, the class undercounted, and a class with every interval skipped was not refused | skipped intervals recorded per class (`sinks_skipped`), a class that keeps none refused unless `--allow-missing-sinks` (engines since 645ae55; fae1124 neither refuses nor takes the flag), and `ngsdose estimate` reports such classes as NaN (section 4) |
+| A fetch that cannot read a sink says so | sinks on contigs the file's header lacks | **false**: the intervals were skipped with a note, the class undercounted, and a class with every interval skipped was not refused | skipped intervals recorded per class (`sinks_skipped`), a class that keeps none refused unless `--allow-missing-sinks` (engines since 645ae55), and from 0.1.1 on one that loses any interval, since the estimator would not measure it and the fetch would be spent for nothing (fae1124 neither refuses nor takes the flag), and `ngsdose estimate` reports such classes as NaN (section 4) |
 | Control QC flags a whole-chromosome aneuploidy | HG00096 with one chromosome's control counts scaled by 0.5–1.5 | **false** for a full trisomy (scaled 1.45 and above) or monosomy (0.5): its regions were trimmed as outliers against the genome's median, out of their own chromosome's test | regions trimmed against their own chromosome's median, and the genome level taken without flagged chromosomes (section 3); on the 1,748 counted genomes one flag is added (HG03363, a chr11 gain over 9 of its 38 regions) and chr22, with 2 control regions, is reported as untestable |
 | One estimate per sample reaches the cohort | the same genome's scan and fetch estimates given to `ngsdose cohort` together | **false**: rows with one sample id were merged | a repeated sample id is refused, and `ngsdose estimate` names each estimate after its input file |
 | A foreign warning inside the trio analysis is shown | `ngsdose trios` on a column whose values overflow (a numpy RuntimeWarning) | **false, and worse**: the command never returned; the warning was re-shown inside the recording context, which recorded it again into the list being walked | re-shown after the context is left; asserted in CI under a deadline |
@@ -1426,6 +1436,9 @@ for hard-clipped primary alignments, below, touches none of its bwa `-Y` alignme
 | `--fetch-sinks` names a file | a mistyped path | **false, silently**: the path was passed over, the parents stayed unverified, and the warning told the user to pass `--fetch-sinks` | a path that is not a file stops the run |
 | The fetch menu goes with the bundle | `NGSDOSE_RESOURCES` set with no `fetch_menu.tsv` beside it (a release install: the tarball packed no menu) | **false**: `fetchplan` silently took the source checkout's menu, whose rows name the checkout's panels and sinks, so a plan mixed two bundles; from the release alone it could not run at all | the tarball carries the menu; `fetchplan` stops rather than take another bundle's; the release smoke test plans and fetches through it |
 | A column the table lacks is that column's failure | `ngsdose trios -c var nosuch` | **false** since the fetch-menu change (it had held since 2026-09-24): the run stopped with no table and no JSON | an NA row with the reason; `pcsweep` leaves the column out; `adjust` still stops, since its output would lack what was asked for |
+| Signed URLs stay out of the logs | a URL with a query string; a 503 answered with retries | **false**: the engine's own messages were redacted, but htslib's (`[E::hts_open_format] Failed to open file "…?X-Amz-Signature=…"`) printed the signature on every failed open | htslib's messages are turned off for an input or index URL with a query string, said once; asserted in CI against a local server |
+| A fetch that loses part of a class's sinks says so before it is spent | one sink interval on a contig the file lacks | **false**: the engine warned and fetched, `ngsdose estimate` then reported the class NaN, and no flag covered the partial case on either side | one rule (0.1.1): a class that loses any interval is refused unless `--allow-missing-sinks`, which records the loss (`sinks_skipped`) as before |
+| A rule that changes counts is versioned | the 5′ end of a soft clip behind a hard clip (`5H10S85M`) | **false**: 0.1.0 restored only an outermost soft clip, the fetch-menu build restores one behind a hard clip, and both wrote `engine_version` 0.1.0 (the cohort's bwa `-Y` alignments carry no hard-clipped primaries, so its counts are unchanged) | engine and package 0.1.1; the rule is stated in section 3 and pinned by a unit test |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
 DRAGEN alignments beyond one genome per version (section 12); an orthogonal assay for the

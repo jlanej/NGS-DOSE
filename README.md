@@ -127,7 +127,10 @@ A remote open or fetched interval that still fails after `--retries` attempts (a
 connection) ends with exit status 75, for the scheduler to retry the sample later (a lost index
 request is retried like any other); a read error in the middle of a remote scan, which cannot
 resume, still exits 1 at once, as does a file with no index beside it. Other errors exit 1, and
-bad arguments 2.
+bad arguments 2. The engine's messages and the counts' `input` carry a URL with its query string
+redacted; for an input or `--index` URL that has one (a signed URL), htslib's own messages, which
+would print the signature in full on every failed open, are turned off before the first open, and
+one line says so.
 
 ```bash
 ngsdose estimate NA12878.json.gz -o estimates/ -t single_sample.tsv   # writes estimates/NA12878.estimate.json.gz
@@ -206,8 +209,9 @@ this way from 100 cohort scans (25 per release batch and inferred sex), with the
 Both are for NYGC bwa-mem alignments to the GRCh38 analysis set only.
 
 An engine since 645ae55 refuses a fetch with a loaded panel class that has no interval in the
-sinks, or whose intervals all lie on contigs the input's header lacks: its reads would be counted
-only where they fall inside other intervals. `--allow-missing-sinks` (also since 645ae55) instead
+sinks, or whose intervals all lie on contigs the input's header lacks, and one from 0.1.1 on also
+a class that loses any interval to such a contig: its reads would be counted only where they fall
+inside other intervals, and `ngsdose estimate` would not measure the class. `--allow-missing-sinks` (also since 645ae55) instead
 records the gap in the counts (`sinks_missing_classes`), and `--classes A,B` (engines from the
 fetch-menu change of 2026-09-26 on) counts only the named classes, so only their sinks are read and checked. fae1124, the
 cohort's engine, has none of the three: it does not refuse, it undercounts such a class without
