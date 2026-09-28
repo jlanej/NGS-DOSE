@@ -25,8 +25,8 @@ every slice decoded once, the floor a reader that sorted the plan's slices would
 the gap is a few percent in men and about 10-15% in women, whose few sparse chrY slices are decoded once per
 chrY truth region). Candidate classes have no sinks yet: a plan lists them for the whole-file scans only.
 
-Engine for count_flags.txt: `ngs-dose` (ngs-dose 0.1.0; the binary's sha256 begins
-`c46528a0ade1e04c`, as `--version` does not tell builds apart), which takes `count --classes`.
+Engine for count_flags.txt: `ngs-dose` (ngs-dose 0.1.1; the binary's sha256 begins
+`4ac2d1fa3c50b819`, as `--version` does not tell builds apart), which takes `count --classes`.
 `count --classes` is in engines from the fetch-menu change of 2026-09-26 on; fae1124 lacks it. The engine changes only count_flags.txt, and whether fetchplan accepts a plan whose
 panels define classes it does not select (`ngsdose fetchplan --help`, --engine).
 

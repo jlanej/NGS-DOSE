@@ -258,8 +258,13 @@ A fetch decodes whole CRAM slices: every slice whose reads overlap a control reg
 interval is read in full. What it costs is therefore set by where the intervals fall in the file,
 not by their length: the 0.5 Mb of 45S sinks cost almost as much as the 13 Mb of control regions,
 because they share their slices with piles of other reads. `ngsdose fetchplan` prices each option from a CRAM's own index
-(`.crai`), counting a slice that several options share once and adding each container's
-compression header, and writes the files that `ngs-dose count -m fetch` takes. The options are
+(`.crai`) as `ngs-dose count -m fetch` reads it: one indexed fetch per run of touching or
+overlapping intervals, each decoding every slice that overlaps it with its container's
+compression header, so a slice under several runs is decoded once per run. Beside that figure the
+plan reports the floor with every slice decoded once (`cum_mb_floor`), which a reader that sorted
+the plan's slices would reach: a few percent below in men and 11-13% in women on `core_tel`,
+whose few sparse chrY slices are decoded once per chrY truth region. It writes the files that
+`ngs-dose count -m fetch` takes. The options are
 the rows of `resources/fetch_menu.tsv`; its header documents the format, and its tiers and presets
 are meant to be edited. The menu is found beside the bundle's directory (the repository, the image
 and the release tarball keep it there) or in a source checkout; with `NGSDOSE_RESOURCES` set and no
@@ -296,8 +301,9 @@ What each option costs, alone and in plans, is in [docs/fetch_examples.md](docs/
 `resources/build/fetch_examples.sh` runs `fetchplan` for a set of worked examples on the indexes
 of 13 NYGC 1000 Genomes CRAMs (median 16.5 GB) and writes each plan's table, count flags and total.
 The costs, like the sinks, are those of NYGC bwa-mem alignments to the GRCh38 analysis set. On
-them, the controls and all of the bundle's sinks (`--preset core_tel`) read 522.7 MB per genome,
-3.09% of the CRAM, and every option with sinks 3,099.5 MB (19.45%), medians over the 13.
+them, the controls and all of the bundle's sinks (`--preset core_tel`) read 546.9 MB per genome,
+3.33% of the CRAM, and every option with sinks 3,416.7 MB (21.59%), medians over the 13 (522.7 and
+3,099.5 MB with every slice decoded once).
 
 `shipped` means that the sinks are in the bundle. For rDNA45S, rDNA5S and DJ a fetch returns
 what the scan placed in them (fetch / scan reads inside the sinks 1.00000–1.00019 over the cohort's
@@ -389,7 +395,7 @@ ngsdose estimate sample.json.gz --fetch-sinks plan.sinks.bed -o estimates/
   numbers) and fetches with sinks learned from its own scans (`--sinks`).
 - **The controls are the floor.** They cost more than any shipped class. The bundle's
   `controls.lite200.bed` / `controls.lite200.fa.gz` keep 200 of the 800 control regions and all 182
-  truth and dosage regions: 93.1 MB of CRAM slices instead of 231.4 (medians over the 13). Over
+  truth and dosage regions: 120.9 MB of CRAM slices instead of 260.0 (medians over the 13). Over
   the cohort's first 1,748 genomes, 45S copy number with them differs from that with all 800 by a median +0.21% (SD 0.30%, largest 1.1%), against a 3.8–3.9%
   SD between independent libraries of the same cell line; 45S transmission reliability is unchanged
   (0.9993 and 0.9992 in 385 trios). These figures come from GC tables rebuilt from each scan's
@@ -441,7 +447,8 @@ simple-repeat k-mers; the periodic-k-mer filter now applied to every candidate p
 and the final files give it none. `resources/experimental/candidates/reference_copies.GRCh38.bed`
 lets `ngsdose sinks --evaluate` measure, on held-out scans, what fetching the reference copies
 would lose. From the placement bins of that one female genome, fetching all 83 would add about
-109 MB (0.66%) to `core_tel` on the 13 NYGC CRAMs: a planning figure, not sinks. The chrY
+109 MB (0.66%) to `core_tel` on the 13 NYGC CRAMs with every slice decoded once (the floor; what the
+engine reads is more, as it decodes a slice once per run of intervals): a planning figure, not sinks. The chrY
 candidates (`TSPY`, `RBMY`, `DAZ`, `BPY2`, `CDY1`, `CDY2`, `DYZ19`) have no bins in a female apart
 from off-target reads (`DAZ` 0.27 MB), so their real sinks are not priced. NGS-DOSE-1000G's
 pipeline carries the same route (`CANDIDATE_PANELS` for the scans, `pipeline/06_learn_sinks.sh`

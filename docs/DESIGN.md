@@ -326,12 +326,23 @@ touches the alignment again, so models can be revised without re-reading a bioba
 
 A fetch decodes whole CRAM slices, so its cost is the bytes of every slice whose alignment span
 overlaps one of its intervals, not the bases of the intervals. `ngsdose/cost.py` computes it from
-a CRAM's own index: slices are keyed by container and slice offset, so a slice that several
-intervals or options share is counted once (in HG00096, 327 slices, 190 MB, are each listed under
-2 to 329 contigs, median 6, one under 329 of which 328 are HLA contigs; the listings are on decoy,
-HLA, alt and unplaced contigs), a long slice behind short ones is still
-found, and each container's compression header is added once (109 MB, 0.7%, of HG00096's
-15.74-GB file). The index numbers contigs by their place in the header, so the contig order comes
+a CRAM's own index, as `ngs-dose count -m fetch` reads the file. The engine merges the plan's
+intervals where they touch or overlap (`fetch_plan`) and makes one indexed fetch per run
+(`read_interval`); htslib decodes a slice again for every fetch whose interval overlaps it, and
+re-reads its container's compression header. `ngsdose.cost` therefore prices a plan as the sum,
+over the merged runs, of the slices each overlaps, a slice under k runs counted k times, and
+reports beside it the floor with every slice decoded once, which a reader that sorted the plan's
+slices would reach (`cum_mb_floor`). Slices are keyed by container and slice offset, so within
+one fetch a slice is counted once however many contigs list it (in HG00096, 327 slices, 190 MB,
+are each listed under 2 to 329 contigs, median 6, one under 329 of which 328 are HLA contigs; the
+listings are on decoy, HLA, alt and unplaced contigs); a long slice behind short ones is still
+found; and each fetch adds the compression header of every container it enters (all of them
+together are 109 MB, 0.7%, of HG00096's 15.74-GB file). On the 13 NYGC indexes the engine reads
+2-3% more than the floor in men and 11-13% more in women for `core_tel` (546.9 against 522.7 MB,
+medians), up to 27% more on the controls alone and 20-27% on `xy_arrays` in women: a woman's chrY
+holds few, sparse slices, and the 40 chrY truth regions decode the same ones one by one. Decoding
+each slice once (sorting the plan's slices, or one pass over a chromosome's runs) is a possible
+engine improvement worth that difference; the floor says what it would save. The index numbers contigs by their place in the header, so the contig order comes
 from the reference's `.fai` or `.dict`, or `samtools view -H`; a counts file's `contigs` list will
 not do, as it holds only the contigs that held reads (2,168 of 3,366 for HG00096). The index must
 be the CRAM's own: an index of another file of the same sample gave wrong numbers, and nothing in
@@ -339,15 +350,16 @@ the index alone shows it. `ngsdose fetchplan` uses these costs to choose what a 
 
 - **Where the bytes go.** On 13 NYGC bwa-mem CRAMs (median 16.5 GB), the controls with all of the
   bundle's sinks (rDNA45S, rDNA5S, DJ, TEL: the `core_tel` preset, NGS-DOSE-1000G's fetch
-  configuration on an image newer than fae1124) read 522.7 MB per genome, 3.09% of the file
-  (medians). What each option costs alone, and what other plans cost, is in
+  configuration on an image newer than fae1124) read 546.9 MB per genome, 3.33% of the file
+  (medians; 522.7 MB with every slice decoded once). What each option costs alone, and what other plans cost, is in
   [fetch_examples.md](fetch_examples.md), which `resources/build/fetch_examples.sh` writes from
   `fetchplan` on the same 13 indexes; this document does not repeat those figures. The control
-  file is always read; alone, its 800 control regions cost 179.1 MB, the 180 truth regions
-  38.2 MB and chrM and chrEBV 10.0 MB (medians over the 13, padded as fetched). The bytes are
+  file is always read; alone, its 800 control regions cost 182.1 MB, the 180 truth regions
+  48.7 MB (up to 99.1 in a woman, whose chrY slices are decoded once per region) and chrM and
+  chrEBV 10.0 MB (medians over the 13, padded as fetched). The bytes are
   set by the reads the intervals share their slices with. The smallest possible cost of a class
   is its share of the primary reads times the file size; against it, rDNA45S costs 3.7 times that
-  floor (a floor of 57.7 MB), HSat2 2.9, the α-satellite HORs 1.9, but TEL 115 (a floor of
+  floor (a floor of 57.7 MB), HSat2 2.9, the α-satellite HORs 2.0, but TEL 116 (a floor of
   1.2 MB) and SATR 160. The ten satellite
   families are 4.79% of all reads, so no fetch of all of them can be cheap. One 12-kb pile-up
   bin, chr2:32,909,000–32,921,000 (1.3 M reads in HG00096's scan, few of any class, and inside the
@@ -398,8 +410,10 @@ the index alone shows it. `ngsdose fetchplan` uses these costs to choose what a 
   held-out scan's own capture, at targets of 0.95–0.999, the bound was never above the truth for
   the bundle's classes, and for the satellites never by more than the file's six-digit rounding.
   Because the bound is conservative, the per-read set can reach the target with fewer bytes;
-  `fetchplan` then keeps it (`order` in the plan says which), so an index never makes a plan
-  dearer. Classes share intervals and slices. An interval that another selected class keeps is read
+  `fetchplan` then keeps it (`order` in the plan says which). An index prices the plan as the engine
+  reads it, so a plan priced with one is dearer than the floor by the slices its runs share (a few
+  percent in men, 11-13% in women on `core_tel`), and an option can even make a plan cheaper by
+  bridging two runs that decode the same slices. Classes share intervals and slices. An interval that another selected class keeps is read
   anyway, so every class that has it keeps it; with `--crai`, so is any interval whose slices the
   plan reads for another option, and each class is trimmed again with those slices free. A class
   can therefore keep more intervals in a larger plan: at 0.995 rDNA45S drops the pile-up bin when
@@ -655,7 +669,9 @@ for EBV type 2, type-1 reads carrying a sequencing error or a minor variant at a
 types differ, 1.9e-5 of chrEBV records in NA12878, so type 2 is called from the EBV2/chrEBV ratio,
 not from a count. From the placement
 bins of the one NA12878 scan, fetching all 83 would add about 109 MB to the controls and the
-bundle's sinks (38 tier-A classes: 33 MB; medians over 13 NYGC bwa-mem CRAMs): planning figures,
+bundle's sinks (38 tier-A classes: 33 MB; medians over 13 NYGC bwa-mem CRAMs, with every slice
+decoded once, the floor; the engine's figure is higher, since many small bins in few slices is
+where its per-run decoding costs most): planning figures,
 not sinks, and from one female genome, so the chrY candidates have no bins there apart from
 off-target reads (DAZ 0.27 MB) and their real sinks are not priced.
 
@@ -696,7 +712,8 @@ bundle carries a named subset, `controls.lite200.bed` / `controls.lite200.fa.gz`
 control regions with all 182 truth and dosage regions, chosen from the reference alone (at least
 three regions per chromosome, both of chr22's two, GC strata within each, and of 300 such draws the one whose
 position-GC distribution at L = 150, 400 and 450 is closest to the 800's), its records
-byte-identical to the bundle's. It reads 93.1 MB instead of 231.4 (median of 13 NYGC CRAMs). The
+byte-identical to the bundle's. It reads 120.9 MB instead of 260.0 (median of 13 NYGC CRAMs; 93.1
+and 231.4 with every slice decoded once). The
 estimator accepts counts whose control regions are exactly the bundle's or exactly one named subset
 (`controls.<name>.bed` in the bundle, or `control_subsets` in `bundle.json`), and still refuses any
 other set; the result records `controls_used` and `controls_subset`. On the 1,748 cohort genomes
@@ -714,9 +731,10 @@ engine runs on the pilot's region cuts to an SD of 0.2–0.6%), lite200 against 
 
 A choice of the widest GC support instead kept a region with odd AT-rich positions and made HSat1B
 unstable (SD 13%, one sample off by 2.7×). Below 200 regions the gain is small and the losses grow:
-100 regions save a further 22.2 MB (median of the same 13 CRAMs: 70.9 MB against 93.1), but the chromosome test raises 14 new flags and DJ's
+100 regions save a further 22.2 MB (median of the same 13 CRAMs, every slice decoded once: 70.9 MB against 93.1), but the chromosome test raises 14 new flags and DJ's
 reliability falls to 0.731; at 50, 5S has outliers of 15% and 14 chromosomes cannot be tested.
-Thinning the truth regions as well (20 per set) would save 24 MB more in HG00096 and nearly doubles
+Thinning the truth regions as well (20 per set) would save 24 MB more in HG00096 (every slice decoded
+once; more as the engine reads, since a woman's 180 truth regions cost up to 99.1 MB there) and nearly doubles
 truth.auto's SD (0.008 to 0.015); it is not shipped. A cohort should not mix fetches with the two
 control sets: lite200 shifts the median level of each headline class by up to about 0.3% (SST1
 +0.29%, 45S +0.21%), but the all-window 45S estimate and HSat1B by about 1.5%, and `ngsdose estimate` warns when its
@@ -1058,7 +1076,7 @@ threads.
   TEL) figures rest on scan placements.
 
   What is fetched is then a matter of bytes (section 4). On the NYGC CRAMs the controls with the
-  bundle's four classes read 3.09% of a file; the lite control set and capture targets (by the
+  bundle's four classes read 3.33% of a file; the lite control set and capture targets (by the
   held-out statistics that ship with the sinks) read less, and the satellite families several
   times more ([fetch_examples.md](fetch_examples.md));
   `ngsdose fetchplan` chooses between them by name, preset or budget. Each biobank pipeline has to
@@ -1164,7 +1182,7 @@ threads.
      trying. (iii) **Less of everything**: fewer controls, smaller sinks, lower depth, all of
      which can be tried on the counts files alone, because they hold positions and not summaries.
      The first two now have tools and first numbers (sections 4 and 6): the lite control set and
-     capture targets of 0.995 take the controls and the bundle's sinks from 3.09% to 2.13% of a
+     capture targets of 0.995 take the controls and the bundle's sinks from 3.33% to 2.39% of a
      NYGC 1000 Genomes CRAM ([fetch_examples.md](fetch_examples.md), examples 2 and 13), and fetching about ten genomes with
      both control sets on the cluster would confirm the lite set on whole files. None of this
      needs an answer before the run; it needs the run to keep what the answers will be computed
@@ -1439,6 +1457,7 @@ for hard-clipped primary alignments, below, touches none of its bwa `-Y` alignme
 | Signed URLs stay out of the logs | a URL with a query string; a 503 answered with retries | **false**: the engine's own messages were redacted, but htslib's (`[E::hts_open_format] Failed to open file "…?X-Amz-Signature=…"`) printed the signature on every failed open | htslib's messages are turned off for an input or index URL with a query string, said once; asserted in CI against a local server |
 | A fetch that loses part of a class's sinks says so before it is spent | one sink interval on a contig the file lacks | **false**: the engine warned and fetched, `ngsdose estimate` then reported the class NaN, and no flag covered the partial case on either side | one rule (0.1.1): a class that loses any interval is refused unless `--allow-missing-sinks`, which records the loss (`sinks_skipped`) as before |
 | A rule that changes counts is versioned | the 5′ end of a soft clip behind a hard clip (`5H10S85M`) | **false**: 0.1.0 restored only an outermost soft clip, the fetch-menu build restores one behind a hard clip, and both wrote `engine_version` 0.1.0 (the cohort's bwa `-Y` alignments carry no hard-clipped primaries, so its counts are unchanged) | engine and package 0.1.1; the rule is stated in section 3 and pinned by a unit test |
+| The plan's price is what the fetch reads | the fixture as a CRAM under a read-logging shim; 13 NYGC indexes priced per interval | **false**: `cost.py` priced the union of slices once, while the engine makes one indexed fetch per run of intervals and htslib decodes a slice again for every run overlapping it - the 1.67-MB fixture CRAM was read as 37 MB, and `core_tel` costs 2-3% more than priced in men and 11-13% in women (chrY's few sparse slices decoded once per truth region), `xy_arrays` up to 27% | priced as the engine reads (one fetch per merged run, a slice once per run), the floor with every slice once reported beside it (`cum_mb_floor`); every documented figure regenerated (`core_tel` 546.9 MB, 3.33%) |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
 DRAGEN alignments beyond one genome per version (section 12); an orthogonal assay for the
