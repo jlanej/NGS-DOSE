@@ -106,21 +106,39 @@ def test_the_pipeline_record_is_taken_from_the_header(local):
     assert local["scan"]["pipeline"] == local["fetch"]["pipeline"] == want
 
 
-def test_sinks_on_contigs_the_input_lacks_are_left_out_and_recorded(local, tmp_path):
-    """Sinks learned on another reference or pipeline can name contigs the file does not have. The fetch
-    leaves those intervals out, says so, and records what it left out per class."""
+def test_sinks_on_contigs_the_input_lacks_refuse_the_fetch_unless_told(local, tmp_path):
+    """Sinks learned on another reference or pipeline can name contigs the file does not have. A class that
+    would lose any interval to them is one `ngsdose estimate` reports as NA (sinks_skipped), so the fetch is
+    refused before it reads a byte (engine 0.1.1; 0.1.0 warned and spent the bytes), naming the class and
+    what it loses. With --allow-missing-sinks it goes on, leaves those intervals out, says so, and records
+    what it left out per class. `--classes` without the class needs no flag, and `plan` reports the drop."""
     bed = tmp_path / "sinks.bed"
     bed.write_text(Path(BUNDLE.sinks).read_text() + "chrAbsent_decoy\t1000\t6000\tDJ\n")
-    r = ok(count(BAM, "fetch", tmp_path / "f.json", "--sinks", bed))
+    out = tmp_path / "f.json"
+    r = count(BAM, "fetch", out, "--sinks", bed)
+    assert r.returncode == 1 and not out.exists(), r.stderr
+    assert "class(es) DJ lose sink intervals" in r.stderr and "DJ 1 interval (5.0 kb) on chrAbsent_decoy" in r.stderr, r.stderr
+    assert "absent from the alignment header" in r.stderr and "--allow-missing-sinks" in r.stderr and "no interval" not in r.stderr
+    r = ok(count(BAM, "fetch", out, "--sinks", bed, "--allow-missing-sinks"))
     assert "WARNING" in r.stderr and "sinks_skipped" in r.stderr
-    c = io.load_counts(tmp_path / "f.json")
+    c = io.load_counts(out)
     assert c["sinks_skipped"] == {"DJ": {"intervals": 1, "bp": 5000}}
     assert "sinks_missing_classes" not in c
     drop = RUN | {"sinks", "sinks_sha256", "sinks_skipped"}
     assert strip(c, drop) == strip(local["fetch"], drop)
     assert set(contract.incomplete_sinks(c)) == {"DJ"} and contract.incomplete_sinks(local["fetch"]) == {}
+    r = ok(count(BAM, "fetch", tmp_path / "r.json", "--sinks", bed, "--classes", "rDNA45S,rDNA5S"))
+    assert "WARNING" not in r.stderr and "sinks_skipped" not in io.load_counts(tmp_path / "r.json")
+    # an interval without a class serves every class (as `ngsdose sinks` writes them): every class loses it
+    bed.write_text(Path(BUNDLE.sinks).read_text() + "chrAbsent_decoy\t1000\t6000\n")
+    r = count(BAM, "fetch", out, "--sinks", bed)
+    assert r.returncode == 1 and "class(es) rDNA45S, rDNA5S, DJ lose sink intervals" in r.stderr, r.stderr
+    assert "every class (intervals without a class) 1 interval (5.0 kb) on chrAbsent_decoy" in r.stderr, r.stderr
+    ok(count(BAM, "fetch", out, "--sinks", bed, "--allow-missing-sinks"))
+    c = io.load_counts(out)
+    assert c["sinks_skipped"] == {"": {"intervals": 1, "bp": 5000}} and set(contract.incomplete_sinks(c)) == {"rDNA45S", "rDNA5S", "DJ"}
     r = ok(engine("plan", "-c", BUNDLE.controls, "--sinks", bed, "-i", BAM, "-o", tmp_path / "plan.bed"))
-    assert "sink intervals by class: DJ 1" in r.stderr
+    assert "sink intervals by class: (no class) 1" in r.stderr
 
 
 def test_a_class_whose_sinks_are_all_on_absent_contigs_is_refused(local, tmp_path):
@@ -488,9 +506,14 @@ def test_a_server_without_range_requests(local, www, wd):
         assert "WARNING" in r.stderr and io.load_counts(out)["eof_marker"] == "absent"
 
 
+SILENCED = "htslib's own messages are silenced for a URL with a query string"
+
+
 def test_a_signed_url_is_kept_out_of_the_output(local, www, wd):
     """A signed URL's query is a credential. It reaches the server (for the file and its index) but not
-    the counts or the engine's messages; htslib's own error lines still print it, which the engine cannot stop."""
+    the counts or the engine's messages, which carry the URL redacted. htslib's own error lines would print
+    it in full on every failed open, index search and retry, so for a URL with a query string the engine
+    turns them off before its first open and says so once (engine 0.1.1); a URL without a query keeps them."""
     q = "?X-Amz-Credential=KEYSECRET&X-Amz-Signature=deadbeefSECRET"
     with Server(www) as srv:
         for mode in ("scan", "fetch"):
@@ -498,10 +521,27 @@ def test_a_signed_url_is_kept_out_of_the_output(local, www, wd):
             text = (wd / f"{mode}.json").read_text()
             c = json.loads(text)
             assert "SECRET" not in text and "SECRET" not in r.stderr, r.stderr
-            assert c["input"] == srv.url + "/fx.bam?<redacted>"
+            assert c["input"] == srv.url + "/fx.bam?<redacted>" and r.stderr.count(SILENCED) == 1
             assert strip(c, {"input", "elapsed_sec"}) == strip(local[mode], {"input", "elapsed_sec"})
         assert {p for p, _, _ in srv.log} == {"/fx.bam" + q, "/fx.bam.csi" + q}
         n = len(srv.log)
         r = count(srv.url + "/missing.bam" + q, "scan", wd / "m.json", cwd=wd)
         assert r.returncode == 1 and len(srv.log) == n + 1, r.stderr                 # a 404 is final: no retry, no 75
-        assert "SECRET" not in own(r.stderr) and "missing.bam?<redacted>" in own(r.stderr), r.stderr
+        assert "SECRET" not in r.stderr and "missing.bam?<redacted>" in own(r.stderr) and SILENCED in r.stderr, r.stderr
+        # no index beside the file: htslib's index search names the URL in every message it prints
+        r = count(srv.url + "/noidx.bam" + q, "fetch", wd / "n.json", threads=1, cwd=wd)
+        assert r.returncode == 1 and "SECRET" not in r.stderr and "noidx.bam?<redacted>" in r.stderr, r.stderr
+        assert "no index beside it" in r.stderr and SILENCED in r.stderr, r.stderr
+        # the index as a signed URL of its own, the file without one
+        r = ok(count(srv.url + "/fx.bam", "fetch", wd / "i.json", "--index", srv.url + "/fx.bam.csi" + q, cwd=wd))
+        assert "SECRET" not in r.stderr and SILENCED in r.stderr, r.stderr
+        assert strip(io.load_counts(wd / "i.json"), {"input", "elapsed_sec"}) == strip(local["fetch"], {"input", "elapsed_sec"})
+    # a server that keeps failing: every attempt's open fails with the URL in htslib's message
+    with Server(www, fail=lambda n, path, rng: True) as srv:
+        r = count(srv.url + "/fx.bam" + q, "fetch", wd / "d.json", "--retries", "2", cwd=wd)
+        assert r.returncode == 75 and "retry 1/2" in r.stderr and "SECRET" not in r.stderr, r.stderr
+        assert "fx.bam?<redacted>" in r.stderr and SILENCED in r.stderr, r.stderr
+    # and a failed open of a URL without a query string keeps htslib's own line
+    with Server(www) as srv:
+        r = count(srv.url + "/missing.bam", "scan", wd / "p.json", cwd=wd)
+        assert r.returncode == 1 and "[E::" in r.stderr and SILENCED not in r.stderr, r.stderr

@@ -197,8 +197,9 @@ def test_estimate_of_plan_fetches_on_the_command_line(tmp_path):
     flags = (tmp_path / "xy.count_flags.txt").read_text().split()
     panels = [x for q in (tmp_path / "xy.panels.txt").read_text().split() for x in ("-p", q)]
     xy = tmp_path / "xy.json.gz"
+    # --allow-missing-sinks: three DYZ2 (HSat1B) sinks are on decoy contigs the fixture lacks, which an engine since 0.1.1 refuses to fetch without it
     subprocess.run([str(bin_), "count", "-i", str(BAM), *panels, "-c", (tmp_path / "xy.controls.txt").read_text().strip(), "-m", "fetch",
-                    "--sinks", str(tmp_path / "xy.sinks.bed"), *flags, "-@", "2", "-o", str(xy)], check=True, capture_output=True)
+                    "--sinks", str(tmp_path / "xy.sinks.bed"), *flags, "--allow-missing-sinks", "-@", "2", "-o", str(xy)], check=True, capture_output=True)
     # without the BED, a class all of whose placements lie at its options is subset_only by the placements, the others unverified
     for extra, parent, sub in (((), {"unverified", "subset_only"}, "unverified"), (("--fetch-sinks", tmp_path / "xy.sinks.bed"), {"subset_only"}, "ok")):
         r = cli("estimate", xy, "-r", BUNDLE, "-t", tmp_path / "xy.tsv", *extra)

@@ -787,6 +787,25 @@ impl Input {
     pub fn display(&self) -> String {
         redact(&self.path)
     }
+    /// A URL with a query string: where a signed URL carries its signature.
+    fn has_query(s: &str) -> bool {
+        s.contains("://") && s.split_once('?').is_some_and(|(_, q)| !q.split('#').next().unwrap_or("").is_empty())
+    }
+    /// htslib prints a URL it fails to open in full, query string included, on every failed open,
+    /// index search and retry ("[E::hts_open_format] Failed to open file ..."), and this process
+    /// cannot scrub those lines: for an input or index URL with a query string its messages are
+    /// turned off before the first open, and that is said once, under `tag`. The engine's own
+    /// messages carry the redacted form (`scrub_urls`).
+    pub fn quiet_htslib_for_signed_urls(&self, tag: &str) {
+        if Self::has_query(&self.path) || self.index.as_deref().is_some_and(Self::has_query) {
+            unsafe { htslib::hts_set_log_level(htslib::htsLogLevel_HTS_LOG_OFF) };
+            eprintln!(
+                "[{}] htslib's own messages are silenced for a URL with a query string (they would print its signature unredacted); \
+                 the engine's messages carry a redacted form",
+                tag
+            );
+        }
+    }
     /// A failed open. `errno` is read right after htslib gave up, with errno cleared before the call:
     /// it says why the input itself could not be opened (from the server's answer for a URL). An
     /// index that failed to load is judged apart, by asking the server for it again (`index_gone`),
@@ -1244,6 +1263,8 @@ pub struct SkippedSinks {
 pub struct Sinks {
     pub kept: Vec<BedRec>,
     pub skipped: BTreeMap<String, SkippedSinks>,
+    /// the contigs of the skipped intervals, per class: for the messages, not the counts file
+    pub skipped_contigs: BTreeMap<String, std::collections::BTreeSet<String>>,
     /// the BED carries a class column
     pub named: bool,
 }
@@ -1259,6 +1280,7 @@ impl Sinks {
         let n = self.kept.len();
         self.kept.retain(|r| r.name.is_empty() || names.contains(&r.name));
         self.skipped.retain(|c, _| c.is_empty() || names.contains(c));
+        self.skipped_contigs.retain(|c, _| c.is_empty() || names.contains(c));
         n - self.kept.len()
     }
     /// The class names the BED gives, on this file's contigs or not.
@@ -1273,13 +1295,43 @@ impl Sinks {
             .collect::<Vec<_>>()
             .join(", ")
     }
+    /// The classes among `counted` that lose an interval to a contig the header lacks: those with
+    /// skipped intervals of their own, and all of them when an interval without a class (which
+    /// serves every class) was skipped - the classes `ngsdose estimate` reports as NaN from
+    /// sinks_skipped, so a fetch that would spend its bytes on them is refused up front.
+    pub fn losing<'a>(&self, counted: &'a [String]) -> Vec<&'a str> {
+        let every = self.skipped.contains_key("");
+        counted.iter().map(|n| n.as_str()).filter(|n| every || self.skipped.contains_key(*n)).collect()
+    }
+    /// What the classes in `names` lose, per class, with the contigs: "HSat2 2 intervals (75.0 kb)
+    /// on chr22_KI270738v1_random, chrUn_KI270528v1; every class (intervals without a class) 1 interval (12.0 kb) on chrUn_GL000214v1"
+    pub fn lost_summary(&self, names: &[&str]) -> String {
+        self.skipped
+            .iter()
+            .filter(|(c, _)| c.is_empty() || names.contains(&c.as_str()))
+            .map(|(c, s)| {
+                let contigs: Vec<&str> = self.skipped_contigs.get(c).map(|v| v.iter().map(|x| x.as_str()).collect()).unwrap_or_default();
+                let shown = contigs.iter().take(6).copied().collect::<Vec<_>>().join(", ");
+                format!(
+                    "{} {} interval{} ({:.1} kb) on {}{}",
+                    if c.is_empty() { "every class (intervals without a class)" } else { c },
+                    s.intervals,
+                    if s.intervals == 1 { "" } else { "s" },
+                    s.bp as f64 / 1e3,
+                    shown,
+                    if contigs.len() > 6 { format!(" and {} more", contigs.len() - 6) } else { String::new() }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
 }
 
 /// Read a sinks BED and keep the intervals on contigs `tid_of` knows, recording the rest per class.
 pub fn load_sinks(path: &Path, tid_of: &dyn Fn(&str) -> Option<i32>) -> Result<Sinks> {
     let recs = fasta::read_bed(path)?;
     let named = recs.iter().any(|r| !r.name.is_empty());
-    let (mut kept, mut skipped) = (Vec::new(), BTreeMap::<String, SkippedSinks>::new());
+    let (mut kept, mut skipped, mut skipped_contigs) = (Vec::new(), BTreeMap::<String, SkippedSinks>::new(), BTreeMap::new());
     for r in recs {
         if tid_of(&r.chrom).is_some() {
             kept.push(r);
@@ -1287,9 +1339,10 @@ pub fn load_sinks(path: &Path, tid_of: &dyn Fn(&str) -> Option<i32>) -> Result<S
             let s = skipped.entry(r.name.clone()).or_default();
             s.intervals += 1;
             s.bp += (r.end - r.start) as u64;
+            skipped_contigs.entry(r.name).or_insert_with(std::collections::BTreeSet::new).insert(r.chrom);
         }
     }
-    Ok(Sinks { kept, skipped, named })
+    Ok(Sinks { kept, skipped, skipped_contigs, named })
 }
 
 /// The intervals a fetch reads: the control regions padded by `pad` on both sides (a fetch finds a
@@ -2036,6 +2089,7 @@ mod tests {
             ("40M100N30=1X29M", false, 1000),
             ("40M100N30=1X29M", true, 1199),
             // a hard clip outside the soft clip is stepped over, and only the soft clip counts
+            // (since engine 0.1.1; 0.1.0 restored an outermost soft clip only, so 5H10S85M gave 1000)
             ("5H10S85M", false, 990),
             ("85M10S5H", true, 1094),
             ("5H95M", false, 1000),
