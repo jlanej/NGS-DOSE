@@ -814,15 +814,16 @@ def main(argv=None):
     f.add_argument("--status", default="shipped,experimental", help="for --budget-mb: the statuses to draw from (default shipped,experimental)")
     f.add_argument("--capture", type=float, help="per class, keep the intervals of highest share per read until the expected capture reaches "
                    "this fraction, drop the rest (needs statistics: the menu's stats column or --stats; a class without them keeps all its "
-                   "intervals, and a named subset is fetched whole). With --crai, per byte of the intervals' own CRAM slices instead: an "
-                   "interval of low median share on costly slices (a pile-up bin, a multi-reference decoy slice) ranks behind the "
-                   "intervals worth their bytes. The expected capture is then a lower bound (the capture of all the class's intervals "
+                   "intervals, and a named subset is fetched whole). With --crai, per byte of the interval's own fetch instead (the CRAM "
+                   "slices it overlaps, with their containers' compression headers: what dropping it saves): an interval of low median "
+                   "share on costly slices (a pile-up bin, a multi-reference decoy slice) ranks behind the intervals worth their bytes. "
+                   "The expected capture is then a lower bound (the capture of all the class's intervals "
                    "less the largest share each dropped interval held in any one scan), so an interval is dropped only while its largest "
                    "share in any scan still leaves the target reached (TEL keeps the chr2:32.91 Mb pile-up bin above about 0.979), and "
                    "when keeping per read reaches the target with fewer bytes, that is kept. Classes share intervals: one that another "
-                   "selected class keeps is read anyway, so it is kept for every class that has it (with --crai: any interval whose "
-                   "slices the plan reads anyway, and each class is trimmed again with those slices free). The table reports per option "
-                   "the MB its trimming saved of the plan (mb_saved) and the capture lost")
+                   "selected class keeps is read anyway, so it is kept for every class that has it (with --crai: any interval that adds "
+                   "no bytes to the plan's fetches, and each class is trimmed again with those intervals free). The table reports per "
+                   "option the MB its trimming saved of the plan (mb_saved) and the capture lost")
     f.add_argument("--capture-class", nargs="+", metavar="CLASS=FRACTION", help="a capture target for one class, e.g. TEL=0.99")
     f.add_argument("--capture-stat", choices=("p10", "median"), default="p10",
                    help="which capture of the statistics' scans the target applies to: the 10th percentile (default) or the median")
@@ -834,7 +835,9 @@ def main(argv=None):
     f.add_argument("--pad", type=int, default=600, help="padding of the control regions, as `ngs-dose count --pad` (default 600, at least 400); another value goes to "
                    "count_flags.txt so the fetch reads the regions costed here")
     f.add_argument("--crai", nargs="+", metavar="CRAI", help="CRAM indexes to cost the plan on (median over them); each from the same place "
-                   "as its CRAM")
+                   "as its CRAM. The plan is priced as `ngs-dose count -m fetch` reads it: one indexed fetch per run of touching or "
+                   "overlapping intervals, each decoding every CRAM slice that overlaps it (with its container's compression header), "
+                   "so a slice under several runs is decoded once per run; cum_mb_floor is the plan with every slice decoded once")
     f.add_argument("--contigs", metavar="FILE", help="the contigs of the CRAMs in header order: the .fai or .dict of their reference, or "
                    "`samtools view -H` output")
     f.add_argument("--engine", default="ngs-dose", help="the ngs-dose that will run the fetch (default: ngs-dose on PATH). When the plan "

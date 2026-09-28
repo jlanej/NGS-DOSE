@@ -34,18 +34,46 @@ def write_fai(path, contigs=CONTIGS):
     return path
 
 
-def test_slices_are_read_once_with_their_compression_header(tmp_path):
+def test_slices_are_priced_per_fetch_with_their_compression_header(tmp_path):
+    """A fetch decodes every slice its interval overlaps, once, with the compression header of each container among
+    them; a fetch on another contig decodes a multi-reference slice again, and the floor (bytes_once) reads it once."""
     ix = cost.CraiIndex(write_crai(tmp_path / "x.crai", CRAI), CONTIGS)
     assert ix.total == 1000 + 2000 + 500 + 300 + 10 + 20 + 30 + 40
     got = cost.component_costs(ix, {"A": [("c1", 5_000, 15_000)], "B": [("c3", 100, 200)], "C": [("c2", 0, 10), ("c9", 0, 10)],
                                     "U": [(cost.UNMAPPED, 0, 0)]})
-    assert got["A"]["bytes"] == 1000 + 10 + 2000 + 20 and got["A"]["slices"] == 2
+    assert got["A"]["bytes"] == 1000 + 10 + 2000 + 20 and got["A"]["slices"] == 2       # one fetch over two slices, two containers
     assert got["B"]["bytes"] == got["C"]["bytes"] == 530 and got["C"]["absent"] == 1
-    assert got["C"]["cum_bytes"] == 3030 + 530                              # the slice B and C share is read once
-    assert got["U"]["bytes"] == 340 and got["union"]["bytes"] == ix.total and got["union"]["slices"] == 4
+    assert got["C"]["cum_bytes"] == 3030 + 530 + 530                                    # the slice B and C share: a fetch on c3 and one on c2 each decode it
+    assert got["C"]["cum_bytes_once"] == 3030 + 530                                     # the floor reads it once
+    assert got["U"]["bytes"] == 340 and got["union"]["bytes"] == 3030 + 530 + 530 + 340 and got["union"]["slices"] == 4
+    assert got["union"]["bytes_once"] == ix.total
     # an interval ending where a slice starts does not read it; one starting at a slice's last base does
     assert ix.keys([("c1", 0, 0)])[0] == set() and ix.keys([("c1", 9_999, 10_000)])[0] == {(100, 10)}
     assert ix.keys([("c1", 10_000, 10_001)])[0] == {(2000, 20)}
+
+
+def test_a_slice_under_two_fetches_is_decoded_twice_and_the_floor_once(tmp_path):
+    """The engine merges a plan's intervals where they touch or overlap and fetches each run: two runs over one slice
+    decode it (and its container's compression header) twice, one run once; the floor is the union of slices, each once."""
+    ix = cost.CraiIndex(write_crai(tmp_path / "x.crai", CRAI), CONTIGS)
+    apart, touching, overlapping = [("c1", 100, 200), ("c1", 300, 400)], [("c1", 100, 200), ("c1", 200, 300)], [("c1", 100, 250), ("c1", 200, 300)]
+    assert ix.price(apart) == 2 * 1010 and ix.price_once(apart) == 1010
+    assert ix.price(touching) == ix.price(overlapping) == 1010 == ix.price_once(touching)
+    assert cost.merge(apart) == {"c1": ([100, 300], [200, 400])} and cost.merge(touching) == {"c1": ([100], [300])}
+    assert cost.merge(overlapping + [(cost.UNMAPPED, 0, 0), (cost.UNMAPPED, 0, 0)]) == {"c1": ([100], [300]), cost.UNMAPPED: ([0], [0])}
+    # over the two slices of c1: one run decodes each once; three runs decode the first twice and the second once
+    assert ix.price([("c1", 100, 200), ("c1", 200, 12_000)]) == 3030
+    assert ix.price([("c1", 100, 200), ("c1", 300, 400), ("c1", 11_000, 12_000)]) == 2 * 1010 + 2020
+    # what an interval adds to a plan's fetches: nothing inside or touching a run without new slices, its own fetch apart, less when it bridges two runs
+    plan = cost.merge(apart)
+    assert ix.extra(plan, "c1", 150, 160) == 0 and ix.extra(plan, "c1", 400, 500) == 0 and ix.extra(plan, "c1", 200, 300) == 1010 - 2 * 1010
+    assert ix.extra(plan, "c1", 600, 700) == 1010 and ix.extra(plan, "c2", 0, 10) == 530
+    assert ix.extra(plan, cost.UNMAPPED, 0, 0) == 340 and ix.extra(cost.merge([(cost.UNMAPPED, 0, 0)]), cost.UNMAPPED, 0, 0) == 0
+    for iv in (("c1", 150, 160), ("c1", 400, 500), ("c1", 200, 300), ("c1", 600, 700), ("c2", 0, 10), (cost.UNMAPPED, 0, 0)):
+        assert ix.extra(plan, *iv) == ix.price(apart + [iv]) - ix.price(apart), iv
+    # the multi-reference slice is one slice within a fetch, decoded again by a second run on its contig or a run on its other contig
+    assert ix.price([("c2", 0, 10), ("c2", 20, 30)]) == 2 * 530 and ix.price([("c2", 0, 10), ("c3", 0, 10)]) == 2 * 530
+    assert ix.price_once([("c2", 0, 10), ("c3", 0, 10)]) == 530 and ix.price([("c2", 0, 10), ("c2", 10, 30)]) == 530
 
 
 def test_a_long_slice_is_found_behind_short_ones(tmp_path):
@@ -160,6 +188,7 @@ def test_by_name_and_preset_with_costs(menu_dir):
     # the median of the two indexes: slices of 1x and 3x the size, each with a 10-byte compression header
     assert [r.mb for r in p.rows] == [pytest.approx((2 * x + 10) / 1e6) for x in (1000, 2000, 500, 700)]
     assert p.rows[-1].cum_mb == pytest.approx((2 * 4200 + 40) / 1e6) and p.rows[-1].cum_pct == pytest.approx(100 * (4240 / 111270 + 12640 / 333670) / 2)
+    assert all(r.cum_mb_floor == r.cum_mb for r in p.rows)             # every interval in a slice of its own: the floor is the price
     assert p.panels == ["ab.tsv"] and p.flags == ["--unmapped"] and p.bed() == [("c1", 100000, 101000, "A"), ("c2", 0, 1000, "B")]
     assert p.rows[0].intervals == [("c1", 49400, 51600)]              # padded by 600
 
@@ -317,6 +346,35 @@ def test_the_plan_names_the_controls_fasta_of_the_regions_it_costed(menu_dir, tm
     assert (tmp_path / "r.controls.txt").read_text() == f"{(tmp_path / 'own.fa.gz').resolve()}\n"
 
 
+def test_controls_txt_stays_under_the_menu_through_a_symlinked_bundle(menu_dir, tmp_path):
+    """A bundle reached through a symlink (a site's, or a container's) resolves elsewhere: controls.txt, like panels.txt,
+    names the path under the menu's directory as the menu writes it, which --panel-root maps."""
+    real = tmp_path / "real"
+    real.mkdir()
+    for f in ("controls.bed", "ab.tsv", "sinks.bed"):
+        (real / f).write_text((menu_dir / f).read_text())
+    (real / "controls.fa.gz").write_bytes(b"")
+    (menu_dir / "bundle").symlink_to(real)
+    text = (menu_dir / "menu.tsv").read_text().replace("\t-\tcontrols.bed\t", "\t-\tbundle/controls.bed\t").replace("\tab.tsv\t", "\tbundle/ab.tsv\t")
+    (menu_dir / "menu2.tsv").write_text(text)
+    m = fetchplan.read_menu(menu_dir / "menu2.tsv")
+    p = fetchplan.make_plan(m, classes=["A"], log=lambda _: None)
+    assert p.controls_fasta == str(menu_dir / "bundle" / "controls.fa.gz")
+    fetchplan.write(p, str(tmp_path / "q"), m, panel_root="/opt/res")
+    assert (tmp_path / "q.panels.txt").read_text() == "/opt/res/bundle/ab.tsv\n"
+    assert (tmp_path / "q.controls.txt").read_text() == "/opt/res/bundle/controls.fa.gz\n"
+    fetchplan.write(p, str(tmp_path / "r"), m)
+    assert (tmp_path / "r.controls.txt").read_text() == f"{menu_dir / 'bundle' / 'controls.fa.gz'}\n"      # no root: as written
+    # a menu reached through a link and the controls named by their real path: under the menu by real path, so still mapped
+    (real / "menu.tsv").write_text((menu_dir / "menu.tsv").read_text())
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    m = fetchplan.read_menu(link / "menu.tsv")
+    q = fetchplan.make_plan(m, classes=["A"], controls=real / "controls.bed", log=lambda _: None)
+    fetchplan.write(q, str(tmp_path / "s"), m, panel_root="/opt/res")
+    assert (tmp_path / "s.controls.txt").read_text() == "/opt/res/controls.fa.gz\n"
+
+
 def test_a_pad_other_than_the_engines_goes_to_the_count_flags(menu_dir, tmp_path):
     m = fetchplan.read_menu(menu_dir / "menu.tsv")
     p = fetchplan.make_plan(m, classes=["A"], pad=1500, log=lambda _: None)
@@ -349,9 +407,9 @@ def test_the_shipped_menu(tmp_path):
             assert o.counted in fetchplan.panel_classes(m.resolve(o.panel)), o.name
         if o.status == "shipped" and o.kind in ("positional", "compositional"):
             assert any(r[3] == o.name for r in sinks.read_bed(m.resolve(o.sinks))), o.name
-    p = fetchplan.make_plan(m, presets=["core_tel"], log=lambda _: None)
+    core = fetchplan.make_plan(m, presets=["core_tel"], log=lambda _: None)
     want = sorted(r for r in sinks.read_bed(ROOT / "resources" / "GRCh38" / "sinks.bed") if r[3] in ("rDNA45S", "rDNA5S", "DJ", "TEL"))
-    assert p.bed() == want and p.flags == [] and len(p.rows[0].intervals) == 982
+    assert core.bed() == want and core.flags == [] and len(core.rows[0].intervals) == 982
     sat = m.options["HSat2"]
     if m.resolve(sat.sinks).exists():                      # staged: the statistics the menu names are for exactly these intervals
         p = fetchplan.make_plan(m, presets=["satellites"], capture=0.99, log=lambda _: None)
@@ -361,7 +419,7 @@ def test_the_shipped_menu(tmp_path):
         assert "--unmapped" in p.flags and "--allow-missing-sinks" not in p.flags
     if BIN.exists():
         out = tmp_path / "core"
-        fetchplan.write(p, str(out), m)
+        fetchplan.write(core, str(out), m)
         r = subprocess.run([str(BIN), "plan", "-c", str(ROOT / "resources" / "GRCh38" / "controls.fa.gz"), "--sinks", f"{out}.sinks.bed",
                             "-o", str(tmp_path / "engine.bed")], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
@@ -457,7 +515,7 @@ def test_an_interval_another_class_keeps_is_kept_and_saves_nothing(shared_menu):
     assert len(t.intervals) == 3 and t.dropped == 0 and t.shared == 1 and t.expected == pytest.approx(t.full)
     assert len(u.intervals) == 2 and u.dropped == 0
     assert t.mb_saved == 0 and u.mb_saved == 0 and p.rows[-1].cum_mb == pytest.approx(whole.rows[-1].cum_mb)
-    assert "1 interval(s) its target alone would drop are kept: the plan reads their CRAM slices anyway (for U)" in t.note
+    assert "1 interval(s) its target alone would drop are kept: the plan's fetches read their CRAM slices anyway (for U)" in t.note
     assert any("capture targets saved 0.0 MB of the plan" in x for x in said)
     line = dict(zip(fetchplan.PLAN_COLUMNS, fetchplan.table_lines(p)[[r.option.name for r in p.rows].index("T") + 1].split("\t")))
     assert line["mb_saved"] == "0.0" and line["capture_lost"] == "0.00000" and line["dropped"] == "0"

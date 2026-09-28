@@ -11,13 +11,16 @@ be selected for scanning only.
 Classes are chosen by name, by preset, or by a byte budget; a capture target per class drops the
 intervals that yield least while the expected capture (from `ngsdose sinks --stats`) stays at or
 above it. Without CRAM indexes the intervals are kept in order of share per read (the statistics'
-rank); with them (--crai) in order of share per byte of the interval's own CRAM slices, and the
-expected capture is then a lower bound (see _trim), unless keeping per read reaches the target with
-fewer bytes. Classes share intervals (the chr2:32.91 Mb pile-up bin is in the sinks of ten), and the
+rank); with them (--crai) in order of share per byte of the interval's own fetch (the CRAM slices
+it overlaps, with their containers' compression headers: what dropping it saves), and the expected
+capture is then a lower bound (see _trim), unless keeping per read reaches the target with fewer
+bytes. Classes share intervals (the chr2:32.91 Mb pile-up bin is in the sinks of ten), and the
 engine counts every read of the plan's union for its class: a class keeps any interval the rest of
-the plan reads anyway, and with CRAM indexes is trimmed again with those slices free
-(_share_between_options). With CRAM indexes the bytes each option and the plan read are reported,
-and what trimming saved of the plan and cost. The outputs are what `ngs-dose count -m fetch` takes:
+the plan reads anyway, and with CRAM indexes is trimmed again with the intervals that add no bytes
+to the plan's fetches free (_share_between_options). With CRAM indexes the bytes each option and
+the plan read are reported as the engine reads them (ngsdose.cost: one fetch per run of touching
+or overlapping intervals, a slice under several runs decoded once per run), beside the floor of
+each slice once, and what trimming saved of the plan and cost. The outputs are what `ngs-dose count -m fetch` takes:
 PREFIX.sinks.bed (--sinks), PREFIX.panels.txt (one -p per line), PREFIX.count_flags.txt (further
 flags, one token per line), PREFIX.controls.txt (the controls FASTA to pass as -c: the one matching
 the control regions the plan was costed on), plus PREFIX.scan_panels.txt (the panels to load in the
@@ -45,7 +48,7 @@ TIERS = ("A", "B", "C", "D")
 ENGINE_PAD = 600       # `ngs-dose count --pad` default (src/count.rs DEFAULT_PAD)
 READLEN_MAX = 400      # the engine refuses a smaller pad (src/count.rs READLEN_MAX)
 PLAN_COLUMNS = ("option", "status", "tier", "kind", "intervals", "dropped", "bp", "capture_target", "expected_capture", "full_capture",
-                "capture_lost", "mb_median", "mb_saved", "cum_mb_median", "cum_pct_median", "order", "note")
+                "capture_lost", "mb_median", "mb_saved", "cum_mb_median", "cum_mb_floor", "cum_pct_median", "order", "note")
 
 
 def default_menu() -> Path:
@@ -248,14 +251,15 @@ class Row:
     target: float | None = None
     expected: float | None = None
     full: float | None = None
-    mb: float | None = None
+    mb: float | None = None                                # the option's own intervals alone, as the engine fetches them (cost.price)
     mb_full: float | None = None                           # all of the option's intervals, before a capture target trimmed them
     mb_saved: float | None = None                          # what trimming the option saved of the plan (the rest of the plan as it is)
     whole: list[tuple[str, int, int]] = field(default_factory=list)   # all of a class's intervals, before trimming
     stats: list[dict] | None = None                        # the statistics rows trimming used
     per_byte: bool = False                                 # the statistics allow the byte order (share_max)
-    shared: int = 0                                        # intervals below the target kept because the plan reads them anyway
-    cum_mb: float | None = None
+    shared: int = 0                                        # intervals below the target kept because they add no bytes to the plan's fetches
+    cum_mb: float | None = None                            # the plan up to this option, as the engine fetches it
+    cum_mb_floor: float | None = None                      # the same with every slice decoded once (cost.price_once)
     cum_pct: float | None = None
     order: str = ""                                        # 'read' or 'byte': the order capture trimming kept intervals in
     held_out: bool | None = None                           # what the statistics file says of its scans
@@ -335,21 +339,22 @@ def _capture_of(stats, kept, stat) -> float | None:
     return _bounds(stats, order + rest, col, stats[-1][col])[len(order) - 1] if order else 0.0
 
 
-def _trim(ivs, stats, target, stat, nbytes=None, union_mb=None, free=frozenset()):
+def _trim(ivs, stats, target, stat, nbytes=None, price_mb=None, free=frozenset()):
     """(kept intervals, dropped, expected capture, capture of all, order) of one class, by its stats rows.
 
     Without `nbytes` the intervals are kept in the statistics' rank (share per read) and the expected
     capture is the statistics' cumulative capture, exact for those scans. With `nbytes` ((contig,
-    start, end) -> bytes of the interval's own CRAM slices) they are kept in order of median share per
-    byte: an interval of low median share on costly slices (a pile-up bin, a multi-reference decoy
+    start, end) -> bytes of the interval's own fetch: the CRAM slices it overlaps with their
+    containers' compression headers, what dropping it saves) they are kept in order of median share
+    per byte: an interval of low median share on costly slices (a pile-up bin, a multi-reference decoy
     slice) ranks behind the intervals worth their bytes. The statistics hold the capture curve of their
     own order only, so the expected capture of a set kept per byte is a lower bound that holds scan by
     scan (_bounds). An interval is therefore dropped only while the largest share it held in any one
     scan still leaves the target reached: TEL keeps the chr2:32.91 Mb pile-up bin above about 0.979.
-    `union_mb(intervals)` prices a set: of the two orders, the one that reaches the target with fewer
-    bytes is kept (order 'byte', or 'read, fewer bytes' when the statistics' own order does, its
-    capture then exact). `free`: intervals whose slices the rest of the plan reads anyway; they are
-    kept first, in either order, and cost nothing."""
+    `price_mb(intervals)` prices a set as the engine fetches it: of the two orders, the one that
+    reaches the target with fewer bytes is kept (order 'byte', or 'read, fewer bytes' when the
+    statistics' own order does, its capture then exact). `free`: intervals that add no bytes to the
+    rest of the plan's fetches; they are kept first, in either order, and cost nothing."""
     if not stats:
         return ivs, 0, None, None, ""
     col = f"cum_capture_{stat}"
@@ -373,7 +378,7 @@ def _trim(ivs, stats, target, stat, nbytes=None, union_mb=None, free=frozenset()
         return by_read
     ranked = sorted(stats, key=lambda r: (_key(r) not in free, -r["share_median"] / max(nbytes[_key(r)], 1), -r["share_median"], r["rank"]))
     by_byte = pick(ranked, "byte")
-    if union_mb is not None and union_mb(by_read[0]) < union_mb(by_byte[0]):
+    if price_mb is not None and price_mb(by_read[0]) < price_mb(by_byte[0]):
         return (*by_read[:4], "read, fewer bytes")
     return by_byte
 
@@ -450,11 +455,12 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
         indexes = [cost.CraiIndex(p, ctg) for p in crais]
 
     def nbytes(ivs):
-        """(contig, start, end) -> median bytes of the interval's own slices over the indexes."""
-        return {iv: cost.median([ix.bytes(ix.keys([iv])[0]) for ix in indexes]) for iv in ivs}
+        """(contig, start, end) -> median bytes of the interval's own fetch over the indexes."""
+        return {iv: cost.median([ix.fetch(*iv) for ix in indexes]) for iv in ivs}
 
-    def union_mb(ivs):
-        return cost.median([ix.bytes(ix.keys(ivs)[0]) for ix in indexes]) / 1e6
+    def price_mb(ivs):
+        """What the engine reads for a set of intervals (median over the indexes), in MB."""
+        return cost.median([ix.price(ivs) for ix in indexes]) / 1e6
 
     # intervals of every fetchable option in the pool
     override = _load_bed_rows(sinks_files) if sinks_files else None
@@ -546,7 +552,7 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
                     r.warn.append(f"{o.name}: its statistics have no share_max (written before it was added), so its intervals are kept "
                                   "by share per read, not per byte; write them again with `ngsdose sinks SCANS --evaluate BED --stats FILE`")
             r.whole = sorted(set(ivs))
-            r.intervals, r.dropped, r.expected, r.full, r.order = _trim(r.whole, st, target, capture_stat, by_byte, union_mb)
+            r.intervals, r.dropped, r.expected, r.full, r.order = _trim(r.whole, st, target, capture_stat, by_byte, price_mb)
             r.target, r.order, r.stats, r.per_byte = target, (r.order if target is not None else ""), st, by_byte is not None
             if st:
                 r.held_out, r.stats_scans = held[source[o.name]], max(x["scans"] for x in st)
@@ -554,24 +560,24 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
                 r.warn.append(f"{o.name}: all its intervals together capture {r.full:.4f} ({capture_stat} over the scans of its statistics), "
                              f"below the target {target}: all are kept")
             if r.dropped and indexes:
-                r.mb_full = cost.median([ix.bytes(ix.keys(r.whole)[0]) for ix in indexes]) / 1e6
+                r.mb_full = price_mb(r.whole)
         rows.append(r)
 
-    # cost, and the budget
-    keys, absent = {}, {}
+    # cost, and the budget: each option alone, then the plan as it grows, priced as the engine fetches it (all its intervals
+    # merged together, so an option can even make the plan cheaper by bridging two runs that decode the same slices)
+    absent = {}
     for r in [ctrl, *rows]:
-        got = [ix.keys(r.intervals) for ix in indexes]
-        keys[id(r)], absent[id(r)] = [k for k, _ in got], cost.median([n for _, n in got]) if got else 0
-        r.mb = cost.median([ix.bytes(k) for ix, k in zip(indexes, keys[id(r)])]) / 1e6 if indexes else None
+        absent[id(r)] = cost.median([ix.keys(r.intervals)[1] for ix in indexes]) if indexes else 0
+        r.mb = price_mb(r.intervals) if indexes else None
         if r.mb is not None and r.mb_full is None and r.target is not None:
             r.mb_full = r.mb                                # a capture target that dropped nothing saved nothing
     tier = {t: i for i, t in enumerate(TIERS)}
     rows.sort(key=lambda r: (tier[r.option.tier], r.mb if r.mb is not None else 0.0, r.option.order))
-    seen = [set() for _ in indexes]
+    seen: list[tuple[str, int, int]] = []
     plan = []
     for r in [ctrl, *rows]:
         if indexes:
-            now = [ix.bytes(s | k) for ix, s, k in zip(indexes, seen, keys[id(r)])]
+            now = [ix.price(seen + r.intervals) for ix in indexes]
             mb = cost.median(now) / 1e6
             if budget_mb is not None and mb > budget_mb:
                 if r is ctrl:
@@ -583,8 +589,9 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
                 notes.append(f"the budget of {budget_mb:g} MB stops the plan before {r.option.name} (tier {r.option.tier}), which would take it "
                              f"to {mb:.1f} MB; the options after it are left out (--fill adds those that still fit)")
                 break
-            seen = [s | k for s, k in zip(seen, keys[id(r)])]
+            seen = seen + r.intervals
             r.cum_mb, r.cum_pct = mb, 100 * cost.median([n / ix.total for n, ix in zip(now, indexes)])
+            r.cum_mb_floor = cost.median([ix.price_once(seen) for ix in indexes]) / 1e6
         if absent[id(r)]:
             r.note = (r.note + "; " if r.note else "") + f"{absent[id(r)]:g} intervals on contigs the CRAM header lacks (median): not read"
         plan.append(r)
@@ -704,36 +711,42 @@ def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
     Classes share sink intervals (the chr2:32.91 Mb pile-up bin is in the sinks of TEL, rDNA45S and
     eight satellite families), and the engine counts every read of the union of the plan's intervals
     for whichever class it belongs to. An interval one class drops while another keeps it saves no
-    byte and costs that class no read. With CRAM indexes, each trimmed class is trimmed again with the
-    slices the rest of the plan reads priced at nothing: those intervals are kept first, and the class
-    may then drop others (the set is changed only when the plan reads fewer bytes, or as many with a
-    higher expected capture). Then, with or without indexes, every interval a class dropped that
-    adds nothing to what the plan reads (every one of its slices is read anyway, in every index; without
-    indexes, it lies inside the plan's other intervals) is given back, and the class's expected capture
-    is recomputed. Each option's mb_saved is then what trimming it saved of the plan as it is, and the
-    rows' own and cumulative bytes are recomputed."""
+    byte and costs that class no read. The engine fetches the plan's intervals merged where they
+    touch or overlap, so an interval's price in a plan is what its fetch adds to the plan's fetches
+    (cost.CraiIndex.extra): nothing when it lies inside intervals of other options, its own fetch
+    when it stands apart, less when it bridges two runs that decode the same slices. With CRAM
+    indexes, each trimmed class is trimmed again with the intervals that add nothing to the rest of
+    the plan's fetches (in every index) priced at nothing: those are kept first, and the class may
+    then drop others (the set is changed only when the plan reads fewer bytes, or as many with a
+    higher expected capture). Then, with or without indexes, every interval a class dropped that adds
+    nothing to what the plan reads (with indexes: its fetch adds no bytes to the plan's, in every
+    index; without, it lies inside the plan's other intervals) is given back, and the class's expected
+    capture is recomputed. Each option's mb_saved is then what trimming it saved of the plan as it is
+    (the plan with all the option's intervals, less the plan as planned, both priced as fetched), and
+    the rows' own and cumulative bytes are recomputed."""
     notes: list[str] = []
     trimmed = [r for r in plan if r.dropped and r.stats]
     alone = {id(r): set(r.intervals) for r in trimmed}
-    n = len(indexes)
-    keys = {id(r): [ix.keys(r.intervals)[0] for ix in indexes] for r in plan}
 
-    def others(r) -> list[set]:
-        return [set().union(*(keys[id(x)][i] for x in plan if x is not r)) for i in range(n)]
+    def rest_of(r) -> list[tuple[str, int, int]]:
+        return [iv for x in plan if x is not r for iv in x.intervals]
+
+    def adds_nothing(fetches, iv) -> bool:
+        """The interval's fetch adds no bytes to `fetches` (from cost.merge), in every index."""
+        return all(ix.extra(fetches, *iv) <= 0 for ix in indexes)
 
     if indexes:
         for r in trimmed:
-            oth = others(r)
-            heads = [{k[0] for k in o} for o in oth]
-            extra = {iv: [ix.keys([iv])[0] - o for ix, o in zip(indexes, oth)] for iv in r.whole}
-            free = frozenset(iv for iv, ks in extra.items() if not any(ks))
+            rest = rest_of(r)
+            fetches = cost.merge(rest)
+            extra = {iv: [ix.extra(fetches, *iv) for ix in indexes] for iv in r.whole}
+            free = frozenset(iv for iv, b in extra.items() if all(x <= 0 for x in b))
             if not free - set(r.intervals):
                 continue                                   # nothing the class dropped is read anyway: its own trim stands
-            nb = {iv: cost.median([sum(ix.size[k] for k in ks) + sum(ix.head[c] for c in {k[0] for k in ks} - h)
-                                   for ix, ks, h in zip(indexes, extra[iv], heads)]) for iv in r.whole}
+            nb = {iv: cost.median(b) for iv, b in extra.items()}   # what each adds to the rest of the plan: at most its own fetch
 
-            def total(ivs, oth=oth):
-                return cost.median([ix.bytes(o | ix.keys(ivs)[0]) for ix, o in zip(indexes, oth)])
+            def total(ivs, rest=rest):
+                return cost.median([ix.price(rest + list(ivs)) for ix in indexes])
 
             cur = sorted(set(r.intervals) | free)
             cur_exp = _capture_of(r.stats, set(cur), stat)
@@ -742,53 +755,52 @@ def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
                 r.intervals, r.dropped, r.expected, r.order = got[0], got[1], got[2], got[4]
             else:
                 r.intervals, r.dropped, r.expected = cur, len(r.whole) - len(cur), cur_exp
-            keys[id(r)] = [ix.keys(r.intervals)[0] for ix in indexes]
     for r in trimmed:
         kept = set(r.intervals)
         if indexes:
-            union = [set().union(*(keys[id(x)][i] for x in plan)) for i in range(n)]
-            back = [iv for iv in r.whole if iv not in kept and all(ix.keys([iv])[0] <= u for ix, u in zip(indexes, union))]
+            # against the plan before any is given back: intervals that each add nothing add nothing together either
+            fetches = cost.merge([iv for x in plan for iv in x.intervals])
+            back = [iv for iv in r.whole if iv not in kept and adds_nothing(fetches, iv)]
         else:
             index = sinks._index([(c, s, e, "x") for x in plan for c, s, e in x.intervals if c != cost.UNMAPPED])
             back = [iv for iv in r.whole if iv not in kept and sinks._inside(index, "x", *iv)]
         if back:
             r.intervals = sorted(kept | set(back))
             r.dropped, r.expected = len(r.whole) - len(r.intervals), _capture_of(r.stats, set(r.intervals), stat)
-            if indexes:
-                keys[id(r)] = [ix.keys(r.intervals)[0] for ix in indexes]
     for r in trimmed:
         more = sorted(set(r.intervals) - alone[id(r)])
         if indexes and more:
-            oth = others(r)
-            more = [iv for iv in more if all(ix.keys([iv])[0] <= o for ix, o in zip(indexes, oth))]
+            fetches = cost.merge(rest_of(r))
+            more = [iv for iv in more if adds_nothing(fetches, iv)]
         if not more:
             continue
 
-        # name the options that read the slices of their own accord, before any interval was given back, if any do
+        # name the options that read the intervals of their own accord, before any interval was given back, if any do
         by = (_holders(plan, r, more, lambda x: alone[id(x)] & set(x.intervals) if id(x) in alone else x.intervals)
               or _holders(plan, r, more, lambda x: x.intervals))
         r.shared = len(more)
         r.note = (r.note + "; " if r.note else "") + (
-            f"{len(more)} interval(s) its target alone would drop are kept: the plan reads their CRAM slices anyway"
+            f"{len(more)} interval(s) its target alone would drop are kept: the plan's fetches read their CRAM slices anyway"
             f"{' (for ' + ', '.join(by) + ')' if by else ''}, so they cost nothing and add to its capture")
     if not indexes:
         return notes
-    seen = [set() for _ in indexes]
+    seen: list[tuple[str, int, int]] = []
     for r in plan:
-        k = keys[id(r)]
-        r.mb = cost.median([ix.bytes(x) for ix, x in zip(indexes, k)]) / 1e6
-        seen = [s | x for s, x in zip(seen, k)]
-        now = [ix.bytes(s) for ix, s in zip(indexes, seen)]
+        r.mb = cost.median([ix.price(r.intervals) for ix in indexes]) / 1e6
+        seen = seen + r.intervals
+        now = [ix.price(seen) for ix in indexes]
         r.cum_mb, r.cum_pct = cost.median(now) / 1e6, 100 * cost.median([b / ix.total for b, ix in zip(now, indexes)])
+        r.cum_mb_floor = cost.median([ix.price_once(seen) for ix in indexes]) / 1e6
     for r in plan:
         if r.target is not None:
-            r.mb_saved = cost.median([ix.bytes(u | ix.keys(r.whole)[0]) - ix.bytes(u) for ix, u in zip(indexes, seen)]) / 1e6
-    whole = cost.median([ix.bytes(set().union(*(ix.keys(r.whole or r.intervals)[0] for r in plan))) for ix in indexes]) / 1e6
+            r.mb_saved = cost.median([ix.price(seen + r.whole) - ix.price(seen) for ix in indexes]) / 1e6
+    whole = cost.median([ix.price([iv for r in plan for iv in (r.whole or r.intervals)]) for ix in indexes]) / 1e6
     planned = plan[-1].cum_mb
     trims = [r.option.name for r in plan if r.target is not None]
     notes.append(f"capture targets saved {whole - planned:.1f} MB of the plan: {whole:.1f} MB with every option's intervals whole, "
                  f"{planned:.1f} MB as planned (medians). An option's mb_saved is what trimming it saved with the rest of the plan as it "
-                 f"is: slices another option reads are no saving, so the options' savings ({', '.join(trims)}) need not add up to the plan's")
+                 f"is: an interval the plan's other options fetch anyway is no saving, so the options' savings ({', '.join(trims)}) need not "
+                 "add up to the plan's")
     return notes
 
 
@@ -830,12 +842,12 @@ def table_lines(plan: Plan) -> list[str]:
         saved = r.mb_saved
         out.append("\t".join((o.name, o.status, o.tier, o.kind, str(len(r.intervals)) if o.kind != "unmapped" else "*", str(r.dropped),
                               _fmt(bp, "d"), _fmt(r.target, "g"), _fmt(r.expected, ".5f"), _fmt(r.full, ".5f"), _fmt(lost, ".5f"),
-                              _fmt(r.mb, ".1f"), _fmt(saved, ".1f"), _fmt(r.cum_mb, ".1f"), _fmt(r.cum_pct, ".2f"),
+                              _fmt(r.mb, ".1f"), _fmt(saved, ".1f"), _fmt(r.cum_mb, ".1f"), _fmt(r.cum_mb_floor, ".1f"), _fmt(r.cum_pct, ".2f"),
                               {"read": "per read", "byte": "per byte", "read, fewer bytes": "per read (fewer bytes than per byte)"}.get(r.order, "NA"),
                               r.note or ".")))
     for o in plan.scan_only:
         where = " (panel in scan_panels.txt)" if o.panel in plan.scan_panels else ""
-        out.append("\t".join((o.name, o.status, o.tier, o.kind, "0", "0", "0", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA",
+        out.append("\t".join((o.name, o.status, o.tier, o.kind, "0", "0", "0", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA",
                               f"scan only: no sinks learned yet{where}")))
     return out
 
@@ -853,16 +865,22 @@ def write(plan: Plan, prefix: str, menu: Menu, panel_root=None, header: str = ""
     Path(f"{prefix}.panels.txt").write_text("".join(where(p) + "\n" for p in plan.panels))
     Path(f"{prefix}.scan_panels.txt").write_text("".join(where(p) + "\n" for p in plan.scan_panels))
     Path(f"{prefix}.count_flags.txt").write_text("".join(f + "\n" for f in plan.flags))
-    fa = Path(plan.controls_fasta).resolve()
-    base = menu.path.parent.resolve()
-    rel = str(fa.relative_to(base)) if fa.is_relative_to(base) else str(fa)   # under the menu: mapped by --panel-root too
+    # under the menu's directory: a path relative to it, mapped by --panel-root like the panels'. Compared as written first (the
+    # menu's controls are named relative to it, and a symlinked bundle resolves elsewhere), then by their real paths
+    fa, base = Path(plan.controls_fasta), menu.path.parent
+    if not fa.is_relative_to(base):
+        fa, base = fa.resolve(), base.resolve()
+    rel = str(fa.relative_to(base)) if fa.is_relative_to(base) else str(fa)
     Path(f"{prefix}.controls.txt").write_text(where(rel) + "\n")
     with open(f"{prefix}.plan.tsv", "w") as fh:
         fh.write(f"# ngsdose fetchplan: {header}\n")
         if plan.n_index:
-            fh.write(f"# MB = 1e6 bytes of CRAM slices (and their containers' compression headers), median over {plan.n_index} index(es); "
-                     "cum_*: this option and all above it, each slice read once; mb_saved: what the option's capture target saved of the "
-                     "plan, the rest of the plan as it is (slices another option reads are no saving), capture_lost what it cost of its "
+            fh.write(f"# MB = 1e6 bytes of CRAM slices (and their containers' compression headers), median over {plan.n_index} index(es), "
+                     "as `ngs-dose count -m fetch` reads them: one indexed fetch per run of touching or overlapping intervals of the plan, "
+                     "each decoding every slice that overlaps it, so a slice under several runs is decoded once per run; cum_*: this option "
+                     "and all above it; cum_mb_floor: the same with every slice decoded once, the floor a reader that sorted the plan's "
+                     "slices would reach (the engine does not); mb_saved: what the option's capture target saved of the plan, the rest of "
+                     "the plan as it is (an interval the plan's other options fetch anyway is no saving), capture_lost what it cost of its "
                      "expected capture\n")
         if plan.capture_note:
             fh.write(f"# {plan.capture_note}\n")
