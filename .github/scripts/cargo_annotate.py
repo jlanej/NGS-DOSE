@@ -9,6 +9,17 @@ shows up on the pull request at the line it is about. The exit status is cargo's
 import json
 import sys
 
+
+def esc(s):
+    """A workflow command's message."""
+    return str(s).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def prop(s):
+    """A workflow command's property value: ':' and ',' would end it (a title 'clippy::lint' would be cut to 'clippy')."""
+    return esc(s).replace(":", "%3A").replace(",", "%2C")
+
+
 seen = set()
 for line in sys.stdin:
     try:
@@ -29,7 +40,7 @@ for line in sys.stdin:
     if key in seen:                      # the same finding is reported once per target (bin, test)
         continue
     seen.add(key)
-    text = msg["message"].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    text = esc(msg["message"])
     # with -D warnings every finding fails the build, so every finding is an error here
-    print(f"::error file={span['file_name']},line={span['line_start']},endLine={span['line_end']},title={code}::{text}")
+    print(f"::error file={prop(span['file_name'])},line={span['line_start']},endLine={span['line_end']},title={prop(code)}::{text}")
     print(msg.get("rendered") or msg["message"], end="")

@@ -50,6 +50,64 @@ def test_callable_mask_matches_bruteforce():
         assert f[p] == (nf >= 40) and r[p] == (nr >= 40)
 
 
+@pytest.mark.parametrize("U", [20, 57, 100, 119, 120, 121, 140, 148, 149, 150, 151, 199, 448])
+def test_callable_mask_of_a_circular_unit_shorter_than_a_read(U):
+    """A read over a short tandem unit (an alpha monomer is 171 bp) runs round the unit more than
+    once; every position-strand must still count the k-mers of its read, as a modular sum does."""
+    rng = np.random.default_rng(U)
+    k, R = 31, 150
+    has = np.zeros(U, int)
+    has[rng.choice(U, max(1, U // 2), replace=False)] = 1
+    pc = PanelClass("u", "positional", U, True, np.where(has)[0])
+    for min_kmers in (1, 20, 60):
+        f, r = estimate.callable_masks(pc, k, R, min_kmers)
+        nf = np.array([sum(has[(p + j) % U] for j in range(R - k + 1)) for p in range(U)])
+        nr = np.array([sum(has[(p - R + 1 + j) % U] for j in range(R - k + 1)) for p in range(U)])
+        assert (f == (nf >= min_kmers)).all() and (r == (nr >= min_kmers)).all(), (U, min_kmers)
+
+
+@pytest.mark.parametrize("U,L", [(140, 300), (140, 142), (100, 450), (37, 450), (450, 450), (2231, 300)])
+def test_window_gc_of_a_circular_unit_shorter_than_the_window(U, L):
+    rng = np.random.default_rng(U + L)
+    seq = "".join(rng.choice(list("ACGT"), U))
+    fwd, rev = gcmodel.window_gc_counts(seq, L, circular=True)
+    gc = np.array([c in "GC" for c in seq], int)
+    assert (fwd == [sum(gc[(p + j) % U] for j in range(L)) for p in range(U)]).all()
+    assert (rev == [sum(gc[(p - L + 1 + j) % U] for j in range(L)) for p in range(U)]).all()
+
+
+def test_gc_fit_failures_say_why():
+    rng = np.random.default_rng(5)
+    g = np.arange(101) / 100
+    N = np.round(5e6 * np.exp(-0.5 * ((g - 0.41) / 0.06) ** 2))
+    O = rng.poisson(N * 0.12 * np.exp(-((g - 0.5) / 0.25) ** 2)).astype(float)
+    with pytest.raises(ValueError, match="no 1% GC bin holds 2000"):
+        gcmodel.fit_gc_curve(np.minimum(N, 1500), O, 450)
+    dropout = O.copy()
+    dropout[55:] = 0                                   # no ends at all above 55% GC, inside the supported range
+    with pytest.raises(ValueError, match="complete GC dropout"):
+        gcmodel.fit_gc_curve(N, dropout, 450)
+    # At low depth an edge bin of the support can simply get no end, and its fitted rate then drifts
+    # toward zero for ever; no class window sits there, so the sample is not refused. HG00632's
+    # L=150 controls thinned to 0.65% of their ends (about 0.2x): bins 3% and 5% hold none.
+    n = np.array([471, 1571, 1040, 2934, 1223, 2897, 1395, 3833, 2253, 4991, 3128, 7950, 4235, 9352, 5477, 13538,
+        9110, 24111, 16444, 48951, 35677, 102284, 70982, 196582, 134876, 350297, 221032, 547158, 325833, 750381,
+        420978, 915501, 486067, 1021267, 531383, 1078754, 542096, 1081023, 529051, 1015805, 486216, 936820, 450497,
+        852711, 402550, 759492, 356473, 675975, 320964, 602614, 280684, 520083, 237493, 422194, 186718, 328955,
+        143879, 252990, 110680, 192542, 81952, 141567, 61613, 107887, 44888, 79573, 34895, 60456, 28410, 56074,
+        26591, 47671, 23830, 47952, 24130, 47616, 22730, 42535, 18445, 29915, 12825, 20230, 7488, 11010, 3821, 5387,
+        1608, 2224, 770, 688, 134, 62, 0, 0, 0, 0, 0, 0, 0, 0, 0], float)
+    o = np.array([0, 0, 1, 0, 0, 0, 0, 4, 1, 7, 4, 6, 3, 5, 3, 12, 11, 25, 8, 45, 34, 91, 63, 131, 103, 270, 143,
+        413, 238, 553, 292, 683, 379, 730, 394, 813, 395, 803, 390, 738, 354, 634, 340, 630, 297, 573, 287, 472, 200,
+        484, 218, 372, 192, 328, 155, 275, 123, 189, 96, 132, 86, 135, 48, 111, 42, 59, 28, 47, 28, 63, 38, 39, 31,
+        36, 22, 41, 26, 42, 15, 25, 18, 22, 4, 4, 3, 4, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], float)
+    c = gcmodel.fit_gc_curve(n, o, 150)
+    assert c.lo <= 3 and np.isfinite(c.rate[20:80]).all()
+    # an ordinary fit is unchanged by the step control: the full Newton steps already lower the deviance
+    c = gcmodel.fit_gc_curve(N, O, 450)
+    assert np.isfinite(c.rate[c.lo:c.hi + 1]).all() and c.dispersion < 2
+
+
 def test_reliability_algebra():
     rng = np.random.default_rng(2)
     vals, ped, pop = selftest._trio_cohort(rng, 6000, 18.0, 12.0, shared=0.0)

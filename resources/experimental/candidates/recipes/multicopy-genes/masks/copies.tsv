@@ -1,0 +1,225 @@
+class	assembly	contig	start	end	unit_start	unit_end	strand	identity	rule
+KIV2	GRCh38	chr6	160611721	160617276	0	5546	+	0.9845	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	GRCh38	chr6	160617276	160622822	0	5546	+	1.0000	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	GRCh38	chr6	160622822	160628366	0	5546	+	0.9986	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	GRCh38	chr6	160628366	160633912	0	5546	+	0.9973	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	GRCh38	chr6	160633912	160639459	0	5546	+	0.9791	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	GRCh38	chr6	160639459	160645006	0	5546	+	0.9982	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161864703	161870250	0	5546	+	0.9784	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161870250	161875797	0	5546	+	0.9784	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161875797	161881354	0	5546	+	0.9778	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161881354	161886909	0	5546	+	0.9782	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161886909	161892464	0	5546	+	0.9780	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161892464	161898017	0	5546	+	0.9778	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161898017	161903572	0	5546	+	0.9793	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161903572	161909124	0	5546	+	0.9986	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161909124	161914668	0	5546	+	0.9984	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161914668	161919178	0	4509	+	0.9741	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161918410	161920215	3739	5546	+	0.9972	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161920215	161925762	0	5546	+	0.9980	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161925762	161931310	0	5546	+	0.9987	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161931310	161936858	0	5546	+	0.9989	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161936858	161942404	0	5546	+	0.9986	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161942404	161947948	0	5546	+	0.9995	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161947948	161953493	0	5546	+	0.9973	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161953493	161959049	0	5546	+	0.9978	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161959049	161964603	0	5546	+	0.9982	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161964603	161970161	0	5546	+	0.9975	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161970161	161975709	0	5546	+	0.9982	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161975709	161981255	0	5546	+	0.9987	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161981255	161986799	0	5546	+	0.9984	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+KIV2	CHM13	chr6	161986799	161992342	0	5546	+	0.9978	KIV-2 units 97.8-100%; KIV-3 91%, KIV-1 96% (its first 1.75 kb identical to KIV-2) and KIV-4 84% stay background
+C4	GRCh38	chr6	31982056	32002681	0	20625	+	1.0000	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6	31982056	32002681	0	20625	+	1.0000	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6	32000000	32002681	17944	20625	+	1.0000	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6	32014794	32035418	0	20625	+	0.9991	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6	32014794	32035418	0	20625	+	0.9991	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000251v2_alt	3459483	3473740	0	20625	+	0.9980	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000251v2_alt	3459483	3473740	0	20625	+	0.9980	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3229829	3250455	0	20625	+	0.9989	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3229829	3250455	0	20625	+	0.9989	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3262569	3265204	0	2635	+	0.9985	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3262569	3265204	0	2635	+	0.9985	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3265197	3271263	8995	15062	+	0.9970	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000252v2_alt	3270647	3276826	14445	20625	+	0.9984	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000254v2_alt	3356830	3377455	0	20625	+	0.9994	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000254v2_alt	3356830	3377455	0	20625	+	0.9994	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000255v2_alt	3238027	3258653	0	20625	+	0.9995	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000255v2_alt	3238027	3258653	0	20625	+	0.9995	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000256v2_alt	3283245	3303870	0	20625	+	0.9990	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000256v2_alt	3283245	3303870	0	20625	+	0.9990	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000256v2_alt	3315983	3336608	0	20625	+	0.9988	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	GRCh38	chr6_GL000256v2_alt	3315983	3336608	0	20625	+	0.9988	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	CHM13	chr6	31835262	31855887	0	20625	+	0.9995	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	CHM13	chr6	31835262	31855887	0	20625	+	0.9995	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	CHM13	chr6	31868000	31888625	0	20625	+	0.9988	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+C4	CHM13	chr6	31868000	31888625	0	20625	+	0.9988	C4A/C4B long and short copies 99.8-100%; HERV-K elements elsewhere 85-89%
+HERVC4	GRCh38	chr6	31982056	32002681	0	20625	+	1.0000	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6	31982056	32002681	0	20625	+	1.0000	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6	32000000	32002681	17944	20625	+	1.0000	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6	32014794	32035418	0	20625	+	0.9991	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6	32014794	32035418	0	20625	+	0.9991	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000251v2_alt	3459483	3473740	0	20625	+	0.9980	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000251v2_alt	3459483	3473740	0	20625	+	0.9980	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3229829	3250455	0	20625	+	0.9989	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3229829	3250455	0	20625	+	0.9989	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3262569	3265204	0	2635	+	0.9985	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3262569	3265204	0	2635	+	0.9985	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3265197	3271263	8995	15062	+	0.9970	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000252v2_alt	3270647	3276826	14445	20625	+	0.9984	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000254v2_alt	3356830	3377455	0	20625	+	0.9994	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000254v2_alt	3356830	3377455	0	20625	+	0.9994	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000255v2_alt	3238027	3258653	0	20625	+	0.9995	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000255v2_alt	3238027	3258653	0	20625	+	0.9995	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000256v2_alt	3283245	3303870	0	20625	+	0.9990	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000256v2_alt	3283245	3303870	0	20625	+	0.9990	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000256v2_alt	3315983	3336608	0	20625	+	0.9988	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	GRCh38	chr6_GL000256v2_alt	3315983	3336608	0	20625	+	0.9988	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	CHM13	chr6	31835262	31855887	0	20625	+	0.9995	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	CHM13	chr6	31835262	31855887	0	20625	+	0.9995	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	CHM13	chr6	31868000	31888625	0	20625	+	0.9988	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+HERVC4	CHM13	chr6	31868000	31888625	0	20625	+	0.9988	the C4 gene copies (the insertion sits in the long ones); every other HERV-K stays background
+CYP21A2	GRCh38	chr6	32038414	32041642	0	3228	+	1.0000	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	GRCh38	chr6_GL000251v2_alt	3476736	3479964	0	3228	+	0.9985	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	GRCh38	chr6_GL000252v2_alt	3279822	3283050	0	3228	+	0.9963	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	GRCh38	chr6_GL000254v2_alt	3380451	3383675	0	3228	+	0.9969	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	GRCh38	chr6_GL000255v2_alt	3261649	3264877	0	3228	+	0.9981	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	GRCh38	chr6_GL000256v2_alt	3339604	3342829	0	3228	+	0.9969	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+CYP21A2	CHM13	chr6	31891621	31894846	0	3228	+	0.9963	CYP21A2 copies 99.6-100%; CYP21A1P 98.1%
+AMY1	GRCh38	chr1	103655518	103664551	0	9033	+	1.0000	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	GRCh38	chr1	103687417	103696451	0	9033	-	0.9994	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	GRCh38	chr1	103749656	103758689	0	9033	+	0.9990	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103504384	103513418	0	9033	+	0.9998	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103536283	103545317	0	9033	-	0.9996	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103598527	103607559	0	9033	+	0.9993	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103630429	103639461	0	9033	-	0.9993	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103692661	103701692	0	9033	+	0.9992	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103724561	103733593	0	9033	-	0.9988	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY1	CHM13	chr1	103786795	103795828	0	9033	+	0.9990	3 copies GRCh38, 7 CHM13, 99.9%; AMY2A/2B 92%
+AMY2B	GRCh38	chr1	103554643	103579534	0	24891	+	1.0000	one copy each
+AMY2B	CHM13	chr1	103403586	103428477	0	24891	+	0.9999	one copy each
+AMY2A	GRCh38	chr1	103617426	103625780	0	8354	+	1.0000	the full gene only; the 6.4-kb AMY2Ap partial copies (99.7%) stay background
+AMY2A	CHM13	chr1	103466372	103474647	0	8354	+	0.9998	the full gene only; the 6.4-kb AMY2Ap partial copies (99.7%) stay background
+SMN	GRCh38	chr5	70049522	70077592	0	28072	+	0.9991	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	GRCh38	chr5	70924940	70953012	0	28072	+	1.0000	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	GRCh38	chr5_GL339449v2_alt	457778	485846	0	28072	-	0.9993	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	GRCh38	chr5_KI270897v1_alt	274861	302933	0	28072	+	0.9986	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	GRCh38	chr5_KI270897v1_alt	473375	501444	0	28072	+	0.9993	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	CHM13	chr5	70809746	70837821	0	28072	-	0.9982	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN	CHM13	chr5	71381728	71409801	0	28072	+	0.9988	SMN1, SMN2, three alt copies, two CHM13 copies, all 99.8-100%
+SMN1	GRCh38	chr5	70924940	70953012	0	28072	+	1.0000	SMN1-like copies only (SMN1 allele at c.840): SMN1, chr5_GL339449v2_alt, chr5_KI270897v1_alt 473-501 kb, CHM13 chr5:71.38 Mb
+SMN1	GRCh38	chr5_GL339449v2_alt	457778	485846	0	28072	-	0.9993	SMN1-like copies only (SMN1 allele at c.840): SMN1, chr5_GL339449v2_alt, chr5_KI270897v1_alt 473-501 kb, CHM13 chr5:71.38 Mb
+SMN1	GRCh38	chr5_KI270897v1_alt	473375	501444	0	28072	+	0.9993	SMN1-like copies only (SMN1 allele at c.840): SMN1, chr5_GL339449v2_alt, chr5_KI270897v1_alt 473-501 kb, CHM13 chr5:71.38 Mb
+SMN1	CHM13	chr5	71381728	71409801	0	28072	+	0.9988	SMN1-like copies only (SMN1 allele at c.840): SMN1, chr5_GL339449v2_alt, chr5_KI270897v1_alt 473-501 kb, CHM13 chr5:71.38 Mb
+RHD	GRCh38	chr1	25272485	25330445	0	57960	+	1.0000	RHD 99.9-100%; RHCE 98.2% and the upstream Rhesus box stay background
+RHD	CHM13	chr1	25108756	25166740	0	57960	+	0.9991	RHD 99.9-100%; RHCE 98.2% and the upstream Rhesus box stay background
+GSTM1	GRCh38	chr1	109687816	109693745	0	5929	+	1.0000	GRCh38 only (CHM13 carries the deletion); GSTM2/4/5 below 95%
+GSTT1	GRCh38	chr22_KI270879v1_alt	270307	278486	0	8179	+	1.0000	GRCh38 chr22_KI270879v1_alt and CHM13 chr22
+GSTT1	CHM13	chr22	24441299	24449468	0	8179	+	0.9991	GRCh38 chr22_KI270879v1_alt and CHM13 chr22
+UGT2B17	GRCh38	chr4	68537172	68576322	0	39150	+	1.0000	one copy each; UGT2B15 below 97%
+UGT2B17	CHM13	chr4	71978247	72017397	0	39150	+	0.9980	one copy each; UGT2B15 below 97%
+UGT2B17	CHM13	chr4	72000000	72017397	21755	39150	+	0.9981	one copy each; UGT2B15 below 97%
+LCE3BC	GRCh38	chr1	152583066	152615264	0	32198	+	1.0000	one copy each
+LCE3BC	CHM13	chr1	151719619	151751818	0	32198	+	1.0000	one copy each
+APOBEC3B	GRCh38	chr22	38961989	38992269	0	30280	+	1.0000	one copy each; APOBEC3A-side homology 96.6%
+APOBEC3B	CHM13	chr22	39432381	39462690	0	30280	+	0.9985	one copy each; APOBEC3A-side homology 96.6%
+HPR	GRCh38	chr16	72063225	72077245	0	14020	+	1.0000	one copy each; HP 94%
+HPR	CHM13	chr16	77879539	77893559	0	14020	+	0.9989	one copy each; HP 94%
+CCL3L	GRCh38	chr17	36190000	36200000	0	10000	+	1.0000	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	GRCh38	chr17	36190000	36216000	0	26000	+	1.0000	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	GRCh38	chr17_KI270857v1_alt	424904	450904	0	26000	+	1.0000	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	GRCh38	chr17_KI270909v1_alt	144124	170189	0	26000	+	0.9988	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	GRCh38	chr17_KI270909v1_alt	232188	238115	0	5938	+	0.9960	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	GRCh38	chr17_KI270909v1_alt	245701	271756	0	26000	+	0.9972	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	CHM13	chr17	37137885	37163935	0	26000	+	0.9970	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	CHM13	chr17	37349854	37355795	0	5938	+	0.9961	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+CCL3L	CHM13	chr17	37363395	37389416	0	26000	+	0.9971	primary, KI270857 (1), KI270909 (2), CHM13 (2 + a 5.9-kb partial); the CCL3/CCL4 block 94.5%
+ORM1	GRCh38	chr9	114322097	114327479	0	5382	+	1.0000	one copy each; ORM2 below 97%
+ORM1	CHM13	chr9	126521291	126526675	0	5382	+	0.9981	one copy each; ORM2 below 97%
+DEFB	GRCh38	chr8	7411574	7516017	0	95000	-	0.9959	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	GRCh38	chr8	7805000	7900000	0	95000	+	1.0000	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	GRCh38	chr8_KI270813v1_alt	94630	199120	0	95000	-	0.9952	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	CHM13	chr8	7140560	7235577	0	95000	-	0.9960	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	CHM13	chr8	7200000	7235577	0	35556	-	0.9957	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	CHM13	chr8	11950971	12045971	0	95000	+	0.9961	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	CHM13	chr8	12000000	12045971	48992	95000	+	0.9956	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+DEFB	CHM13	chr8	12491516	12586558	0	95000	+	0.9951	REPP, REPD, chr8_KI270813v1_alt, three CHM13 copies, 99.5-100%
+FCGR3	GRCh38	chr1	161541758	161549685	0	7848	+	0.9808	FCGR3B and FCGR3A (98.1%); CHM13 FCGR3A + two FCGR3B
+FCGR3	GRCh38	chr1	161623195	161631047	0	7852	+	1.0000	FCGR3B and FCGR3A (98.1%); CHM13 FCGR3A + two FCGR3B
+FCGR3	CHM13	chr1	160804384	160812311	0	7848	+	0.9804	FCGR3B and FCGR3A (98.1%); CHM13 FCGR3A + two FCGR3B
+FCGR3	CHM13	chr1	160885752	160893604	0	7852	+	0.9933	FCGR3B and FCGR3A (98.1%); CHM13 FCGR3A + two FCGR3B
+FCGR3	CHM13	chr1	160967540	160975391	0	7852	+	0.9943	FCGR3B and FCGR3A (98.1%); CHM13 FCGR3A + two FCGR3B
+DEFA1A3	GRCh38	chr8	6976262	6995380	0	19118	+	1.0000	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+DEFA1A3	GRCh38	chr8	6995379	7014483	0	19118	+	0.9988	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+DEFA1A3	GRCh38	chr8	7014482	7022209	0	7748	+	0.9842	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+DEFA1A3	CHM13	chr8	6730922	6750034	0	19118	+	0.9896	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+DEFA1A3	CHM13	chr8	6750033	6769151	0	19118	+	0.9919	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+DEFA1A3	CHM13	chr8	6769150	6776880	0	7748	+	0.9844	2 full units + the 7.7-kb DEFA3 partial unit in each assembly
+NPY4R	GRCh38	chr10	46396228	46514258	0	118030	+	1.0000	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	GRCh38	chr10	46400000	46514258	3772	118030	+	1.0000	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	GRCh38	chr10	47458988	47463559	0	4079	-	0.9902	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	GRCh38	chr10	47870368	47988907	0	118030	-	0.9961	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	CHM13	chr10	47282270	47400000	0	117698	+	0.9991	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	CHM13	chr10	47282270	47400333	0	118030	+	0.9991	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	CHM13	chr10	48350289	48354860	0	4079	-	0.9902	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	CHM13	chr10	48719224	48837812	0	118030	-	0.9960	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+NPY4R	CHM13	chr10	48800000	48837812	0	37285	-	0.9936	both SD copies and the 4-kb 99.0% partial at chr10:47.46 Mb (GRCh38) / 48.35 Mb (CHM13)
+SULT1A	GRCh38	chr16	28590812	28615634	0	24822	+	1.0000	one copy each
+SULT1A	CHM13	chr16	28780063	28804882	0	24822	-	0.9952	one copy each
+SULT1A	CHM13	chr16	28800000	28804882	0	4879	-	0.9975	one copy each
+RASA4	GRCh38	chr7	102481214	102580391	0	99177	+	1.0000	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	GRCh38	chr7	102580391	102600000	0	19625	+	0.9977	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	GRCh38	chr7	102580391	102679452	0	99177	+	0.9973	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	GRCh38	chr7	102679453	102691171	0	14883	+	0.9957	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	CHM13	chr7	103798835	103897885	0	99175	+	0.9970	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	CHM13	chr7	103897888	103991268	0	99175	+	0.9971	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	CHM13	chr7	103991276	104006136	0	14883	+	0.9970	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+RASA4	CHM13	chr7	104000000	104006136	8722	14883	+	0.9963	the two tandem units and the array-contiguous partial third unit; the 44-Mb paralog (98.4%), SPDYE6 (99.4%) and the SPDYE family stay background
+NOTCH2NL	GRCh38	chr1	119989247	120069647	272	80157	+	0.9917	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	GRCh38	chr1	120000017	120069647	10587	80157	+	0.9918	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	GRCh38	chr1	120723927	120801498	0	80157	-	0.9920	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	GRCh38	chr1	146148864	146229021	0	80157	+	1.0000	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	GRCh38	chr1	148599806	148679763	0	80157	+	0.9977	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	GRCh38	chr1	149390601	149471833	0	80157	-	0.9943	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	CHM13	chr1	120002516	120082908	272	80157	+	0.9917	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	CHM13	chr1	120737146	120814741	0	80157	-	0.9920	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	CHM13	chr1	145265707	145345897	0	80157	+	0.9990	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	CHM13	chr1	146108524	146188727	0	80157	-	0.9980	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+NOTCH2NL	CHM13	chr1	148519494	148600715	0	80157	-	0.9943	NOTCH2NLA/B/C/R and the NOTCH2 5' region, 99.2-100%
+TBC1D3	GRCh38	chr17	36165682	36176636	0	10954	+	1.0000	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	36253641	36264571	0	10954	+	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	36323825	36334756	0	10954	-	0.9946	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	36377533	36388481	0	10954	+	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	36428614	36439567	0	10954	+	0.9938	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	37924413	37935368	0	10954	-	0.9937	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	37978157	37989106	0	10954	+	0.9940	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	38003974	38014905	0	10954	-	0.9941	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	38057695	38068652	0	10954	+	0.9937	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	38127909	38138865	0	10954	-	0.9936	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17	38181661	38192601	0	10954	+	0.9934	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	400590	411524	0	10954	+	0.9951	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	488545	499475	0	10954	+	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	558729	569660	0	10954	-	0.9946	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	612437	623385	0	10954	+	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	663518	674471	0	10954	+	0.9938	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	2163023	2173977	0	10954	-	0.9946	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270857v1_alt	2216778	2227732	0	10954	+	0.9944	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270909v1_alt	119785	130739	0	10954	+	0.9965	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270909v1_alt	207822	218775	0	10954	+	0.9949	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	GRCh38	chr17_KI270909v1_alt	309384	320314	0	10954	+	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	37113574	37124508	0	10954	+	0.9947	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	37201563	37212492	0	10954	+	0.9936	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	37271764	37282716	0	10954	-	0.9955	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	37325495	37336447	0	10954	+	0.9950	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	37427058	37438007	0	10954	+	0.9957	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	38911393	38922348	0	10954	-	0.9941	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	38965108	38976062	0	10954	+	0.9941	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	38990973	39001926	0	10954	-	0.9942	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+TBC1D3	CHM13	chr17	39044725	39055671	0	10954	+	0.9941	17q12 TBC1D3 paralogs 99.3-99.7% (primary, KI270857, KI270909); 17q23 TBC1D3P1/P2 98% and a 97.3% partial stay background
+HBA	GRCh38	chr16	171826	173726	0	1900	+	1.0000	HBA2 and HBA1 blocks (98-99%); HBAP1 (the 1.4-kb 95% hit) and HBM/HBQ1 stay background
+HBA	GRCh38	chr16	175809	177537	179	1899	+	0.9843	HBA2 and HBA1 blocks (98-99%); HBAP1 (the 1.4-kb 95% hit) and HBM/HBQ1 stay background
+HBA	CHM13	chr16	165867	167767	0	1900	+	0.9968	HBA2 and HBA1 blocks (98-99%); HBAP1 (the 1.4-kb 95% hit) and HBM/HBQ1 stay background
+HBA	CHM13	chr16	169851	171579	179	1899	+	0.9837	HBA2 and HBA1 blocks (98-99%); HBAP1 (the 1.4-kb 95% hit) and HBM/HBQ1 stay background
+HPdup	GRCh38	chr16	72056410	72058130	0	1720	+	1.0000	both copies in GRCh38 (Hp2), one in CHM13 (Hp1); HPR stays background
+HPdup	GRCh38	chr16	72058134	72059845	0	1720	+	0.9790	both copies in GRCh38 (Hp2), one in CHM13 (Hp1); HPR stays background
+HPdup	CHM13	chr16	77874439	77876159	0	1720	+	0.9930	both copies in GRCh38 (Hp2), one in CHM13 (Hp1); HPR stays background

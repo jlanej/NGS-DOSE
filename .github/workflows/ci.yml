@@ -33,6 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cargo.toml and ngsdose/__init__.py agree, so that a release tag can be cut from any green commit
+      - name: One version everywhere
+        if: matrix.lint
+        run: bash .github/scripts/check_version.sh
+
       - name: System packages (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -74,7 +79,7 @@ jobs:
       # defects only (undefined and unused names, syntax, bugbear); configured in pyproject.toml
       - name: Python - lints
         if: matrix.lint
-        run: ruff check ngsdose tests resources/build
+        run: ruff check ngsdose tests resources/build .github/scripts
 
       # data-free simulation of the estimator, cohort calibration and trio statistics
       - name: Model self-test

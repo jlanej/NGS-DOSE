@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Core k-mers of the distal junction: present exactly once in each of the five CHM13 acrocentric
-distal junctions and nowhere else in CHM13.
+"""Core k-mers of the distal junction: 5 copies in the five CHM13 acrocentric distal junctions
+together (1 in the chr21 unit, 4 among the other four DJs) and none elsewhere in CHM13.
 
 Inputs are two `ngs-dose panel --report` tables for the chr21 DJ used as the unit:
   report_a: background CHM13 with only the chr21 DJ masked  -> occurrences elsewhere, other DJs included
   report_b: background CHM13 with all five DJs masked       -> occurrences outside any DJ
-A unit k-mer is core if it occurs once in the unit, 4 times in (a) and 0 times in (b).
+A unit k-mer is core if it occurs once in the unit, 4 times in (a) and 0 times in (b). The rule
+tests the total over the other four DJs, not one copy in each: of the 169,808 DJ k-mers of the
+GRCh38-v1 panel, 778 (0.46%, clustered in about 58 1-kb stretches of the unit) are split unevenly
+among the five CHM13 DJs, e.g. (0,1,1,1,2); their dosage follows DJ-specific duplications and
+deletions. The expected diploid 10 still holds for CHM13 in aggregate.
 Output: BED of k-mer start positions (unit coordinates), merged into intervals.
 """
 import gzip

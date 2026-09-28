@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -33,8 +34,8 @@ def rows_of(path):
 def cohort(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("cohort")
     names = [f"S{i:03d}" for i in range(3 * N_TRIOS)]
-    counts = []
-    for i, s in enumerate(names):
+
+    def count(i, s):                                     # each sample has its own seed: the order they run in changes nothing
         bam = tmp / f"{s}.bam"
         subprocess.run(["samtools", "view", "-b", "-s", f"{i + 1}.6", "-o", str(bam), str(BAM)], check=True)
         subprocess.run(["samtools", "index", "-c", str(bam)], check=True)
@@ -42,7 +43,9 @@ def cohort(tmp_path_factory):
         subprocess.run([str(BIN), "count", "-m", "fetch", "-i", str(bam), "-p", str(BUNDLE / "panel.k31.tsv.gz"), "-c", str(BUNDLE / "controls.fa.gz"),
                         "--sinks", str(BUNDLE / "sinks.bed"), "-s", s, "-@", "2", "-o", str(out)], check=True, capture_output=True)
         bam.unlink()
-        counts.append(str(out))
+        return str(out)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        counts = list(pool.map(count, range(len(names)), names))
     # 1000 Genomes style pedigree (child, father, mother in turn) and NGS-PCA style PCs (its sample-name suffix included)
     ped = tmp / "pedigree.txt"
     lines = ["FamilyID SampleID FatherID MotherID Sex Population Superpopulation"]
@@ -115,11 +118,10 @@ def test_nothing_is_regressed_out_when_there_is_nothing_but_noise(cohort):
     nothing, and the sweep - cross-validated error of the known truths, reliability of the
     classes, for every number of PCs - recommends none either."""
     rows = rows_of(cohort["tmp"] / "cohort.tsv")
-    assert "Marchenko-Pastur edge" in cohort["cohort_log"] and {r["ctrlPC_mp"] for r in rows} <= {"0", "1"}
+    assert "Marchenko-Pastur edge" in cohort["cohort_log"] and {r["ctrlPC_mp"] for r in rows} == {"0"}
     adj = rows_of(cohort["tmp"] / "adj_default.tsv")
-    if rows[0]["ctrlPC_mp"] == "0":
-        assert "regressing out 0 PCs" in cohort["default_log"]
-        assert all(abs(float(r["rDNA45S.cn.adj"]) - float(r["rDNA45S.cn"])) < 1e-3 for r in adj)
+    assert "regressing out 0 PCs" in cohort["default_log"]
+    assert all(abs(float(r["rDNA45S.cn.adj"]) - float(r["rDNA45S.cn"])) < 1e-3 for r in adj)
     sweep = rows_of(cohort["tmp"] / "sweep.tsv")
     assert {r["column"] for r in sweep} >= {"truth.auto", "truth.chrX", "DJ.cn", "rDNA45S.cn"}
     auto = sorted((int(r["n_pc"]), float(r["sd_log_robust"])) for r in sweep if r["column"] == "truth.auto")

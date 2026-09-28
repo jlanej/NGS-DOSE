@@ -109,6 +109,22 @@ pub fn string_to_kmer(s: &str) -> Option<u64> {
     Some(v)
 }
 
+/// Reverse complement of a 2-bit packed k-mer.
+pub fn revcomp_kmer(v: u64, k: usize) -> u64 {
+    debug_assert!((1..=32).contains(&k));
+    // complement, reverse the 2-bit groups within the u64, then drop the unused low bits
+    let mut x = !v;
+    x = ((x >> 2) & 0x3333_3333_3333_3333) | ((x & 0x3333_3333_3333_3333) << 2);
+    x = ((x >> 4) & 0x0F0F_0F0F_0F0F_0F0F) | ((x & 0x0F0F_0F0F_0F0F_0F0F) << 4);
+    x = x.swap_bytes();
+    x >> (64 - 2 * k)
+}
+
+/// The canonical form of a packed k-mer: the smaller of it and its reverse complement.
+pub fn canonical(v: u64, k: usize) -> u64 {
+    v.min(revcomp_kmer(v, k))
+}
+
 #[cfg(test)]
 pub fn revcomp_ascii(seq: &[u8]) -> Vec<u8> {
     seq.iter()
@@ -152,6 +168,20 @@ mod tests {
         assert_eq!(kmer_to_string(string_to_kmer(s).unwrap(), 32), s);
         let it: Vec<Kmer> = KmerIter::new(&encode_ascii(s.as_bytes()), 32).collect();
         assert_eq!(it.len(), 1);
+    }
+
+    #[test]
+    fn packed_revcomp_matches_the_ascii_one() {
+        let s = b"ACGTTGCATGCCGATAGCTAGCTAGGATCCGAT";
+        for k in [1, 5, 11, 31, 32] {
+            let f = std::str::from_utf8(&s[..k]).unwrap();
+            let r = String::from_utf8(revcomp_ascii(&s[..k])).unwrap();
+            let (fv, rv) = (string_to_kmer(f).unwrap(), string_to_kmer(&r).unwrap());
+            assert_eq!(revcomp_kmer(fv, k), rv, "k={}", k);
+            assert_eq!(canonical(fv, k), canonical(rv, k));
+            let it = KmerIter::new(&encode_ascii(&s[..k]), k).next().unwrap();
+            assert_eq!(it.canon, canonical(fv, k));
+        }
     }
 
     #[test]

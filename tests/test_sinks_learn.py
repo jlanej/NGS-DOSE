@@ -1,8 +1,13 @@
 """`ngsdose sinks`: positional classes always get sinks; a compositional class only when asked for
 (the telomeric repeat, which the aligner concentrates), on its own coarser grid, clipped to the contig."""
+import gzip
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
+
+import pytest
 
 from ngsdose import sinks
 
@@ -29,3 +34,157 @@ def test_a_compositional_class_gets_sinks_only_when_named(tmp_path):
     f.write_text(json.dumps(scans[0]))
     out = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(f), "--classes", "TEL"], check=True, capture_output=True, text=True)
     assert "TEL" in out.stdout and "[sinks] TEL: 2 intervals" in out.stderr
+
+
+def test_a_bin_counts_as_captured_only_when_all_of_it_is_inside():
+    """[start, min(start + bin width, contig length)] must lie inside the class's (merged) intervals:
+    the last bin of a contig ends at the contig's end, and a bin that only begins inside a sink is missed."""
+    s = scan("a", [(990_000, 10), (500_000, 20), (300_000, 40), (0, 80)], [], length=995_000)
+    bed = [("c1", 985_000, 995_000, "TEL"), ("c1", 495_000, 505_000, "TEL"), ("c1", 305_000, 310_000, "TEL"), ("c1", 310_000, 312_000, ""),
+           ("c1", 0, 4_000, "TEL"), ("c1", 4_000, 10_000, "TEL")]
+    # 990,000: clipped at 995,000, inside; 500,000: runs past 505,000; 300,000: starts before the sink;
+    # 0: inside two touching intervals, which merge
+    assert sinks.capture(s, bed)["TEL"] == (150, 90)
+
+
+def test_learn_refuses_scans_of_another_reference_or_panel_and_names_it():
+    a = scan("a", [], [(100_000, 1000)])
+    b = scan("b", [], [(100_000, 900)], length=2_000_000)
+    for pool in ([a, b], [b, a]):
+        with pytest.raises(ValueError, match="different references"):
+            sinks.learn(pool)
+    p1, p2, p3 = dict(a, panel_sha256=["x"]), dict(scan("c", [], [(100_000, 900)]), panel_sha256=["x", "t"]), dict(a, sample="d", panel_sha256=["y"])
+    assert sinks.learn([p1, p2])[0]                                 # a scan with an extra panel: the shared one is the same
+    with pytest.raises(ValueError, match="different panel files"):
+        sinks.learn([p1, p3])
+    assert sinks.learn([p1, p3], allow_mixed_panels=True)[0]
+    far = scan("e", [], [(1_000_500, 1000)])                        # a placement beyond the contig's end
+    with pytest.raises(ValueError, match="beyond the contig's end"):
+        sinks.learn([far])
+
+
+def test_a_class_name_no_scan_has_is_an_error(tmp_path):
+    scans = [scan("a", [(500_000, 3000)], [(100_000, 1000)])]
+    with pytest.raises(ValueError, match="no scan has a class TELL"):
+        sinks.learn(scans, classes=["TELL"])
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps(scans[0]))
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(f), "--classes", "TELL"], capture_output=True, text=True)
+    assert r.returncode != 0 and "TELL" in r.stderr and "Traceback" not in r.stderr and not r.stdout
+
+
+def test_learn_reads_each_file_once_per_pass_and_gives_the_same_answer(tmp_path):
+    scans = [scan("a", [(990_000, 5000), (500_000, 3000)], [(100_000, 1000)]), scan("b", [(990_000, 4000)], [(100_000, 900), (400_000, 500)])]
+    paths = []
+    for s in scans:
+        paths.append(tmp_path / f"{s['sample']}.json.gz")
+        with gzip.open(paths[-1], "wt") as fh:
+            json.dump(s, fh)
+    want = sinks.learn(scans, classes=["TEL"])
+    assert sinks.learn(paths, classes=["TEL"]) == sinks.learn(iter(scans), classes=["TEL"]) == want
+
+
+def test_evaluate_reads_bed_files_as_the_engine_does_and_refuses_a_fetch(tmp_path):
+    s = scan("a", [(990_000, 5000), (500_000, 3000)], [(100_000, 1000)])
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps(s))
+    bed = tmp_path / "s.bed"
+    bed.write_text("track name=sinks\n# learned\n\nc1\t99000\t101000\tunit\nc1\t989000\t1000000\n")   # 3 columns: every class
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(f), "--evaluate", str(bed)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = {l.split("\t")[1]: l.split("\t") for l in r.stdout.splitlines()[1:]}
+    assert out["unit"][2:5] == ["1000", "1000", "1.00000"] and out["TEL"][2:5] == ["8000", "5000", "0.62500"]
+    (tmp_path / "f.json").write_text(json.dumps(dict(s, mode="fetch")))
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(tmp_path / "f.json"), "--evaluate", str(bed)], capture_output=True, text=True)
+    assert r.returncode != 0 and "fetch-mode counts" in r.stderr and r.stdout.strip() == "sample\tclass\tscan_reads\tcaptured\tfraction\tunmapped"
+    bad = tmp_path / "bad.bed"
+    bad.write_text("c1\t5\n")
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", str(f), "--evaluate", str(bad)], capture_output=True, text=True)
+    assert r.returncode != 0 and "bad.bed:1: expected at least 3" in r.stderr and "Traceback" not in r.stderr
+
+
+BUNDLE = Path(__file__).resolve().parents[1] / "resources" / "GRCh38"
+BIN = Path(os.environ.get("NGSDOSE_BIN", BUNDLE.parents[1] / "target" / "release" / "ngs-dose"))
+
+
+@pytest.mark.parametrize("head, ok", [("track name=s\n# c\n\n", True), ("browser position chr1:1-100\n", False),
+                                      ("   \n", False), ("chr1\t 5\t10\tDJ\n", False)])
+def test_read_bed_accepts_what_the_engine_accepts(tmp_path, head, ok):
+    bed = tmp_path / "s.bed"
+    bed.write_text(head + (BUNDLE / "sinks.bed").read_text())
+    if ok:
+        assert len(sinks.read_bed(bed)) == len(sinks.read_bed(BUNDLE / "sinks.bed"))
+    else:
+        with pytest.raises(ValueError, match="s.bed:1: "):
+            sinks.read_bed(bed)
+    if BIN.exists():
+        r = subprocess.run([str(BIN), "plan", "-c", str(BUNDLE / "controls.fa.gz"), "--sinks", str(bed), "-o", str(tmp_path / "p.bed")],
+                           capture_output=True, text=True)
+        assert (r.returncode == 0) == ok, r.stderr
+
+
+def test_sinks_to_stdout_leaves_stdout_open(tmp_path, capsys):
+    from ngsdose.cli import main
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps(scan("a", [], [(100_000, 1000)])))
+    main(["sinks", str(f), "-o", "-"])
+    assert not sys.stdout.closed
+    print("after")
+    assert capsys.readouterr().out == "c1\t99000\t102000\tunit\nafter\n"
+
+
+def with_all(s, all_of):
+    """The scan with 'all' counts (every mapped read of the bin) set per (class, start)."""
+    for p in s["placements"]:
+        p["all"] = all_of.get((p["class"], p["start"]), p["reads"])
+    return s
+
+
+def test_interval_stats_add_up_to_the_capture_and_rank_by_share_per_read(tmp_path):
+    """Two TEL sinks: one small and pure, one larger in share but among 100 times as many other reads.
+    Per scan the shares add up to the capture; the pure one ranks first; the curve ends at the capture."""
+    import numpy as np
+    s = [with_all(scan("a", [(990_000, 2000), (500_000, 6000), (200_000, 3)], [(100_000, 1000)]), {("TEL", 500_000): 600_000}),
+         with_all(scan("b", [(990_000, 1000), (500_000, 5000), (200_000, 4)], [(100_000, 900)]), {("TEL", 500_000): 500_000})]
+    rows, cap = sinks.learn(s, classes=["TEL"])
+    t = sinks.interval_stats(s, rows)
+    tel = [r for r in t if r["class"] == "TEL"]
+    assert [(r["rank"], r["start"], r["end"]) for r in tel] == [(1, 989_000, 1_000_000), (2, 499_000, 511_000)]
+    sh_a, sh_b = [2000 / 8003, 6000 / 8003], [1000 / 6004, 5000 / 6004]
+    assert tel[0]["share_median"] == pytest.approx(np.median([sh_a[0], sh_b[0]])) and tel[1]["reads_median"] == 550_000
+    assert tel[0]["share_p10"] == pytest.approx(np.quantile([sh_a[0], sh_b[0]], 0.1))
+    assert tel[-1]["cum_capture_median"] == pytest.approx(np.median(list(cap["TEL"].values())))
+    assert tel[-1]["cum_capture_p10"] == pytest.approx(np.quantile(list(cap["TEL"].values()), 0.1))
+    assert tel[0]["cum_capture_median"] == pytest.approx(tel[0]["share_median"]) and all(r["scans"] == 2 for r in tel)
+    unit = [r for r in t if r["class"] == "unit"]
+    assert len(unit) == 1 and unit[0]["cum_capture_median"] == 1.0
+    # the CLI: learning, and evaluating a BED, write the same statistics; read_stats reads them back
+    paths = []
+    for x in s:
+        paths.append(tmp_path / f"{x['sample']}.json")
+        paths[-1].write_text(json.dumps(x))
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", *map(str, paths), "--classes", "TEL", "-o", str(tmp_path / "s.bed"),
+                        "--stats", str(tmp_path / "learn.tsv")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run([sys.executable, "-m", "ngsdose", "sinks", *map(str, paths), "--evaluate", str(tmp_path / "s.bed"),
+                        "--stats", str(tmp_path / "eval.tsv")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    a, b = sinks.read_stats(tmp_path / "learn.tsv"), sinks.read_stats(tmp_path / "eval.tsv")
+    assert a == b and [x["start"] for x in a["TEL"]] == [989_000, 499_000]
+    assert a["TEL"][1]["cum_capture_median"] == pytest.approx(tel[1]["cum_capture_median"], rel=1e-5)
+
+
+def test_interval_stats_attribute_a_bin_once_and_need_classes(tmp_path):
+    """Overlapping intervals of a class: a bin is counted once, for the interval holding its start;
+    a bin running past the class's intervals counts for none. A BED row without a class is refused."""
+    s = scan("a", [(20_000, 10), (30_000, 20), (60_000, 40)], [], length=100_000)
+    bed = [("c1", 15_000, 35_000, "TEL"), ("c1", 25_000, 45_000, "TEL"), ("c1", 55_000, 65_000, "TEL")]
+    t = {(r["start"], r["end"]): r for r in sinks.interval_stats([s], bed)}
+    assert t[(15_000, 35_000)]["share_median"] == pytest.approx(10 / 70) and t[(25_000, 45_000)]["share_median"] == pytest.approx(20 / 70)
+    assert t[(55_000, 65_000)]["share_median"] == 0.0                     # 60,000-70,000 runs past 65,000
+    assert max(r["cum_capture_median"] for r in t.values()) == pytest.approx(sinks.capture(s, bed)["TEL"][1] / 70)
+    with pytest.raises(ValueError, match="no class column"):
+        sinks.IntervalTally([("c1", 0, 10, "")])
+    (tmp_path / "x.tsv").write_text("class\trank\n")
+    with pytest.raises(ValueError, match="not a sinks statistics file"):
+        sinks.read_stats(tmp_path / "x.tsv")

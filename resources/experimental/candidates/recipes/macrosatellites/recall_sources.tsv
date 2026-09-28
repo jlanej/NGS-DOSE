@@ -1,0 +1,72 @@
+#class	label	fasta	region	mode	[record regex]
+# CHM13 and GRCh38: the class's own arrays (coordinates from minimap2 of unit chunks; 1-based). hprc/: HPRC release-2 haplotype extracts
+# (remote samtools faidx of human-pangenomics s3 assemblies, made by the literature assessments; 1000 Genomes cohort members).
+# 'paralog' rows are copies that must NOT be counted: their recall is cross-talk.
+DXZ4	CHM13 chrX array	$CHM13	chrX:114133488-114299042	tile
+DXZ4	GRCh38 chrX array, left of gap	$GRCH38	chrX:115725930-115738195	tile
+DXZ4	GRCh38 chrX array, right of gap	$GRCH38	chrX:115843297-115889415	tile
+DXZ4	paralog: GRCh38 DXZ4-like fragment	$GRCH38	chrX:115950132-115952537	tile
+CT47	CHM13 chrX array	$CHM13	chrX:119248390-119286877	tile
+CT47	GRCh38 CT47A array	$GRCH38	chrX:120929382-120987017	tile
+CT47	GRCh38 CT47B1 side partial	$GRCH38	chrX:120872715-120879381	tile
+CT47	paralog: GRCh38 CT47C1	$GRCH38	chrX:119072993-119076765	tile
+RS447	CHM13 chr4 array	$CHM13	chr4:9123236-9389581	tile
+RS447	GRCh38 chr4 array 1	$GRCH38	chr4:9210251-9272911	tile
+RS447	GRCh38 chr4 array 2	$GRCH38	chr4:9322918-9369058	tile
+RS447	NA18505 hap1 (HPRC r2)	sources/hprc/NA18505.hap1.macrosat.fa	.	locate:0.9	CM089859
+RS447	NA18505 hap2 (HPRC r2)	sources/hprc/NA18505.hap2.macrosat.fa	.	locate:0.9	CM089869
+RS447	paralog: GRCh38 chr8p23 USP17L	$GRCH38	chr8:7000000-12800000	locate:0.85
+RS447	paralog: CHM13 chr8p23 USP17L	$CHM13	chr8:6900000-12700000	locate:0.85
+MSR5p	CHM13 chr5 array	$CHM13	chr5:17456873-17599835	tile
+MSR5p	GRCh38 chr5 array 1	$GRCH38	chr5:17517432-17530548	tile
+MSR5p	GRCh38 chr5 array 2	$GRCH38	chr5:17580549-17599621	tile
+MSR5p	NA18505 hap1 (HPRC r2)	sources/hprc/NA18505.hap1.macrosat.fa	.	locate:0.9	CM089860
+MSR5p	NA18505 hap2 (HPRC r2)	sources/hprc/NA18505.hap2.macrosat.fa	.	locate:0.9	CM089870
+MSR5p	paralog: GRCh38 divergent flanks (TAF11L2, H3Y2 / TAF11L11-14, H3Y1)	$GRCH38	chr5:17485885-17517431	tile
+MSR5p	paralog: GRCh38 divergent flank, distal	$GRCH38	chr5:17599622-17649762	tile
+FLJ40296	CHM13 chr13 array	$CHM13	chr13:56356035-56390314	tile
+FLJ40296	GRCh38 chr13 array	$GRCH38	chr13:57139163-57173450	tile
+FLJ40296	NA18505 hap1 (HPRC r2)	sources/hprc/NA18505.hap1.macrosat.fa	.	locate:0.9	JBHIJY
+FLJ40296	NA18505 hap2 (HPRC r2)	sources/hprc/NA18505.hap2.macrosat.fa	.	locate:0.9	JBHIJZ
+RNU2	CHM13 chr17 array	$CHM13	chr17:44114174-44169769	tile
+RNU2	GRCh38 chr17 array	$GRCH38	chr17:43231444-43301957	tile
+RNU2	GenBank U57614.1 unit	sources/U57614.1.fa	.	tile
+RNU2	HG00097 hap1 (HPRC r2)	sources/hprc/HG00097.hap1.RNU2.fa	.	locate:0.9
+RNU2	HG00097 hap2 (HPRC r2)	sources/hprc/HG00097.hap2.RNU2.fa	.	locate:0.9
+RNU2	HG00099 hap1 (HPRC r2)	sources/hprc/HG00099.hap1.RNU2.fa	.	locate:0.9
+RNU2	HG00099 hap2 (HPRC r2)	sources/hprc/HG00099.hap2.RNU2.fa	.	locate:0.9
+D4Z4	CHM13 chr4 array	$CHM13	chr4:193433358-193543408	tile
+D4Z4	CHM13 chr10 array	$CHM13	chr10:134615847-134726331	tile
+D4Z4	GRCh38 chr4 array	$GRCH38	chr4:190065229-190093263	tile
+D4Z4	GRCh38 chr10 array 1	$GRCH38	chr10:133664430-133685491	tile
+D4Z4	GRCh38 chr10 array 2	$GRCH38	chr10:133740609-133761680	tile
+D4Z4	GenBank AF117653.3	sources/AF117653.3.fa	.	locate:0.9
+D4Z4	HG00099 hap1 4q (HPRC r2)	sources/hprc/HG00099_hap1_4q.fa	.	locate:0.9
+D4Z4	HG00099 hap2 4q (HPRC r2)	sources/hprc/HG00099_hap2_4q.fa	.	locate:0.9
+D4Z4	HG00099 hap1 10q (HPRC r2)	sources/hprc/HG00099_hap1_10q.fa	.	locate:0.9
+D4Z4	HG00099 hap2 10q (HPRC r2)	sources/hprc/HG00099_hap2_10q.fa	.	locate:0.9
+D4Z4	paralog: CHM13 D4Z4-like loci (1.05 Mb)	tmp/D4Z4like.CHM13.fa	.	tile
+D4Z4	paralog: GRCh38 D4Z4-like loci (decoys, chrUn, random)	tmp/D4Z4like.GRCh38.fa	.	tile
+ZAV	CHM13 chr9 array	$CHM13	chr9:125231477-125289380	tile
+ZAV	GRCh38 chr9 array	$GRCH38	chr9:113059719-113090511	tile
+REXO1L1	CHM13 chr8 array	$CHM13	chr8:86079108-86946157	tile
+REXO1L1	GRCh38 chr8 array	$GRCH38	chr8:85640340-85828705	tile
+D4Z4_4qB	GRCh38 chr4 4qB distal	$GRCH38	chr4:190093265-190122572	tile
+D4Z4_4qB	HG00099 hap1 4q, 4qB (HPRC r2)	sources/hprc/HG00099_hap1_4q.fa	.	locate:0.95
+D4Z4_4qB	HG00099 hap2 4q, 4qB (HPRC r2)	sources/hprc/HG00099_hap2_4q.fa	.	locate:0.95
+D4Z4_4qB	GenBank 4B163/4B168 (HM190160-164)	sources/HM190160-196.fa	.	locate:0.95:300	HM19016[0-4]
+D4Z4_4qB	GenBank 10B161T (HM190165), a 4qB-type distal on 10q	sources/HM190160-196.fa	.	locate:0.95:300	HM190165
+D4Z4_4qB	paralog: GRCh38 4p copy of the qB segment	$GRCH38	chr4:30072-35804	tile
+D4Z4_4qB	paralog: CHM13 4p copy of the qB segment	$CHM13	chr4:29500-35200	tile
+D4Z4_4qB	paralog: HG00099 4p (HPRC r2)	sources/hprc/HG00099_4p.fa	.	tile
+D4Z4_4qB	paralog: HG00099 acrocentric 4qB-like contigs (HPRC r2)	sources/hprc/acro_4qBlike.fa	.	tile
+D4Z4_4qA	GRCh38 chr4 4qA distal	$GRCH38	chr4:190175604-190189603	tile
+D4Z4_4qA	CHM13 chr4 4qA distal	$CHM13	chr4:193543409-193557408	tile
+D4Z4_4qA	GenBank 4A159/161/163/166/168, 4C166H	sources/HM190160-196.fa	.	locate:0.9:300	HM1901(6[7-9]|7[0-9]|8[0-5]|9[3-6])
+D4Z4_4qA	GenBank 10A176T/10A180T, 4qA-like distal on 10q	sources/HM190160-196.fa	.	locate:0.9:300	HM19019[0-2]
+D4Z4_10q	GRCh38 chr10 distal after array 2	$GRCH38	chr10:133761681-133775680	tile
+D4Z4_10q	GRCh38 chr10 distal after array 1	$GRCH38	chr10:133685492-133690466	tile
+D4Z4_10q	CHM13 chr10 distal	$CHM13	chr10:134726332-134743331	tile
+D4Z4_10q	HG00099 hap1 10q (HPRC r2; 4q/10q hybrid)	sources/hprc/HG00099_hap1_10q.fa	.	locate:0.9
+D4Z4_10q	HG00099 hap2 10q (HPRC r2)	sources/hprc/HG00099_hap2_10q.fa	.	locate:0.9
+D4Z4_10q	GenBank 10A166 (HM190186-189)	sources/HM190160-196.fa	.	locate:0.9:300	HM19018[6-9]

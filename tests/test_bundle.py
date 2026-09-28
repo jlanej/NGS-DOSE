@@ -1,14 +1,25 @@
 """The shipped GRCh38 bundle is internally consistent. A cohort run is only as good as these files,
 and nothing else would notice a truncated panel or a controls FASTA that no longer matches its BED."""
 import gzip
+import struct
 import subprocess
 from pathlib import Path
 
+import pytest
 
 from ngsdose import io, resources
 
 ROOT = Path(__file__).resolve().parents[1]
 B = resources.Bundle(ROOT / "resources" / "GRCh38")
+# sink intervals of GRCh38-v1 that run past the end of their contig (40,553 bp in all). Clipping them
+# changes sinks_sha256, which every fetch counts file records, so it waits for a sinks.bed revision
+# with a sinks_history entry in bundle.json.
+OVERLONG_SINKS = {
+    ("chr17_GL000205v2_random", 0, 191000, "DJ"), ("chr22_KI270733v1_random", 109000, 181000, "rDNA45S"),
+    ("chrUn_GL000195v1", 0, 191000, "DJ"), ("chrUn_GL000219v1", 159000, 181000, "DJ"),
+    ("chrUn_GL000220v1", 99000, 171000, "rDNA45S"), ("chrUn_GL000224v1", 119000, 181000, "DJ"),
+    ("chrUn_JTFH01001783v1_decoy", 0, 11000, "DJ"), ("chrUn_JTFH01001847v1_decoy", 0, 11000, "DJ"),
+}
 
 
 def test_every_file_named_by_the_bundle_exists():
@@ -106,6 +117,55 @@ def test_features_anchors_and_sinks_are_inside_their_coordinate_systems():
         classes.add(cls)
     assert classes == {"rDNA45S", "rDNA5S", "DJ", "TEL"}                 # the telomeric repeat is fetchable; the satellites are not
     assert B.meta["expected_copies"] == {"DJ": 10}
+
+
+def bam_contig_lengths(path):
+    """The @SQ names and lengths of a BAM header (BGZF reads as gzip)."""
+    with gzip.open(path, "rb") as fh:
+        assert fh.read(4) == b"BAM\1"
+        l_text, = struct.unpack("<i", fh.read(4))
+        fh.read(l_text)
+        n_ref, = struct.unpack("<i", fh.read(4))
+        out = {}
+        for _ in range(n_ref):
+            l_name, = struct.unpack("<i", fh.read(4))
+            name = fh.read(l_name)[:-1].decode()
+            out[name], = struct.unpack("<i", fh.read(4))
+    return out
+
+
+def sink_rows():
+    rows = []
+    for line in open(B.sinks):
+        c, s, e, cls = line.rstrip("\n").split("\t")
+        rows.append((c, int(s), int(e), cls))
+    return rows
+
+
+def contig_lengths():
+    """GRCh38_full_analysis_set_plus_decoy_hla contig lengths: the fixture's header (an NYGC CRAM's, cut
+    to the contigs the bundle's regions and sinks sit on), which agrees with bundle.json's primary contigs."""
+    lengths = bam_contig_lengths(ROOT / "tests" / "data" / "NA12878.subsample.bam")
+    for c, n in B.meta["contig_lengths"].items():
+        assert lengths.get(c, n) == n, c
+    return {**lengths, **B.meta["contig_lengths"]}
+
+
+def test_sinks_lie_on_contigs_of_known_length():
+    lengths = contig_lengths()
+    rows = sink_rows()
+    assert {c for c, *_ in rows} <= set(lengths), "a sink contig the fixture's header does not name: rebuild the fixture (tests/data/make_fixture.sh)"
+    for c, s, e, cls in rows:
+        assert 0 <= s < e and s < lengths[c], (c, s, e, cls)
+    # no interval runs past its contig's end beyond the eight known ones, and the telomeric rows (clipped when learned) never do
+    over = {r for r in rows if r[2] > lengths[r[0]]}
+    assert over <= OVERLONG_SINKS, over - OVERLONG_SINKS
+
+
+@pytest.mark.xfail(strict=True, reason="8 non-TEL sink intervals run past their contig end (OVERLONG_SINKS); clipping them changes sinks_sha256 and waits for a sinks.bed revision")
+def test_sinks_end_within_their_contigs():
+    lengths = contig_lengths()
+    assert [r for r in sink_rows() if r[2] > lengths[r[0]]] == []
 
 
 def test_shell_scripts_parse():

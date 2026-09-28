@@ -1,0 +1,31 @@
+# class	assembly	chrom	start	end	strand	mask_pad	what
+# 0-based half-open. Every copy of each class in each assembly: the recall source and, padded by mask_pad, the own-locus mask.
+# Found with the commands in build.sh step 2 (minimap2 of the unit or gene against local extracts of the region); build.sh re-derives and checks them.
+TDNA1Q23	GRCh38	chr1	161440058	161472827	+	1000	1q23.3 tDNA array, 4.43 units (collapsed)
+TDNA1Q23	CHM13	chr1	160577130	160735448	+	1000	1q23.3 tDNA array, 21.43 units
+RNU1	GRCh38	chr1	16505285	16517285	-	500	RNU1-1 unit (gene 16514121-16514285 -)
+RNU1	GRCh38	chr1	16657948	16669948	-	500	RNU1-3 unit (gene 16666784-16666948 -)
+RNU1	GRCh38	chr1	16737515	16749515	+	500	RNU1-4 unit (gene 16740515-16740679 +)
+RNU1	GRCh38	chr1	16892979	16904979	+	500	RNU1-2 unit (gene 16895979-16896143 +)
+RNU1	GRCh38	chr1_KI270713v1_random	13024	25024	-	0	U1 unit on the unplaced contig (gene 21860-22024 -); the whole contig is masked
+RNU1	CHM13	chr1	15946982	15958982	-	500	U1 unit, gene 15955818-15955982 - (1 mismatch to RNU1-1)
+RNU1	CHM13	chr1	16118189	16130189	-	500	U1 unit, gene 16127025-16127189 - (the class unit)
+RNU1	CHM13	chr1	16285449	16297449	-	500	U1 unit, gene 16294285-16294449 -
+RNU1	CHM13	chr1	16373537	16385537	-	500	U1 unit, gene 16382373-16382537 -
+RNU1	CHM13	chr1	16460453	16472453	+	500	U1 unit, gene 16463453-16463617 +
+RNU1	CHM13	chr1	16546822	16558822	+	500	U1 unit, gene 16549822-16549986 +
+RNU1	CHM13	chr1	16703419	16715419	+	500	U1 unit, gene 16706419-16706583 +
+SNORD3	GRCh38	chr17	19058671	19063230	-	500	U3 module with SNORD3B-1
+SNORD3	GRCh38	chr17	19063235	19067403	+	500	U3 module (from unit pos 409) with SNORD3B-2
+SNORD3	GRCh38	chr17	19111333	19115875	+	500	U3 module with SNORD3D (the class unit)
+SNORD3	GRCh38	chr17	19184792	19189331	-	500	U3 module with SNORD3A
+SNORD3	GRCh38	chr17	19189336	19193468	+	500	U3 module (from unit pos 409) with SNORD3C
+SNORD3	CHM13	chr17	19006570	19011120	-	500	U3 module
+SNORD3	CHM13	chr17	19011125	19015264	+	500	U3 module (from unit pos 409)
+SNORD3	CHM13	chr17	19084204	19088746	-	500	U3 module
+SNORD3	CHM13	chr17	19132792	19136926	-	500	U3 module (from unit pos 409)
+SNORD3	CHM13	chr17	19136931	19141448	+	500	U3 module
+SNORD116	GRCh38	chr15	25051000	25109000	+	0	SNORD116-1..30 array (the class unit)
+SNORD116	CHM13	chr15	22787659	22845657	+	0	SNORD116 array
+SNORD115	GRCh38	chr15	25170000	25270500	+	0	SNORD115-1..48 array (the class unit)
+SNORD115	CHM13	chr15	22906670	23007167	+	0	SNORD115 array

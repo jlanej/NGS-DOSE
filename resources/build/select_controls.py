@@ -19,7 +19,9 @@ mappability < 1, DGV variants, segmental duplications). Selection is determinist
      --n-test-x chrX runs outside the PARs and the X-transposed region (truth: 1 or 2 copies);
   5. --n-test-y chrY runs in X-degenerate sequence (truth: 1 copy in a male, none in a female);
   6. one stretch each of the mitochondrial genome and of the EBV decoy: not truths but dosages
-     (copies per cell), the two standard covariates of the state of a cell line.
+     (copies per cell), the two standard covariates of the state of a cell line. A reference that
+     lacks either contig (or holds it too short) is an error: --allow-missing-dosage leaves the
+     region out of the bundle instead, and then no sample reports it.
 
 Output BED name column: `control`, `test:auto`, `test:chrX`, `test:chrY`, `dosage:chrM`,
 `dosage:chrEBV`. Only `control` regions enter the GC curve and the denominator.
@@ -108,6 +110,8 @@ def main():
     ap.add_argument("--n-test-auto", type=int, default=80)
     ap.add_argument("--n-test-x", type=int, default=60)
     ap.add_argument("--n-test-y", type=int, default=40)
+    ap.add_argument("--allow-missing-dosage", action="store_true",
+                    help="write the bundle without a dosage region whose contig the reference lacks or holds too short (default: error)")
     a = ap.parse_args()
 
     fa = FastaIndex(a.reference)
@@ -160,16 +164,25 @@ def main():
     ys = np.where(is_y)[0]
     role[ys[np.linspace(0, len(ys) - 1, min(a.n_test_y, len(ys))).astype(int)]] = "test:chrY"
 
+    dosage = []
+    for c, s, e, r in DOSAGE_GRCH38:
+        if c not in fa.index or e + a.flank > fa.length(c):
+            # a region left out of the bundle is missing for every sample, not reported absent per sample
+            why = f"{c}:{s}-{e} ({r}): " + (f"the reference has no {c}" if c not in fa.index else f"{c} is {fa.length(c):,} bp, too short for it and its {a.flank}-bp flank")
+            if not a.allow_missing_dosage:
+                sys.exit(f"{why}. A truncated reference? --allow-missing-dosage writes the bundle without it.")
+            print(f"WARNING: {why}; left out (--allow-missing-dosage)", file=sys.stderr)
+            continue
+        # every window of every position, on both strands, must be free of N
+        if "N" in fa.fetch(c, s - L_MAX + 1, e + L_MAX - 1).upper():
+            sys.exit(f"{c}:{s}-{e}: an N within {L_MAX} bp - some fragment-GC windows would be undefined")
+        dosage.append((c, s, e, r))
     with open(a.out, "w") as fh:
         for (c, s, e), r in zip(cand, role):
             if r:
                 fh.write(f"{c}\t{s}\t{e}\t{r}\n")
-        for c, s, e, r in DOSAGE_GRCH38:
-            if c in fa.index and e + a.flank <= fa.length(c):
-                # every window of every position, on both strands, must be free of N
-                if "N" in fa.fetch(c, s - L_MAX + 1, e + L_MAX - 1).upper():
-                    sys.exit(f"{c}:{s}-{e}: an N within {L_MAX} bp - some fragment-GC windows would be undefined")
-                fh.write(f"{c}\t{s}\t{e}\t{r}\n")
+        for c, s, e, r in dosage:
+            fh.write(f"{c}\t{s}\t{e}\t{r}\n")
     sel = H[role == "control"].sum(0)
     print(f"controls: {(role == 'control').sum()} regions, {sum(e - s for (c, s, e), r in zip(cand, role) if r == 'control'):,} bp; "
           f"test:auto {(role == 'test:auto').sum()}, test:chrX {(role == 'test:chrX').sum()}, test:chrY {(role == 'test:chrY').sum()}", file=sys.stderr)

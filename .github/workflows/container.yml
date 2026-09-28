@@ -5,7 +5,9 @@ name: Container
 #   every push to main  ->  :latest and :sha-<commit>
 #   every tag vX.Y.Z    ->  :X.Y.Z and :X.Y
 #   pull requests       ->  built and smoke-tested, not pushed
-# On a cluster:  apptainer pull ngs-dose.sif docker://ghcr.io/<owner>/ngs-dose:latest
+# What is pushed is the image the smoke tests ran on; the job summary gives its digest.
+# On a cluster:  apptainer pull ngs-dose.sif docker://ghcr.io/<owner>/ngs-dose:sha-<commit>
+# (:latest moves with every push to main; a tag, or @sha256:<digest>, names one image for a whole cohort run.)
 # (GitHub creates a package private: make it public once, under the package's settings, for
 #  that pull to need no login.)
 on:
@@ -54,13 +56,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # what is pushed has counted real reads and estimated from them
+      # the engine and the package in the image carry the version the sources say, and on a tag the
+      # version the tag names: an image is never published under a version it does not report
+      - name: Versions
+        id: v
+        run: |
+          set -euo pipefail
+          tag=""; if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          v=$(bash .github/scripts/check_version.sh "$tag" ngs-dose:test)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "engine=$v+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # what is pushed has counted real reads and estimated from them the copy numbers the fixture is
+      # known to give (the limits of tests/test_real_data.py), and records the commit it was built from
       - name: Smoke test inside the image
         run: |
-          docker run --rm ngs-dose:test ngs-dose --version
+          set -euo pipefail
           docker run --rm ngs-dose:test ngsdose selftest
+          docker run --rm ngs-dose:test cat /opt/ngs-dose/pip-freeze.txt
           docker run --rm -v "$PWD/tests/data:/data:ro" ngs-dose:test sh -c \
-            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz'
+            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz -t -' \
+            | python3 .github/scripts/smoke_check.py --engine "${{ steps.v.outputs.engine }}"
 
       # the image under Apptainer, as a cluster runs it: the engine counts real reads from the fixture and
       # the package estimates from them. The cohort pipeline that drives this on a cluster lives with the
@@ -74,7 +90,8 @@ jobs:
           apptainer build "$RUNNER_TEMP/ngs-dose.sif" docker-daemon://ngs-dose:test
           apptainer exec "$RUNNER_TEMP/ngs-dose.sif" aria2c --version | head -1
           apptainer exec --bind "$PWD/tests/data:/data:ro" "$RUNNER_TEMP/ngs-dose.sif" sh -c \
-            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz -t -' | cut -f1-3
+            'ngs-dose count -m fetch -i /data/NA12878.subsample.bam -p $NGSDOSE_RESOURCES/panel.k31.tsv.gz -c $NGSDOSE_RESOURCES/controls.fa.gz --sinks $NGSDOSE_RESOURCES/sinks.bed -o /tmp/c.json.gz && ngsdose estimate /tmp/c.json.gz -t -' \
+            | python3 .github/scripts/smoke_check.py --engine "${{ steps.v.outputs.engine }}"
 
       # only main and version tags publish; everything else stops at the smoke test
       - uses: docker/login-action@v3
@@ -84,13 +101,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # the image that was tested, not a second build of it, under each of its tags; the digest is
+      # what a cluster can pull to get exactly this image (docker://ghcr.io/<owner>/ngs-dose@sha256:...)
       - name: Push
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          build-args: NGSDOSE_BUILD=${{ github.sha }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for t in $TAGS; do
+            docker tag ngs-dose:test "$t"
+            docker push "$t"
+          done
+          digest=$(docker inspect -f '{{index .RepoDigests 0}}' ngs-dose:test)
+          echo "pushed $digest" | tee -a "$GITHUB_STEP_SUMMARY"

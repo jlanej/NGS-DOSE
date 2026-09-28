@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ngsdose"
-version = "0.1.0"
+dynamic = ["version"]         # ngsdose/__init__.py; .github/scripts/check_version.sh keeps it equal to Cargo.toml's
 description = "Sequence-class dosage (rDNA, satellites and other multi-copy classes) from short-read WGS: estimation and cohort modelling"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ ngsdose = "ngsdose.cli:main"
 
 [tool.setuptools]
 packages = ["ngsdose"]
+
+[tool.setuptools.dynamic]
+version = {attr = "ngsdose.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

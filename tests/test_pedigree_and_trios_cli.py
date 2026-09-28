@@ -32,7 +32,7 @@ def test_three_pedigree_layouts_read_the_same_trios(tmp_path):
     t1, pop1 = load_pedigree(g1k)
     assert t1 == want and pop1["C1"] == "POPA" and pop1["F0"] == "POPB"
     t2, pop2 = load_pedigree(ped)
-    assert [(t.child, t.father, t.mother) for t in t2] == [(c, f, m) for c, f, m, _ in fams] and set(pop2.values()) == {""}
+    assert [(t.child, t.father, t.mother) for t in t2] == [(c, f, m) for c, f, m, _ in fams] and pop2 == {}   # no labels: an empty dict, not '' for all
     t3, pop3 = load_pedigree(tab)
     assert t3 == want and pop3["M2"] == "POPB"                   # a trios table gives the parents the child's population
     t4, _ = load_pedigree(bare)

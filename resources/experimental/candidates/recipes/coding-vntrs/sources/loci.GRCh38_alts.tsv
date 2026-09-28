@@ -1,0 +1,9 @@
+MUC4	chr3_KI270779v1_alt	150654	166470	downstream flank 166470-169485 (+), upstream flank 147004-150654 (asm20, 3.6 kb for 2.9 kb)
+MUC4	chr3_KI270895v1_alt	6073	15886	both flanks (-), array identical to GRCh38 primary
+MUC4	chr3_KI270924v1_alt	6073	15889	downstream flank 3073-6073 (-), upstream flank 15889-19254 (asm20)
+MUC4	chr3_KI270934v1_alt	6073	15886	both flanks (-), array identical to GRCh38 primary
+MUC4	chr3_KI270935v1_alt	148627	158496	downstream flank 158496-161511 (+); upstream flank not found, start from the array alignment
+MUC4	chr3_KI270936v1_alt	6073	15886	both flanks (-), array identical to GRCh38 primary
+MUC4	chr3_KI270937v1_alt	6073	15886	both flanks (-), array identical to GRCh38 primary
+MUC6	chr11_KI270902v1_alt	79303	87854	both flanks (+)
+MUC6	chr11_KI270927v1_alt	86151	92682	both flanks (+)

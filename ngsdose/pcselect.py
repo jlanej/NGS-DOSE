@@ -226,21 +226,31 @@ def recommend(rows: list[dict]) -> dict[str, dict]:
     PCs that do as well as the best number does, to within the sampling error of "best" - for a
     known truth, the cross-validated robust SD of log(estimate / truth); for a class with trios,
     the transmission reliability (standard error from its bootstrap interval). A minimum at 8 PCs
-    that is 3% below the value at 0 PCs in 66 samples is noise, and this rule says 0."""
+    that is 3% below the value at 0 PCs in 66 samples is noise, and this rule says 0.
+
+    A column whose measure is undefined at every number of PCs is left out; a standard error that
+    is undefined (a bootstrap interval with an undefined draw) counts as 0, so the pick is the best."""
     out: dict[str, dict] = {}
     for col in dict.fromkeys(r["column"] for r in rows):
         rs = [r for r in rows if r["column"] == col]
         if rs[0]["kind"] == "truth" and all("sd_log_robust" in r for r in rs):
-            e = np.array([r["sd_log_robust"] for r in rs])
+            e = np.array([np.nan if r["sd_log_robust"] is None else r["sd_log_robust"] for r in rs], float)
+            if not np.isfinite(e).any():
+                continue
             best = int(np.nanargmin(e))
             # SE of a MAD-based SD: the MAD is 37% efficient, so 1/sqrt(0.3675) = 1.65 times the sample SD's sd/sqrt(2n)
             se = e[best] * 1.65 / np.sqrt(2 * max(rs[best]["n"], 2))
-            pick = int(np.where(e <= e[best] + se)[0][0])
+            se = float(se) if np.isfinite(se) else 0.0
+            pick = int(np.flatnonzero(np.nan_to_num(e, nan=np.inf) <= e[best] + se)[0])
             out[col] = dict(kind="truth", best=best, pick=pick, at_0=float(e[0]), at_pick=float(e[pick]), at_best=float(e[best]), se=float(se))
         elif all("R_midparent" in r for r in rs):
-            R = np.array([r["R_midparent"] for r in rs])
+            R = np.array([np.nan if r["R_midparent"] is None else r["R_midparent"] for r in rs], float)
+            if not np.isfinite(R).any():
+                continue
             best = int(np.nanargmax(R))
-            se = (rs[best]["R_hi"] - rs[best]["R_lo"]) / 3.92 if "R_hi" in rs[best] else 0.0
-            pick = int(np.where(R >= R[best] - se)[0][0])
+            lo, hi = rs[best].get("R_lo"), rs[best].get("R_hi")
+            se = (hi - lo) / 3.92 if lo is not None and hi is not None else 0.0
+            se = float(se) if np.isfinite(se) else 0.0
+            pick = int(np.flatnonzero(np.nan_to_num(R, nan=-np.inf) >= R[best] - se)[0])
             out[col] = dict(kind="class", best=best, pick=pick, at_0=float(R[0]), at_pick=float(R[pick]), at_best=float(R[best]), se=float(se))
     return out

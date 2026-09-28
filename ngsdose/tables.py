@@ -5,6 +5,7 @@ import csv
 import gzip
 import json
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -31,17 +32,38 @@ def dump(obj, path):
 
 
 def load_result(path) -> dict:
-    with (gzip.open(path, "rt") if str(path).endswith(".gz") else open(path)) as fh:
-        return json.load(fh)
+    from .io import _open                                  # gzip told by the magic bytes, not the name, as counts files are
+    try:
+        with _open(path) as fh:
+            return json.load(fh)
+    except zlib.error as e:
+        raise ValueError(f"{path}: corrupt gzip stream ({e})") from e
 
 
 def summary_row(r: dict) -> dict:
+    """One sample's row. A class that was counted but not measured has NA values and says why in
+    `<class>.status` ('ok' otherwise; 'skipped: ...' for a positional class the bundle cannot
+    estimate; 'experimental' for one estimated from an experimental unit, which also has
+    `<class>.cn_se_rel`). `controls_used` is the number of control regions the counts held, and
+    `controls_subset` names the bundle's lighter set when they were made with one. A sub-option (a named
+    subset of a class's sink intervals, such as DXZ1 of aSatHOR) has `<option>.mass_Mb`, `<option>.reads`
+    and `<option>.status`. Estimates written before these fields existed give NA there."""
+    qc = r["control_qc"]
     row = dict(sample=r["sample"], mode=r["mode"], engine=f"{r.get('engine_version', '?')}+{(r.get('engine_build') or 'unknown')[:7]}",
                depth=round(r["depth_equiv"], 3), read_length=r["read_length"],
                insert_median=r["insert_median"], gc_L=r["gc_L"], ctrl_dup_frac=round(r["ctrl_dup_frac"], 4),
                gc_rel_35=r["gc_rel"].get("35"), gc_rel_65=r["gc_rel"].get("65"), gc_curve_max_se=round(r["gc_curve_max_se"], 4),
-               ctrl_region_sd=None if not r["control_qc"] else round(r["control_qc"]["region_log_mad_sd"], 4),
-               flagged_chromosomes=None if not r["control_qc"] else ",".join(r["control_qc"]["flagged_chromosomes"]))
+               ctrl_region_sd=None if not qc else round(qc["region_log_mad_sd"], 4),
+               flagged_chromosomes=None if not qc else ",".join(qc["flagged_chromosomes"]),
+               untestable_chromosomes=None if not qc or "untestable_chromosomes" not in qc else ",".join(qc["untestable_chromosomes"]),
+               # a fetch that did not read the unmapped bin misses class reads an aligner left unplaced
+               unmapped_fetched=r.get("unmapped_fetched") if r["mode"] == "fetch" else None,
+               # how many control regions the GC curve was fitted on (NA in estimates made before it was recorded)
+               controls_used=r.get("controls_used"))
+    if r.get("controls_subset"):                       # a fetch made with a lighter controls file the bundle names
+        row["controls_subset"] = r["controls_subset"]
+    if r.get("pipeline_sq_sha256"):
+        row["pipeline_sq_sha256"] = r["pipeline_sq_sha256"]
     for label, t in r.get("truth_regions", {}).items():
         # known-truth sets are scored against their answer; dosage sets (chrM, chrEBV) are copies per cell
         row[f"{label}.copies" if t.get("role") == "dosage" else f"truth.{label}"] = round(t["cn"], 4)
@@ -50,17 +72,30 @@ def summary_row(r: dict) -> dict:
     for name, c in r["classes"].items():
         if c["kind"] == "positional":
             row[f"{name}.cn_single"] = round(c["cn"], 3)
+            # which estimate cn_single is: the anchor windows, or every usable window when the anchors hold too few ends
+            row[f"{name}.cn_basis"] = c.get("cn_basis")
+            row[f"{name}.n_anchor"] = c.get("n_anchor")
             row[f"{name}.cn_anchor"] = round(c["cn_anchor"], 2)
             row[f"{name}.cn_all"] = round(c["cn_all"], 2)
             row[f"{name}.cn_median"] = round(c["cn_median"], 2)
             row[f"{name}.window_log_sd"] = round(c["window_log_sd"], 4)
             row[f"{name}.cn_all_flat"] = round(c["cn_all_flat"], 2)
             row[f"{name}.dup_flag_frac"] = round(c["dup_flag_frac"], 4)
+            if "cn_se_rel" in c:                        # experimental classes: the single-sample relative error
+                se = c["cn_se_rel"]
+                row[f"{name}.cn_se_rel"] = None if se is None or not np.isfinite(se) else round(se, 4)
             for fn, fv in c["features"].items():
                 row[f"{name}.{fn}"] = round(fv["cn"], 2)
                 row[f"{name}.{fn}.flat"] = round(fv["cn_flat"], 2)
         else:
             row[f"{name}.mass_Mb"] = round(c["mass_Mb"], 4)
+        row[f"{name}.status"] = c.get("status")
+    for s in r.get("skipped_classes") or []:
+        row[f"{s['name']}.status"] = f"skipped: {s['reason']}"
+    for name, v in (r.get("sub_options") or {}).items():
+        row[f"{name}.mass_Mb"] = round(v["mass_Mb"], 4)
+        row[f"{name}.reads"] = v["reads"]
+        row[f"{name}.status"] = v["status"]
     return row
 
 
@@ -75,11 +110,6 @@ def write_table(rows: list[dict], path):
         w.writerow({k: ("NA" if v is None or (isinstance(v, float) and not np.isfinite(v)) else v) for k, v in r.items()})
     if fh is not sys.stdout:
         fh.close()
-
-
-def read_table(path) -> list[dict]:
-    with open(path) as fh:
-        return list(csv.DictReader(fh, delimiter="\t"))
 
 
 def num(row: dict, col: str) -> float:

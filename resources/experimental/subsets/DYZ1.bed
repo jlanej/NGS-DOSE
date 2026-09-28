@@ -1,0 +1,14 @@
+# A named subset of the learned sinks in ../sinks.satellites.bed (NYGC bwa-mem alignments of the 1000 Genomes 30x cohort to the
+# GRCh38 analysis set; learned from 100 whole-file scans, engine fae1124): the fourth column names the class, so a fetch counts
+# that class inside these intervals, and `ngsdose estimate` reports DYZ1.mass_Mb, DYZ1.reads and DYZ1.status for any counts
+# file (scan or fetch) from the class's placements inside them (a placement bin counts only when all of it lies inside).
+# Numbers below: held-out scans are the 1,648 cohort scans not among those 100; MB = bytes of the CRAM slices the intervals
+# overlap with their containers' compression headers (as fetchplan counts them), median (range) over 13 NYGC .crai; reads
+# per control 5' end is the class's reads inside / the control-region 5' ends.
+# DYZ1: the HSat3 of the Yq12 heterochromatin, as HSat3 reads land there: the one HSat3 sink interval chrY:56.67-56.78 Mb.
+# Measures: Yq12 DYZ1 (HSat3) mass; near zero without a Y or without Yq12 heterochromatin.
+# Costs 39.1 MB (1.0-75.5). Held-out share of HSat3: men 0.198, women 0.0004; reads median men 1.79 M, women 3.1 k; per
+# control 5' end, 67.4% of men lie above the largest female value and 97.6% of women below the smallest male one.
+# Truth: sex only. The HPRC release-2 assemblies rarely close Yq12 (annotated Y HSat3 median 1.55 Mb, 0.47-24.2): against
+# them r is 0.23 (men, n = 60), which says more of the assemblies than of the reads.
+chrY	56669000	56781000	HSat3
