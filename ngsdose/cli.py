@@ -213,17 +213,29 @@ def cmd_cohort(a):
     # row of each sample are kept, so a cohort of thousands fits in a few hundred MB
     try:
         anchors = {} if a.gc_rule_anchors else resources.Bundle(a.resources).anchors()
+        rules = {} if a.no_class_rules else resources.Bundle(a.resources).calibration()
         eff_in = json.loads(Path(a.efficiencies).read_text()) if a.efficiencies else None
     except (OSError, ValueError) as e:
         raise SystemExit(f"ngsdose cohort: {e}") from None
+    profiles = {} if a.segments else None
     try:
         rows, eff, _ = cohort.cohort_table(_estimates(a.estimates), anchors, max_window_sd=a.max_window_sd,
                                            n_profile_pcs=a.profile_pcs, n_control_pcs=a.control_pcs, mp_margin=a.mp_margin,
-                                           efficiencies=eff_in, log=lambda m: print(m, file=sys.stderr))
+                                           efficiencies=eff_in, log=lambda m: print(m, file=sys.stderr), rules=rules, profiles=profiles)
     except ValueError as e:
         raise SystemExit(f"ngsdose cohort: {e}") from None
     if a.save_efficiencies:
         Path(a.save_efficiencies).write_text(json.dumps(eff))
+    if a.segments:
+        cols = ["sample", "class", "start", "end", "windows", "state", "mean", "se", "off_integer", "scale_f", "complete_copies", "call"]
+        segs = [dict(sample=s, **{"class": cls}, **g.as_dict(), off_integer=g.off_integer, scale_f=round(c.scale, 3), complete_copies=c.copies,
+                     call="uncertain" if c.uncertain else "settled")
+                for cls, p in profiles.items() for s in p["samples"] if s in p["calls"] for c in [p["calls"][s]] for g in c.segments]
+        if segs:
+            write_table(segs, a.segments)
+        else:
+            print("[cohort] --segments: no class of this bundle has segment calls (calibration.json `segments`)", file=sys.stderr)
+            Path(a.segments).write_text("\t".join(cols) + "\n")
     write_table(rows, a.table)
 
 
@@ -735,6 +747,11 @@ def main(argv=None):
     c.add_argument("--save-efficiencies")
     c.add_argument("-r", "--resources", default=None)
     c.add_argument("--gc-rule-anchors", action="store_true")
+    c.add_argument("--no-class-rules", action="store_true",
+                   help="ignore the bundle's calibration.json: every class is levelled on all its windows, scaled by its anchors, and no copy "
+                        "states are called along the unit")
+    c.add_argument("--segments", metavar="TSV",
+                   help="write the integer copy states called along the unit, one row per genome and segment, for the classes whose rules ask for them")
     c.add_argument("--max-window-sd", type=float, default=None)
     c.add_argument("--profile-pcs", type=int, default=3)
     c.add_argument("--mp-margin", type=float, default=0.01,

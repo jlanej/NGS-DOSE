@@ -49,6 +49,7 @@
     "DJ": 10
   },
   "anchors": "anchors.json",
+  "calibration": "calibration.json",
   "contig_lengths": {
     "chr1": 248956422,
     "chr2": 242193529,

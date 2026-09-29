@@ -79,8 +79,10 @@ the whole-file scan (0.9996 of its 45S estimate, range 0.9988–0.9999); in 602 
 number is inherited with a reliability of 0.95 (0.86–1.04) while the culture's and the library's
 properties are not (−0.31 to 0.15); the calibrated estimate reproduces across sequencing
 technologies where a read-depth ratio does not (intraclass correlation 0.98 against 0.19); and
-against ddPCR it reads 0.96× the assay (r = 0.94). The numbers, and what each finding rules out, are in that
-repository's `docs/EVIDENCE.md`. This repository holds the method alone, so that it can be applied
+against ddPCR it reads 0.96× the assay (r = 0.94); and the distal junction, read as whole numbers
+of copies along its 400 kb, finds every partial copy that the HPRC assemblies of 28 of the genomes
+resolve and is Mendelian at every position in 580 of 585 trios. The numbers, and what each finding
+rules out, are in that repository's `docs/EVIDENCE.md` and `docs/DJ.md`. This repository holds the method alone, so that it can be applied
 to any cohort.
 
 ## Quick start
@@ -145,7 +147,8 @@ table holds the others, and the exit status is 1.
 
 ```bash
 # cohort: window calibration, coverage-PC adjustment, transmission reliability
-ngsdose cohort estimates/*.estimate.json.gz -t cohort.tsv --save-efficiencies efficiencies.json
+ngsdose cohort estimates/*.estimate.json.gz -t cohort.tsv --save-efficiencies efficiencies.json \
+    --segments segments.tsv             # and the whole numbers of copies called along the distal junction, one row per segment
 ngsdose adjust cohort.tsv --pcs ngspca/svd.pcs.txt -c rDNA45S.cn -o cohort.adjusted.tsv   # PCs above the Marchenko-Pastur edge; --n-pc N overrides
 ngsdose pcsweep cohort.tsv --pcs ngspca/svd.pcs.txt -c rDNA45S.cn -p pedigree.txt -o sweep.tsv   # known-truth error and transmission for every number of PCs
 ngsdose trios cohort.adjusted.tsv -p pedigree.txt -c rDNA45S.cn rDNA45S.cn_single rDNA45S.18S.flat \
@@ -473,7 +476,10 @@ reason says where a unit was looked for.
 | `rDNA45S.cn` | cohort-calibrated diploid copy number (`ngsdose cohort`); NA for a sample whose estimate lacks the class or has no usable window |
 | `rDNA45S.cn_single` | single-sample headline: anchor windows under the fragment-GC model, or every usable window when the anchors hold fewer than 1,000 fragment ends (`.cn_basis` says which, `.n_anchor` how many ends) |
 | `rDNA45S.18S`, `.28S`, … / `.flat` | per-feature estimates with / without the GC model; `18S.flat` is the estimator used in the UK Biobank literature |
-| `rDNA5S.cn`, `DJ.cn` | 5S units; distal junction (expected 10) |
+| `rDNA5S.cn` | 5S units |
+| `DJ.cn`, `DJ.cn_unit` | distal junction (expected 10): the level on the core of the unit (the intervals where junction copies differ left out), on a scale pinned to the cohort's mode when the cohort has fifty genomes or more; and the level over the whole unit on the same scale, which is what `DJ.cn` was before the class had rules (`calibration.json`; `--no-class-rules` restores it) |
+| `DJ.copies`, `DJ.partial`, `DJ.variants` | whole numbers of copies called along the unit (`segments.py`): the copies the genome is described against (ten where it holds ten over 40 kb or more of the core); the copies that hold (+) or lack (−) an end of the unit, as `+1:0-316kb`; every event, the local ones and the polymorphic intervals' included. `none` where there is none |
+| `DJ.call`, `DJ.call_gap`, `DJ.scale_f`, `DJ.tilt` | `settled`, or `uncertain` for a genome whose level lies between two whole numbers throughout, so that another whole number of copies explains its profile nearly as well: `call_gap` is how many log units that reading is behind (below 3 is uncertain; empty where no other reading is within reach); the genome's scale, and its lean (the log change of its profile across the unit), both fitted with the chain |
 | `HSat3.mass_Mb`, `ACRO.mass_Mb`, `TEL.mass_Mb`, … | the experimental panels: diploid sequence mass of a satellite family (scan mode, or a fetch through satellite sinks learned for the pipeline: `resources/experimental/sinks.satellites.bed` for NYGC bwa-mem, not yet compared with scans) or of the telomeric repeat (either mode; its sinks are in the bundle). The same column for a compositional candidate class (`VNTR_ACAN.mass_Mb`, `MYCO.mass_Mb`, …) when its panel was loaded. How far each is validated: `resources/experimental/README.md` |
 | `rDNA45S.status`, … | `ok`, or why the class is NA: `no_sinks_in_fetch` (a class the fetch's sinks gave no interval: listed in `sinks_missing_classes` by an engine with `--allow-missing-sinks`, or, for a fae1124 fetch of a `--unmarked-companions` plan, found from the plan's BED given to `--fetch-sinks`), `sinks_skipped`, `panel_mismatch`, `subset_only` (a fetch that read the family only at its sub-options), `unverified` (`aSatHOR`, `HSat1B` or `HSat3`, the families with sub-options, counted by a fetch whose sinks BED `estimate` does not know, such as a fetchplan `PREFIX.sinks.bed`: it cannot tell whether the fetch read the whole family or only its sub-options, so the family is not measured until `--fetch-sinks PREFIX.sinks.bed` names the BED), or `skipped: <reason>` for a positional class that neither the bundle nor an experimental unit covers (the reason says where a unit was looked for). `experimental` for a positional class estimated from an experimental unit: all usable windows, no anchor, no cohort calibration; its `.cn_se_rel` is the single-sample relative error |
 | `DXZ1.mass_Mb`, `.reads`, `.status` (and `DYZ3`, `DYZ1`, `DYZ2`) | the sub-options of `resources/experimental/subsets/`: the family's reads placed inside the named intervals, and their mass (reads × the family's mass per read). Status `ok`; `unverified` for a fetch whose sinks BED `estimate` does not know (reads given, no mass, and the family itself `unverified` too; pass `--fetch-sinks PREFIX.sinks.bed`); `not_fetched`, `not_counted`, `class_not_measured`, `not_compositional`, `name_clash` or `no_placements` (counts from an engine that wrote no placements) when there is nothing to measure |
@@ -498,7 +504,8 @@ path, relative to the install root when under it) and `unit_sha256`.
 
 ## Status
 
-Engine, estimator, cohort layer and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
+Engine, estimator, cohort layer (with the distal junction's rules: core, pinned scale, polymorphic
+intervals, whole numbers of copies along the unit) and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
 Rust unit tests, a simulated genome with known truth run end to end, a 2% subsample of real
 NA12878 reads, a mock trio cohort (that subsample sixty times over) through the whole cohort
 layer and bundle-integrity checks, all in CI (Linux with Python 3.10, 3.12 and 3.13; macOS with
