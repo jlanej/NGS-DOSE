@@ -41,7 +41,7 @@
         "min": 0.99665,
         "median": 0.99874
       },
-      "held_out_check": "sets learned from 40 of the scans captured a median of 0.998 over the other 332, and at least 0.9942-0.9959 in each, depending on the 40 drawn (0.9948 for the first 40, eleven draws); 0.9987 is the median in-sample capture of the 372-scan set. Across the 1,748 cohort scans counted by 2026-09-25 the shipped set captures min 0.9939 (HG02756), 1st percentile 0.9968, median 0.9987. Scored with ngsdose.sinks.capture, which counts a 10-kb placement bin only when all of it lies inside a sink; capture_over_the_372 was scored by the bin's start, and the full-bin rule gives the same min and a median of 0.99869",
+      "held_out_check": "sets learned from 40 of the scans captured a median of 0.998 over the other 332, and at least 0.9942-0.9959 in each, depending on the 40 drawn (0.9948 for the first 40, eleven draws); 0.9987 is the median in-sample capture of the 372-scan set. Across all 3,202 cohort scans the shipped set captures min 0.9939, 1st percentile 0.9968, median 0.9986. Scored with ngsdose.sinks.capture, which counts a 10-kb placement bin only when all of it lies inside a sink; capture_over_the_372 was scored by the bin's start, and the full-bin rule gives the same min and a median of 0.99869",
       "why": "telomeric reads are not dispersed: 92% lie within 25 kb of a chromosome end, 60% in chr5:10,000-20,000; fetch mode measures TEL when telomere.k31.panel.tsv.gz is loaded"
     }
   },

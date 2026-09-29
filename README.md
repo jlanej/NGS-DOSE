@@ -64,20 +64,22 @@ The reasoning, and the measurements on real data behind each step, are in
 
 ## Validation on the 1000 Genomes cohort
 
-The method is being validated on the expanded 1000 Genomes cohort (3,202 genomes, 602 trios, NYGC
+The method was validated on the expanded 1000 Genomes cohort (3,202 genomes, 602 trios, NYGC
 30× NovaSeq CRAMs): a twelve-genome pilot in which every sample also has an older library of the
-same cell line on another instrument, and the cohort run that follows it, which is under way
-(1,748 genomes counted as of 2026-09-25). All of that work — the pipeline that drives the cohort
+same cell line on another instrument, and the cohort run that followed it, complete on 2026-09-28
+(every genome scanned and fetched; 602 of the pedigree's 603 trios, the last naming a parent the
+release never sequenced). All of that work — the pipeline that drives the cohort
 through the method, the pilot, the counts files, the page built from them, the evidence
 write-up, and the comparisons with ddPCR, with HPRC assemblies and with published estimates —
 lives in its own repository, [NGS-DOSE-1000G](https://github.com/jlanej/NGS-DOSE-1000G), with the
 page live at [jlanej.github.io/NGS-DOSE-1000G](https://jlanej.github.io/NGS-DOSE-1000G/). In
-short, on the run's first 735 genomes and 149 trios (the page carries the current count):
-sequence of known copy number reads at its known copy number in every genome; the targeted fetch
-reproduces the whole-file scan; the 45S copy number is inherited with a reliability near 1 in the
-trios while the culture's and the library's properties are not; the calibrated estimate
-reproduces across sequencing technologies where a read-depth ratio does not; and against ddPCR it
-reads about 0.96× the assay. The numbers, and what each finding rules out, are in that
+short, on the complete run: sequence of known copy number reads at its known copy number in every
+genome (held-out autosomal sequence 1.997 ± 0.008 copies in 3,202); the targeted fetch reproduces
+the whole-file scan (0.9996 of its 45S estimate, range 0.9988–0.9999); in 602 trios the 45S copy
+number is inherited with a reliability of 0.95 (0.86–1.04) while the culture's and the library's
+properties are not (−0.31 to 0.15); the calibrated estimate reproduces across sequencing
+technologies where a read-depth ratio does not (intraclass correlation 0.98 against 0.19); and
+against ddPCR it reads 0.96× the assay (r = 0.94). The numbers, and what each finding rules out, are in that
 repository's `docs/EVIDENCE.md`. This repository holds the method alone, so that it can be applied
 to any cohort.
 
@@ -504,28 +506,26 @@ Python 3.12). Every push to `main` publishes the container image once its smoke 
 NA12878 subsample passes, and a version tag makes a release with prebuilt engines, the Python
 package and the resource bundle (`.github/workflows/`). Every assumption the counts files rest
 on was audited against data before the cohort run, and reviews extended the audit during it;
-DESIGN.md §15 lists what held and what was wrong, each with its fix. Being validated on
+DESIGN.md §15 lists what held and what was wrong, each with its fix. Validated on
 the 1000 Genomes cohort in NGS-DOSE-1000G (a twelve-genome pilot with independent library
 replicates, then the cohort run: trios, two counting modes, ddPCR, assemblies, published
-estimates); its results page covered 1,259 genomes and 252 complete trios as of 2026-09-24.
+estimates); its results page covers all 3,202 genomes and 602 complete trios (the run finished on
+2026-09-28).
 Experimental panels - ten satellite families, measured by scan, with experimental NYGC sinks
 that no fetch has yet been compared against, and the telomeric repeat, which the bundle's sinks
 make fetchable (no TEL fetch has yet been compared with its scan) - ship under
 `resources/experimental/`, and 83 candidate classes, which have no sinks yet, under
-`resources/experimental/candidates/`. Against HPRC release-2 assemblies of 96 cohort members (the results
-page as of 2026-09-24), the median estimate/assembly ratio is 0.94–1.00 for HSat3 and the
-α-satellite HORs, 0.85–0.87 for HSat1A and HSat1B, and 0.43–0.79 for CER, β-satellite and ACRO,
-which read low by their k-mer recall. Across people HSat1B tracks the assemblies at r = 0.99, and
-ACRO, β-satellite, CER and HSat1A at 0.87–0.95; the HORs reach only 0.65 because people differ by
-about 4%. HSat2 does not track the assemblies with at most 2% of its arrays in marked gaps (r = 0.09 in 47;
-0.18 in the 43 with none) although it is inherited.
-(Recomputed on the same table with the revised gap accounting, which also counts standalone gap
-records next to an array, the HORs give r = 0.63 in 92 genomes and HSat2 0.02 in 38; the page
-shows these once it is regenerated.) SST1 and SATR are annotated so differently in HPRC and in
+`resources/experimental/candidates/`. Against HPRC release-2 assemblies of 200 cohort members (the results
+page), the median estimate/assembly ratio is 0.94 for HSat3 and 1.02 for the α-satellite HORs,
+0.91 and 0.86 for HSat1A and HSat1B, and 0.43–0.79 for CER, β-satellite and ACRO, which read low
+by their k-mer recall. Across people HSat1B tracks the assemblies at r = 1.00, ACRO at 0.95,
+β-satellite at 0.93 and CER at 0.91, HSat1A and HSat3 at 0.79 and 0.76; the HORs reach 0.70
+because people differ by only 5% while the two measurements agree to 3% per genome. HSat2 does not
+track the assemblies with at most 2% of its arrays in marked gaps (r = 0.39 in 79) although it is
+inherited. SST1 and SATR are annotated so differently in HPRC and in
 CHM13 that their absolute ratios mean nothing. `resources/experimental/README.md` says how far
 each is validated, and NGS-DOSE-1000G holds the current numbers.
-Not yet done: the rest of the cohort run (1,748 of 3,202 genomes counted, and 385 of the 602
-trios complete among them, as of 2026-09-25); sinks for DRAGEN-aligned data (UK Biobank, All of
+Not yet done: sinks for DRAGEN-aligned data (UK Biobank, All of
 Us), which must be learned from whole-file scans of a subset of those CRAMs; real satellite
 and TEL fetches compared with their scans, without which the satellite families are measured
 only where a whole file is scanned - at biobank scale, a subset; sinks for the candidate classes, from the

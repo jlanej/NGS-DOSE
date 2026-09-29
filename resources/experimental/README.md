@@ -216,7 +216,7 @@ reads, so even a CRAM in which they sat apart from every other read would need a
   mechanics of such a fetch have been run). For the shipped positional classes the fetch returns
   what the placements say (fetch / scan inside the sinks 1.00000–1.00019 over 1,748 genomes), which
   is the reason to expect the same here, and the reason it still has to be shown. The training set
-  covers the 15 HG-prefixed populations scanned so far; the NA-prefixed samples are to come, and
+  covers the 15 HG-prefixed populations scanned by then (the NA-prefixed samples were scanned later in the run), and
   some of the 698 batch's children in training have parents among the held-out scans.
 
 ## `telomere.k31.panel.tsv.gz` — class `TEL`, six k-mers
@@ -245,9 +245,8 @@ the 10-kb placement bins with reads inside them, merged and padded 1 kb)
 captured a median 99.8% of the class in the other 332 (lowest 99.4–99.6% across eleven draws of
 the 40); sets learned from 30 scans do no better, at 99.4–99.6% lowest in 200 others over three
 draws. The bundle's `sinks.bed` now carries the set learned from all 372 (63 intervals, 810 kb),
-which holds a median 99.87% (lowest 99.67%) of the class in those 372 and, across the 1,748 scans
-counted by 2026-09-25, a median of 99.87%, a 1st percentile of 99.68% and a minimum of 99.39%
-(HG02756). A placement bin counts as captured only when all of it lies inside a sink.
+which holds a median 99.87% (lowest 99.67%) of the class in those 372 and, across all 3,202 cohort
+scans, a median of 99.86%, a 1st percentile of 99.68% and a minimum of 99.39%. A placement bin counts as captured only when all of it lies inside a sink.
 
 Two caveats travel with the number. First, a scan classifies fully unmapped reads, but a fetch
 retrieves them only with `ngs-dose count --unmapped`; an unmapped read with a mapped mate sits at
