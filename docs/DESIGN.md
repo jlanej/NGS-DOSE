@@ -597,19 +597,18 @@ mode measures the class, to that capture, when its panel is loaded.
   survive), and monomeric α, which as a class of its own takes 17% of the HORs' k-mers with it,
   because a k-mer shared between classes is dropped from both.
 - *Against assemblies of the same people* (HPRC release 2, CenSat annotation of both haplotypes
-  summed; 96 genomes of the 1000 Genomes cohort in the published results page as of 2026-09-24,
+  summed; the 200 genomes of the 1000 Genomes cohort that have one, in the published results page,
   NGS-DOSE-1000G `python -m report --censat`): the median estimate/assembly ratio is HSat3 0.94,
-  HSat1A 0.87, HSat1B 0.85, α-satellite HORs 1.00 and ACRO 0.79. β-satellite (0.73) and CER (0.43)
-  read low by about their recall. Across people, r = 0.99 for HSat1B, 0.95 for ACRO, 0.94 for
-  β-satellite, 0.89 for CER, 0.87 for HSat1A and 0.79 for HSat3. For the HORs r is 0.65, because
-  people differ by only about 4%. HSat2 agrees poorly even in the 47 assemblies with at most 2%
-  of its arrays in marked gaps (median ratio 1.11, r = 0.09; r = 0.18 in the 43 with none), so
+  HSat1A 0.91, HSat1B 0.86, α-satellite HORs 1.02 and ACRO 0.79. β-satellite (0.74) and CER (0.43)
+  read low by about their recall. Per genome the two measurements agree to a robust SD of 2–8%
+  for eight families; across people, r = 1.00 for HSat1B, 0.95 for ACRO, 0.93 for β-satellite,
+  0.91 for CER, 0.79 for HSat1A and 0.76 for HSat3. For the HORs r is 0.70, because people differ
+  by only 5% while the two agree to 3%. HSat2 agrees poorly even in the 79 assemblies with at most
+  2% of its arrays in marked gaps (median ratio 1.08, r = 0.39), so
   what the HSat2 panel measures is heritable but not yet confirmed to be HSat2 mass. An assembly
   is a truth only for the arrays it spans;
   `ngsdose/hprc.py` leaves a sample out of a class when gap-containing arrays exceed 2% of what is
-  annotated. (It now also counts the standalone `GAP` records next to a class's arrays, which the
-  page of 2026-09-24 did not: on the same table HSat2 keeps 38 samples, ratio 1.06, r = 0.02, and
-  the HORs 92.) SST1 and SATR are annotated several times more generously in the HPRC assemblies
+  annotated. (Standalone `GAP` records next to a class's arrays count as gaps of that class.) SST1 and SATR are annotated several times more generously in the HPRC assemblies
   than in CHM13, so their absolute ratios mean nothing.
 - *The telomeric repeat* (`TEL`: the six canonical 31-mers of (TTAGGG)n, unfiltered). A relative
   measure, not a telomere length: a read is assigned with 34 bp of perfect repeat, which
@@ -808,10 +807,9 @@ sits within 0.1 of the midparent in all four trios. Two things follow. The contr
 the 2019 DNA and 1.84 in the 2015 DNA — a culture losing an X. And the NYGC libraries read both
 late-replicating controls (the inactive X, the acrocentric DJ) about 3% low where the older
 libraries do not, which is what a larger S-phase fraction in the source culture would do. The
-cohort does not bear this out so far. In the NGS-DOSE-1000G report (as of 2026-09-24, 1,259 of
-3,202 genomes; 628 women whose line has kept both X chromosomes, chrX 1.85–2.15), DJ and female X
-do not move together (r = −0.06, 95% CI −0.14 to 0.02), where the hypothesis predicts a positive
-r. DJ's inherited copy-number spread between people can hide a small shared effect, so this
+cohort does not bear this out. In the NGS-DOSE-1000G report (all 3,202 genomes; the 1,538 women
+whose line has kept both X chromosomes, chrX 1.85–2.15), DJ and female X do not move together
+(r = 0.01, 95% CI −0.04 to 0.06), where the hypothesis predicts a positive r. DJ's inherited copy-number spread between people can hide a small shared effect, so this
 weakens the S-phase explanation without ruling it out; the test against the leading control PC
 is still to come.
 
@@ -969,13 +967,17 @@ quantity on a scale k multiplies b, and R, by k. The cohort page therefore repor
 children's level against their parents', and R with the children first rescaled to their
 parents' spread (b/s for b). A batch's scale moves R and leaves the rescaled R alone; new
 variation arising in the children does the reverse; the two bracket the reliability. On the
-252 trios of the published page (as of 2026-09-24) they agree within a few hundredths for most
-metrics and part for HSat2 (s = 1.14, slope 1.15, above 1, which new variation cannot produce)
-and ACRO (s = 0.92, which it cannot either).
+602 trios of the published page they agree within a few hundredths for most metrics and part for
+HSat2 (s = 1.08, slope 1.03: R 1.03 from the slope, 0.96 rescaled) and ACRO (s = 0.96: 0.91 and
+0.95); the 45S reads 0.95 and 0.94.
 `trios.by_sex` asks whether the four parent–child pairings by sex differ, referring Cochran's Q
 on Fisher's z to its distribution under shuffled children's sexes and swapped parental roles:
-the chi-square reference is far too liberal for skewed quantities (on the same 252 trios: the EBV
-load's pairings p = 0.0001 by chi-square, 0.27 by the shuffles; HSat3's 0.02 and 0.07).
+the chi-square reference is far too liberal for skewed quantities (on the 602 trios: the EBV
+load's pairings p = 0.0005 by chi-square, 0.09 by the shuffles; the distal junction's 1 × 10⁻⁷ and
+0.27; the 45S's 0.04 and 0.14). A contrast between the father-to-son and father-to-daughter
+correlations counts as sex linkage on the page only when this shuffle test agrees (p ≤ 0.01): at
+602 trios the 5S array's contrast reaches 3.2 standard errors on Fisher's scale with a shuffle p of
+0.14, and it is on chromosome 1.
 
 The cohort table carries its own controls for this analysis. `truth.auto` has no variance but
 error, so its "reliability" should be nil. The EBV load and the mitochondrial content of the
@@ -1053,7 +1055,7 @@ threads.
   (`@PG` lines, `@SQ` hash) says which pipeline a file came from. DRAGEN, or a different decoy
   set, needs its own scanned subset and `ngsdose sinks` (`--classes TEL ...` for compositional
   classes).
-- **Biobank scale: which classes need a scan** (status as of 2026-09-25). A biobank scans a
+- **Biobank scale: which classes need a scan** (status as of 2026-09-28, the cohort run complete). A biobank scans a
   subset whole, budgeted here at 0.1–1% of CRAMs (about 500–5,000 at UK Biobank), and that
   subset is where each pipeline's sinks are learned and checked. For the rest, on an NYGC-like
   bwa-mem pipeline:
@@ -1092,14 +1094,13 @@ threads.
 - **GRCh38 only**, chr-prefixed names. A CHM13 or GRCh37 bundle is a rebuild of the controls and
   sinks; panels are reference-independent.
 - **Dispersed families are experimental** (section 5). All ten are compared with HPRC release-2
-  assemblies of 96 cohort members (the NGS-DOSE-1000G page as of 2026-09-24,
-  `docs/data/satellites_hprc.tsv`; a class is compared only where gap-annotated arrays are at most
-  2% of it). The median estimate/assembly ratio is 1.00 for α-satellite HORs, 0.94 for HSat3 (85
-  samples), and 0.87 and 0.85 for HSat1A and HSat1B. β-satellite reads at 0.73, ACRO at 0.79 and
-  CER at 0.43. These are stable under-reads, set by their k-mer recall, that track the assemblies
-  across people (r 0.89–0.95). HSat2's median ratio is 1.11 in the 47 samples compared, but it
-  barely tracks the assembly from person to person (r = 0.09), so its mass is not yet confirmed.
-  SST1 and SATR (0.27, 0.09) cannot be judged in absolute terms, because HPRC annotates them
+  assemblies of 200 cohort members (the NGS-DOSE-1000G page, `docs/data/satellites_hprc.tsv`; a
+  class is compared only where gap-annotated arrays are at most 2% of it). The median
+  estimate/assembly ratio is 1.02 for α-satellite HORs, 0.94 for HSat3 (162 samples), and 0.91 and
+  0.86 for HSat1A and HSat1B. β-satellite reads at 0.74, ACRO at 0.79 and CER at 0.43. These are
+  stable under-reads, set by their k-mer recall, that track the assemblies across people (r
+  0.91–0.95). HSat2's median ratio is 1.08 in the 79 samples compared, but it tracks the assembly
+  poorly from person to person (r = 0.39), so its mass is not yet confirmed. SST1 and SATR (0.26, 0.09) cannot be judged in absolute terms, because HPRC annotates them
   several times more generously than the CHM13 annotation the panels came from. None of the ten
   has sinks in the bundle; the experimental NYGC set (section 5) has been checked on scan
   placements only. There is also a telomeric-repeat class that is a relative
@@ -1112,9 +1113,11 @@ threads.
   (1.004 ± 0.007 of the full-depth value over 20 subsamples; section 15), and a 0.75× subsample
   of NA12878 returns 499 against 504 from the full data. The GC curve itself gets noisy
   (`gc_curve_max_se`), which the GC-extreme features feel first.
-- **Trios.** Section 10 now runs on the cohort. The results page (NGS-DOSE-1000G, as of
-  2026-09-24, 1,259 genomes) estimates transmission from 252 of the 602 trios, and 385 trios were
-  complete among the 1,748 genomes counted by 2026-09-25. Nearly every child is in the 698-genome
+- **Trios.** Section 10 now runs on the cohort. The results page (NGS-DOSE-1000G) estimates transmission from all
+  602 complete trios (the pedigree's 603rd names a parent the release never sequenced): 45S 0.95
+  (0.86–1.04), 5S 1.02 (0.88–1.15), the distal junction 0.78, the satellite families 0.44–1.03, the
+  negative controls −0.31 to 0.15 (insert size's −0.31 is the parents' shared batch, ρ = 0.20,
+  subtracted by the spousal correction from a slope of zero). Nearly every child is in the 698-genome
   batch (597 of the 602 fully sequenced trios) and most parents (91%) in the original 2,504, so
   generation and batch largely go together. A batch that reads on a different scale moves R,
   which is why the page also reports s and R with the children rescaled to their parents'
@@ -1144,13 +1147,13 @@ threads.
 
 1. All 3,202 samples of the 1000 Genomes 30× cohort (NGS-DOSE-1000G's `pipeline/`) **scanned
    whole**, from staged CRAMs, with the satellite and telomere panels loaded, and fetched as well,
-   a few seconds more on a local file (its `01b_dose_sample.sh`). Under way: 1,748 of 3,202
-   genomes scanned and fetched as of 2026-09-25, all with engine build fae1124; their fetches hold
-   the bundle's positional classes only, with the sinks as they were before TEL (sha256
-   9dd52ba1…), and the current configuration adds the telomere panel to the fetch. The results
-   page (see "The running record" below) covered 1,259 genomes and 252 complete trios as of
-   2026-09-24, including fetch against scan, the Hall et al. and ddPCR comparisons, and
-   satellites against HPRC assemblies in 96 samples. The scan is the full-accuracy mode and the
+   a few seconds more on a local file (its `01b_dose_sample.sh`). Done on 2026-09-28: all 3,202
+   genomes scanned and fetched, 1,748 with engine build fae1124 and 1,454 with 7772e32, builds
+   whose counts NGS-DOSE's tests hold byte-identical; the first 1,748 fetches hold the bundle's
+   positional classes with the sinks as they were before TEL (sha256 9dd52ba1…), the other 1,454
+   the telomere panel through the current sinks as well. The results page (see "The running
+   record" below) covers every genome and 602 complete trios, including fetch against scan, the
+   Hall et al. and ddPCR comparisons, and satellites against HPRC assemblies in 200 samples. The scan is the full-accuracy mode and the
    reference for everything cheaper: placement-independent counts, the satellite families
    against an assembly truth for the 200 samples that have HPRC assemblies (its
    `04_hprc_satellites.sh`), sinks
