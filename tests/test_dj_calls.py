@@ -126,6 +126,129 @@ def test_a_profile_without_noise_is_still_called():
     assert [s.state for s in c.segments] == [10, 11] and c.segments[0].end == 200000 and [str(e) for e in c.events] == ["+1:200-400kb"]
 
 
+# ------------------------------------------------------------------ off the whole numbers
+POLY = [(0, 30000), (190000, 232000)]
+USABLE = np.random.default_rng(99).random(len(STARTS)) < 0.75            # the unit's windows that hold panel k-mers: the same in every genome
+GC = np.where(STARTS < 105000, 0.43, 0.39) + np.random.default_rng(98).normal(0, 0.03, len(STARTS))    # richer below 105 kb, as the junction is
+
+
+def cohort_of(rng, n, special=None, noise=0.65, scale_sd=0.013, lean_sd=0.015, gc_sd=0.0):
+    """Calibrated profiles of `n` genomes at ten copies, each with its own scale, lean and (with `gc_sd`) slope on the
+    windows' GC; `special`: genome -> (level, pieces) in its place, at a scale of one and without a lean. Returns
+    (values, calls)."""
+    t = (STARTS + W / 2) / U - 0.5
+    V, C = [], []
+    for i in range(n):
+        level, pieces = (special or {}).get(i, (10.0, ()))
+        x = np.full(len(STARTS), float(level))
+        for a, b, d in pieces:
+            x[(STARTS >= a) & (STARTS < b)] += d
+        own = rng.normal(0, scale_sd) + rng.normal(0, lean_sd) * t + rng.normal(0, gc_sd) * (GC - GC.mean())
+        x = x * np.exp(0.0 if i in (special or {}) else own) + rng.normal(0, noise, len(x))
+        x = np.where(USABLE, x, np.nan)
+        V.append(x)
+        C.append(segments.describe(segments.segment(STARTS, x, unit_length=U, scale_sd=0.015), POLY, expected=10))
+    return np.array(V), C
+
+
+def test_a_level_off_its_whole_number_is_measured_and_judged_against_the_cohort():
+    """The nearest whole number is called; how far the level lies from it is kept, and judged against the cohort's scales."""
+    rng = np.random.default_rng(5)
+    V, C = cohort_of(rng, 120, special={0: (9.6, ()), 1: (10.36, ()), 2: (9.9, ()), 3: (9.0, ())}, scale_sd=0.012)
+    assert C[0].copies == 10 and not C[0].uncertain and C[0].status == "settled" and C[0].off is None       # before the fractions are looked for
+    used = segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY, scale_sd=0.015, level_z=2.5)
+    assert used["steps"] and used["spread_from"] == "this cohort" and 0.009 < used["spread"] < 0.017 and used["n"] == 120 and used["level_z"] == 2.5
+    low, high, near, nine = C[:4]
+    assert low.copies == 10 and abs(low.off + 0.4) < 0.08 and low.off_z < -2.5 and low.status == "fractional" and low.fractional and not low.fractions
+    assert high.copies == 10 and abs(high.off - 0.36) < 0.08 and high.off_z > 2.5 and high.status == "fractional"
+    assert near.copies == 10 and abs(near.off + 0.1) < 0.08 and abs(near.off_z) < 2.5 and near.status == "settled"   # 9.9: a scale like many another
+    assert nine.copies == 9 and abs(nine.off) < 0.3 and nine.status == "settled"                             # nine copies, on its whole number
+    rest = C[4:]
+    assert sum(c.status == "fractional" for c in rest) <= 5 and all(c.ratio is not None and abs(c.ratio - 1) < 0.06 for c in rest)
+    assert abs(np.median([c.off for c in rest])) < 0.05
+    # a genome half way between two whole numbers is uncertain, whatever its offset
+    V2, C2 = cohort_of(rng, 60, special={0: (9.5, ())})
+    segments.find_fractions(C2, STARTS, V2, unit_length=U, leave_out=POLY)
+    assert C2[0].uncertain and C2[0].status == "uncertain" and not C2[0].fractional and abs(abs(C2[0].off) - 0.5) < 0.15
+
+
+def test_a_step_of_fractional_height_is_found_where_the_cohort_has_none():
+    """A partial copy of the first 316 kb in half of the cells: the chain of whole numbers calls nothing or a whole copy;
+    the step is found, placed and sized, and nothing is found in the genomes that have none."""
+    rng = np.random.default_rng(8)
+    V, C = cohort_of(rng, 150, special={0: (10.0, ((0, 316000, 0.5),)), 1: (10.0, ((100000, 180000, -0.45),))})
+    used = segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY, gc=GC)
+    assert used["steps"] and "gc_slope_sd" in used
+    f = C[0].fractions
+    assert len(f) == 1 and C[0].status == "fractional" and abs(f[0].z) >= 4
+    end = f[0].end if f[0].start == 0 else f[0].start                                                          # the step, whichever side is described
+    assert abs(end - 316000) <= 12000 and abs(abs(f[0].offset) - 0.5) < 0.15
+    assert {f[0].start, f[0].end} & {0, U} and segments.fractions_string(C[0]).endswith("kb") and segments.fractions_string(C[0])[0] in "+-"
+    g = C[1].fractions                                                                                         # a loss inside the unit, in 45% of the cells
+    assert len(g) == 1 and abs(g[0].start - 100000) <= 12000 and abs(g[0].end - 180000) <= 12000 and abs(g[0].offset + 0.45) < 0.15 and g[0].z <= -4
+    assert g[0].label(10).startswith("-0.4") and g[0].height(10) == g[0].offset                                # the whole number there is the ten it is described against
+    assert sum(bool(c.fractions) for c in C[2:]) <= 1                                                          # nothing there: nothing found
+    # a partial copy in 0.58 of the cells (in quieter libraries): whether the chain calls a whole copy there or none, the fraction gives its height
+    V3, C3 = cohort_of(rng, 150, special={0: (10.0, ((0, 316000, 0.58),))}, noise=0.45)
+    segments.find_fractions(C3, STARTS, V3, unit_length=U, leave_out=POLY, gc=GC)
+    (h,) = C3[0].fractions
+    assert C3[0].status in ("fractional", "uncertain") and h.start == 0 and abs(h.end - 316000) <= 12000
+    assert h.state in (10, 11) and abs(h.height(C3[0].copies) - 0.58) < 0.12 and (h.offset < 0) == (h.state == 11)
+    # in two thirds of the cells it is a third of a copy from a whole number, which is within what the cohort's profiles wander by: nothing is said
+    V4, C4 = cohort_of(rng, 150, special={0: (10.0, ((0, 316000, 0.68),))})
+    segments.find_fractions(C4, STARTS, V4, unit_length=U, leave_out=POLY, gc=GC)
+    assert any(e.delta == 1 and e.start == 0 and abs(e.end - 316000) <= 8000 and e.kind == "partial copy" for e in C4[0].events)
+    assert all(abs(f.offset) < 0.45 for f in C4[0].fractions)
+
+
+def test_a_profile_that_follows_gc_is_no_step():
+    """A library whose GC response the model left in: its profile follows the windows' GC, which here is richer below
+    105 kb. With the GC beside the lean in the fit, the library has no step; without it, it has."""
+    rng = np.random.default_rng(12)
+    V, C = cohort_of(rng, 150, gc_sd=0.05)
+    t = (STARTS + W / 2) / U - 0.5
+    x = 10.0 * np.exp(1.2 * (GC - GC.mean())) + rng.normal(0, 0.65, len(STARTS))                            # a slope of 1.2, 24 of the cohort's SDs: half a copy across 105 kb
+    V[0] = np.where(USABLE, x, np.nan)
+    C[0] = segments.describe(segments.segment(STARTS, V[0], unit_length=U, scale_sd=0.015), POLY, expected=10)
+    segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY)
+    without = list(C[0].fractions)
+    segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY, gc=GC)
+    assert without and not C[0].fractions and C[0].status in ("settled", "fractional")
+    assert without[0].start == 0 or without[0].end == U
+
+
+def test_few_genomes_are_judged_by_the_rules_and_no_step_is_looked_for():
+    rng = np.random.default_rng(3)
+    V, C = cohort_of(rng, 20, special={0: (9.6, ()), 1: (10.0, ((0, 316000, 0.5),))})
+    used = segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY, gc=GC, scale_sd=0.015, level_z=2.5)
+    assert not used["steps"] and used["spread_from"] == "the class's rules" and used["spread"] == 0.015 and "gc_slope_sd" not in used
+    assert C[0].status == "fractional" and abs(C[0].off_z - np.log(C[0].ratio) / 0.015) < 1e-6 and not any(c.fractions for c in C)
+    used = segments.find_fractions(C, STARTS, V, unit_length=U, leave_out=POLY, spread=0.03, level_z=2.5)
+    assert used["spread_from"] == "the efficiency table's cohort" and used["spread"] == 0.03 and C[0].status == "settled" and abs(C[0].off_z) < 2.5
+    none = segments.find_fractions([None, None], STARTS, V[:2], unit_length=U)
+    assert none["n"] == 0 and not none["steps"]
+
+
+def test_the_levels_of_a_fit_are_the_stretches_means():
+    """fit_levels and propose_steps on a profile whose truth is known: two levels and a lean."""
+    rng = np.random.default_rng(4)
+    n = 800
+    t = np.linspace(-0.5, 0.5, n)
+    y = np.where(np.arange(n) < 500, 0.0, 0.05) + 0.03 * t + rng.normal(0, 0.06, n)
+    w = np.full(n, 1 / 0.06 ** 2)
+    S = segments._Sums(y, w, t[:, None])
+    lv, co, ll = segments.fit_levels(S, [500], [0.03])
+    assert abs(lv[1] - lv[0] - 0.05) < 0.02 and abs(co[0] - 0.03) < 0.03
+    _, _, l0 = segments.fit_levels(S, [], [0.03])
+    assert ll - l0 > 16
+    cuts = segments.propose_steps(y, w, t[:, None], 10.0, [0.03])
+    assert len(cuts) == 1 and abs(cuts[0] - 500) <= 16
+    assert segments.propose_steps(y, w, t[:, None], 10.0, [0.03], also=[500]) == [500]                          # where the whole numbers change, a step is tried
+    flat = 0.03 * t + rng.normal(0, 0.06, n)
+    assert segments.propose_steps(flat, w, t[:, None], 10.0, [0.03]) == []
+    assert segments.propose_steps(y[:150], w[:150], t[:150, None], 10.0, [0.03]) == []                          # too few windows for a stretch on either side
+
+
 # ------------------------------------------------------------------ the rules in the median polish
 def cohort_matrix(rng, n=300, m=400, anchors_read=0.975, del_frac=0.4, noise=0.05):
     """log C_iw of a cohort: copies 10 in most genomes, 9 and 11 in some; window efficiencies; the anchors read
@@ -245,6 +368,8 @@ def test_the_bundle_rules_load_and_lie_inside_the_unit():
     B = resources.Bundle()
     rules = B.calibration()
     assert set(rules) == {"DJ"} and rules["DJ"]["expected_copies"] == B.meta["expected_copies"]["DJ"]
+    fr = rules["DJ"]["fractions"]
+    assert fr["level_z"] >= 3 and fr["event_z"] >= fr["level_z"] and 0.2 <= fr["min_height"] <= 0.5 and fr["min_samples"] >= 50 and fr["min_windows"] >= 50
     U_dj = len(B.units()["DJ"])
     assert rules["DJ"]["unit_length"] == U_dj
     for a, b in rules["DJ"]["level_exclude"] + [p["interval"] for p in rules["DJ"]["polymorphic"]]:
@@ -269,6 +394,10 @@ def test_the_cohort_command_writes_the_segments(tmp_path):
         cn = np.full(len(STARTS), 10.0)
         if i == 0:
             cn[STARTS < 316000] += 1
+        if i == 7:
+            cn *= 0.958                                                                  # a junction lost in four cells of ten
+        if i == 8:
+            cn[STARTS < 110000] -= 0.5                                                   # a copy that lacks the first 110 kb, in half of the cells
         if i % 3 == 0:
             cn[(STARTS >= 197000) & (STARTS < 217000)] -= 1                              # the common deletion, in a third of the genomes
         vals = cn * np.exp(eff_true) * 0.975 * np.exp(rng.normal(0, 0.07, len(STARTS)))
@@ -291,8 +420,29 @@ def test_the_cohort_command_writes_the_segments(tmp_path):
     S = [r for r in csv.DictReader(open(segs), delimiter="\t")]
     assert {r["class"] for r in S} == {"DJ"} and len({r["sample"] for r in S}) == 60
     g0 = [r for r in S if r["sample"] == "g00"]
-    assert [r["state"] for r in g0] == ["11", "10", "11", "10"] and g0[0]["complete_copies"] == "10"
+    assert [r["state"] for r in g0] == ["11", "10", "11", "10"] and g0[0]["complete_copies"] == "10" and {r["kind"] for r in g0} == {"segment"}
+    assert abs(float(g0[0]["raw"]) / float(g0[0]["mean"]) - float(g0[0]["scale_f"])) < 0.03              # what the reads give, before the genome's scale
+    # off the whole numbers: a level, and a stretch
+    assert "off the whole numbers" in run.stderr and "carry a step of fractional height" in run.stderr
+    assert T["g07"]["DJ.copies"] == "10" and T["g07"]["DJ.call"] == "fractional" and abs(float(T["g07"]["DJ.off"]) + 0.42) < 0.1 and float(T["g07"]["DJ.off_z"]) < -3
+    assert T["g07"]["DJ.fractional"] == "none" and T["g07"]["DJ.fractional_z"] == "none"
+    assert T["g01"]["DJ.call"] == "settled" and abs(float(T["g01"]["DJ.off"])) < 0.3 and T["g00"]["DJ.call"] == "settled" and T["g00"]["DJ.fractional"] == "none"
+    assert T["g08"]["DJ.call"] == "fractional" and T["g08"]["DJ.partial"] == "none"
+    h, (a, b) = T["g08"]["DJ.fractional"].split(":")[0], T["g08"]["DJ.fractional"].split(":")[1].removesuffix("kb").split("-")
+    assert abs(abs(float(h)) - 0.5) < 0.15 and abs(float(T["g08"]["DJ.fractional_z"])) >= 4
+    assert (h[0] == "-" and a == "0" and abs(int(b) - 110) <= 12) or (h[0] == "+" and abs(int(a) - 110) <= 12 and b == "400")   # the stretch that lacks it, or the rest against it
+    f8 = [r for r in S if r["sample"] == "g08" and r["kind"] == "fraction"]
+    assert len(f8) == 1 and f8[0]["state"] == "10" and f8[0]["off_integer"] == "True" and abs(float(f8[0]["z"])) >= 4 and f8[0]["call"] == "fractional"
+    assert abs(abs(float(f8[0]["mean"]) - 10) - 0.5) < 0.15 and sum(r["kind"] == "fraction" for r in S) <= 3
     E = json.loads(eff.read_text())["DJ"]
+    assert E["fractions"]["spread_from"] == "this cohort" and E["fractions"]["steps"] and 0.002 < E["fractions"]["spread"] < 0.02
+    # one genome counted later, with the saved table: its level is judged against the spread of the table's cohort
+    one = tmp_path / "one.tsv"
+    again = subprocess.run([sys.executable, "-m", "ngsdose", "cohort", files[7], "-t", str(one), "--efficiencies", str(eff), "--control-pcs", "0"], capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
+    (r7,) = list(csv.DictReader(open(one), delimiter="\t"))
+    assert "the efficiency table's cohort" in again.stderr and "steps of fractional height are not looked for" in again.stderr
+    assert r7["DJ.call"] == "fractional" and abs(float(r7["DJ.off"]) - float(T["g07"]["DJ.off"])) < 0.05 and r7["DJ.fractional"] == "none"
     assert E["scale"]["rule"] == "mode" and abs(E["scale"]["factor"] - 1 / 0.975) < 0.01 and len(E["polymorphic"]) == 3 and not all(E["level"])
     by_name = {x["name"]: x for x in E["polymorphic"]}
     assert abs(by_name["distal 5-15 kb"]["offset"]) <= 0.01 and 0.02 <= by_name["197-217 kb"]["offset"] <= 0.06      # found on this cohort, not taken from the bundle

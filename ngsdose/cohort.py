@@ -435,7 +435,7 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
         kept = ~np.isnan(cal.a)
         calibrated = np.exp(cal.c[:, None] + cal.resid)                        # samples x windows, copies; NaN where not retained
         unit_level = np.exp(cal.c + _nanmedian(np.where(kept[None, :], cal.resid, np.nan), axis=1))
-        calls = {}
+        calls, fractions = {}, None
         if rule.get("segments") is not None and rule.get("segments") is not False:
             sp = rule["segments"] if isinstance(rule["segments"], dict) else {}
             ref = _nanmedian(cal.window_sd[cal.level]) if cal.level is not None and np.isfinite(cal.window_sd[cal.level]).any() else np.nan
@@ -450,6 +450,23 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
                 if call is not None:
                     calls[smp] = seg.describe(call, poly, int(sp.get("min_core", seg.MIN_CORE)), expected=(int(rule["expected_copies"]) if rule.get("expected_copies") else None))
                     calls[smp].readings = []                                   # the other scales' readings have served
+            fr = rule.get("fractions")
+            if calls and fr is not None and fr is not False:
+                fp = fr if isinstance(fr, dict) else {}
+                table = ((efficiencies or {}).get(cls) or {}).get("fractions") or {}
+                fractions = seg.find_fractions([calls.get(smp) for smp in cal.samples], layout[cls][0], np.where(kept[None, :], calibrated, np.nan), rel,
+                                               window=int(layout[cls][1][0] - layout[cls][0][0]), unit_length=unit_len, leave_out=poly, gc=cal.window_gc,
+                                               scale_sd=float(sp.get("scale_sd", seg.SCALE_SD)), tilt_sd=float(sp.get("tilt_sd", seg.TILT_SD)), tau=float(sp.get("tau", seg.TAU)),
+                                               level_z=float(fp.get("level_z", seg.LEVEL_Z)), event_z=float(fp.get("event_z", seg.EVENT_Z)),
+                                               min_height=float(fp.get("min_height", seg.FRACTION_MIN_HEIGHT)), min_windows=int(fp.get("min_windows", seg.FRACTION_MIN_WINDOWS)),
+                                               min_samples=int(fp.get("min_samples", seg.FRACTION_MIN_SAMPLES)), spread=table.get("spread") if a_fixed is not None else None)
+                n_level = sum(1 for c in calls.values() if not c.uncertain and c.off_z is not None and abs(c.off_z) >= c.level_z)
+                n_step = sum(1 for c in calls.values() if not c.uncertain and c.fractions)
+                say(f"[cohort] {cls}: off the whole numbers: the scales' spread is {100 * fractions['spread']:.2f}% ({fractions['spread_from']}); "
+                    f"{n_level} genomes' levels lie {fractions['level_z']:g} SDs or more from their whole number"
+                    + (f", {n_step} carry a step of fractional height" if fractions["steps"] else
+                       f"; steps of fractional height are not looked for in fewer than {int(fp.get('min_samples', seg.FRACTION_MIN_SAMPLES))} genomes")
+                    + f"; {sum(1 for c in calls.values() if c.uncertain)} calls are uncertain")
         scores, var = profile_pcs(cal, n_profile_pcs) if len(names) > n_profile_pcs + 2 else (None, None)
         for i, s in enumerate(cal.samples):
             rows[s][f"{cls}.cn"] = round(float(np.exp(cal.c[i])), 2)
@@ -467,7 +484,12 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
                 rows[s][f"{cls}.scale_f"] = round(cl.scale, 3)
                 rows[s][f"{cls}.tilt"] = round(cl.tilt, 3)
                 rows[s][f"{cls}.call_gap"] = None if not np.isfinite(cl.gap) else round(cl.gap, 1)
-                rows[s][f"{cls}.call"] = "uncertain" if cl.uncertain else "settled"
+                rows[s][f"{cls}.call"] = cl.status
+                if fractions is not None:
+                    rows[s][f"{cls}.off"] = None if cl.off is None else round(cl.off, 2)
+                    rows[s][f"{cls}.off_z"] = None if cl.off_z is None else round(cl.off_z, 2)
+                    rows[s][f"{cls}.fractional"] = seg.fractions_string(cl) or "none"
+                    rows[s][f"{cls}.fractional_z"] = ";".join(f"{f.z:+.1f}" for f in cl.fractions) or "none"
             if scores is not None:
                 for k in range(scores.shape[1]):
                     rows[s][f"{cls}.profilePC{k + 1}"] = round(float(scores[i, k]), 5)
@@ -477,6 +499,8 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
                         n_samples=len(cal.samples))
         if rule or (cal.scale or {}).get("rule") == "table":
             eff[cls].update(level=cal.level.tolist(), scale=cal.scale, polymorphic=cal.offsets)
+        if fractions is not None:
+            eff[cls]["fractions"] = {k: (round(v, 5) if isinstance(v, float) else v) for k, v in fractions.items()}
         if profiles is not None:
             profiles[cls] = dict(samples=list(cal.samples), start=cal.window_start.tolist(), end=[int(e) for e in layout[cls][1]],
                                  cn=np.where(kept[None, :], calibrated, np.nan).astype(np.float32), level=cal.level.copy(), calls=calls,

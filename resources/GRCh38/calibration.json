@@ -63,6 +63,13 @@
       "tilt": true,
       "tilt_sd": 0.03
     },
-    "derived_from": "NGS-DOSE-1000G docs/DJ.md: 3,202 genomes of the 1000 Genomes 30x cohort (NYGC, NovaSeq 2x150, PCR-free) and 56 HPRC release-2 haplotypes of 28 of them. level_exclude: the segments of the unit that vary between people (cohort SD per 5-kb sub-block, and the breakpoints the segment calls found). polymorphic: intervals that a common deletion removes from some junction copies; `offset` is what that cohort's comb gave, within 0.02 of the median log ratio of the estimate to the assembly's copies over the 18 genomes whose assembly resolves the junction (analysis/dj/polymorphic_offsets.py there). A cohort of at least scale.min_samples genomes finds its own"
+    "fractions": {
+      "level_z": 3.0,
+      "event_z": 4.0,
+      "min_height": 0.25,
+      "min_windows": 100,
+      "min_samples": 50
+    },
+    "derived_from": "NGS-DOSE-1000G docs/DJ.md: 3,202 genomes of the 1000 Genomes 30x cohort (NYGC, NovaSeq 2x150, PCR-free) and 56 HPRC release-2 haplotypes of 28 of them. level_exclude: the segments of the unit that vary between people (cohort SD per 5-kb sub-block, and the breakpoints the segment calls found). polymorphic: intervals that a common deletion removes from some junction copies; `offset` is what that cohort's comb gave, within 0.02 of the median log ratio of the estimate to the assembly's copies over the 18 genomes whose assembly resolves the junction (analysis/dj/polymorphic_offsets.py there). A cohort of at least scale.min_samples genomes finds its own offsets, from its own comb. fractions: a level `level_z` robust SDs of the cohort's scales from its whole number, or a stretch `event_z` robust SDs of the cohort's same contrast from the rest and `min_height` copies high, makes a call fractional (a change in part of the cells, or a library unlike the cohort's); the scales of that cohort had a robust SD of 1.4%."
   }
 }
