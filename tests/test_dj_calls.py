@@ -5,7 +5,6 @@ import subprocess
 import sys
 
 import numpy as np
-import pytest
 
 from ngsdose import cohort, segments
 
@@ -206,7 +205,6 @@ def test_a_profile_that_follows_gc_is_no_step():
     105 kb. With the GC beside the lean in the fit, the library has no step; without it, it has."""
     rng = np.random.default_rng(12)
     V, C = cohort_of(rng, 150, gc_sd=0.05)
-    t = (STARTS + W / 2) / U - 0.5
     x = 10.0 * np.exp(1.2 * (GC - GC.mean())) + rng.normal(0, 0.65, len(STARTS))                            # a slope of 1.2, 24 of the cohort's SDs: half a copy across 105 kb
     V[0] = np.where(USABLE, x, np.nan)
     C[0] = segments.describe(segments.segment(STARTS, V[0], unit_length=U, scale_sd=0.015), POLY, expected=10)
