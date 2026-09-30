@@ -23,7 +23,7 @@ OVERLONG_SINKS = {
 
 
 def test_every_file_named_by_the_bundle_exists():
-    for key in ("panel", "controls", "controls_bed", "sinks", "features", "anchors"):
+    for key in ("panel", "controls", "controls_bed", "sinks", "features", "anchors", "calibration"):
         assert (B.dir / B.meta[key]).stat().st_size > 0, key
     for cls, rel in B.meta["units"].items():
         assert (B.dir / rel).exists(), cls

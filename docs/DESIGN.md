@@ -780,6 +780,110 @@ Clean spacer segments differ reproducibly from one another (roughly 0.9 to 1.05 
 level, in both chemistries), which suggests that spacer segments are not all present exactly
 once per unit; the gene count is what the 18S measures, and the anchors include an 18S window.
 
+### A class with rules of its own: the distal junction
+
+One model of every window at one copy number does not hold for the distal junction, and the
+cohort run with the HPRC assemblies of 28 of its genomes showed how (NGS-DOSE-1000G,
+`docs/DJ.md`). The bundle's `calibration.json` carries what follows for the class, and `ngsdose
+cohort` applies it to estimates of the unit the rules were made for (`--no-class-rules`
+calibrates as before; `DJ.cn_unit` is what `DJ.cn` was):
+
+- **The level is set on the core.** Junction copies differ in parts of the unit: some lack the
+  distal 22 kb, some 197–217 kb, and smaller intervals near 132, 162 and 227 kb vary too.
+  `level_exclude` (0–30, 128–137, 155–170 and 190–232 kb) leaves them out of c_i and of the
+  anchors; their windows keep their efficiencies and stay in the profile.
+- **The scale is pinned to the cohort's mode.** The junction has ten copies in nearly everyone,
+  and nine genomes whose assembly holds ten complete copies read 9.37–9.79 on the scale the
+  fragment-GC model sets in the GC-rule anchors: the model reads this class 2.2% low (the
+  cohort's mode is 9.78), a residual in repeat context that also shows as window efficiencies
+  falling with GC (−0.34 log units per unit GC here, −0.53 for the 45S, whose shipped anchors
+  correct it). With fifty genomes or more, `scale: mode` takes δ = log(mode / 10) from c_i and
+  adds it to a_w, and records it in the efficiency table, so that a saved table carries the pin
+  to genomes counted later. A smaller cohort is not pinned, and says so.
+- **Polymorphic intervals are put on whole numbers.** Where a deletion is common the cohort's
+  median genome lacks part of a copy, so the median over genomes gives the interval's windows an
+  efficiency too low by that part, and every genome reads the interval too high by one factor: a
+  comb of whole numbers half a copy off at 197–217 kb, nearly a whole copy at 5–15 kb.
+  `cohort.comb_offset` finds the offsets that put the cohort on whole numbers and takes the
+  smallest that leaves at most 15% of the genomes above their own level, since a copy can lack
+  an interval but seldom holds it twice. On the cohort that is ×1.075 (5–15 kb), ×1.028
+  (15–23 kb) and ×1.046 (197–217 kb), each within 0.02 of what the assemblies give; every copy
+  holds 197–217 kb in 59% of genomes, one lacks it in 30%, two in 9%. A cohort too small for a
+  comb takes the offsets the bundle records.
+- **Whole numbers of copies are called along the unit** (`segments.py`). A genome's calibrated
+  profile is read as a chain over its windows whose states are whole numbers: a window in state
+  k is expected at k · f · exp(g · t), f the genome's scale, g its lean (the log change across
+  the unit) and t the window's position; a deviation counts at most 3.5 SDs of the window's
+  noise, a change of state costs τ = 16 log units, and the most probable chain is found for every
+  f and g of a grid under Gaussian priors (SD 1.5% and 3%). Runs of fewer than 16 windows go to
+  the neighbour that fits them better. One copy over about 10 kb, or two over 4 kb, can be found.
+  A genome is described against ten copies where it holds ten over 40 kb or more of the core,
+  otherwise against the state that holds most of it (`DJ.copies`); a gain that reaches an end of
+  the unit is a partial copy, a loss that does a partial loss (`DJ.partial`), anything else a
+  local event (`DJ.variants`). A genome whose level lies between two whole numbers throughout
+  has two readings; `DJ.call_gap` is how many log units the second is behind, and below three
+  the call is `uncertain`.
+- **What the whole numbers leave is kept** (`segments.find_fractions`). Whole numbers are what a
+  germ line holds. A junction lost or gained in part of the cells leaves the profile a fraction
+  of a copy off them, and the chain would hide it: the nearest whole number is called and the
+  difference goes into f. So the difference is measured. A genome's scale is measured without
+  a prior and set against the scales of the cohort: `DJ.off` is its level less its whole
+  numbers, in copies, and `DJ.off_z` the same in the cohort's robust SDs. And steps of
+  fractional height are looked for in the log of each core window over its called state: a
+  level per stretch is fitted by weighted least squares together with a lean and a slope on
+  the windows' GC, whose priors are the cohort's own spreads of them; steps are added one at a
+  time while each improves the fit by τ and is a quarter of a copy high (a pair at once, for 2τ,
+  where no single step does: a stretch inside the unit); and a step is kept where its stretch
+  stands four robust SDs from what the same fit finds in the cohort's other genomes. The cohort
+  is the measure because its profiles wander more than counting alone allows: the contrast
+  between two stretches of 50 kb has a robust SD of 0.10 to 0.20 copies over the cohort where
+  counting gives 0.07 to 0.12. A call that is not uncertain is then `settled`, or `fractional`
+  where the level lies three SDs from its whole number or a stretch stands off
+  (`DJ.fractional`). With fewer than fifty genomes no step is looked for and the level is
+  judged against the spread that a saved efficiency table carries, or the bundle's.
+
+The lean is there because some profiles rise or fall smoothly along the unit, by 1.5% (robust
+SD) and by more than 5% in one genome in eighteen, which a chain of whole numbers would break
+into a step. It goes weakly with the release batch (more than 5% in 5.1% of the genomes of one
+and 7.4% of the other) and with the library's GC response (|r| at most 0.08), and not with depth
+or mitochondrial load; none of them accounts for it, and its cause is not known.
+
+What this buys, on the cohort. Of 3,202 calls 3,124 are settled: 2,747 genomes hold ten copies
+throughout (the polymorphic intervals aside), 106 nine, 7 eight, 23 eleven, 4 more; 207 carry a
+copy that holds or lacks an end of the unit, the commonest a copy of the first 316 kb (60
+genomes) and one of the first 262 kb (45). 49 calls are fractional (29 by the level, of which
+23 lie below their whole number, where a normal scatter of the scales would give 9 in all; 20
+by a stretch of the unit) and 29 uncertain. Against the assemblies, every one of the 7 partial
+copies in the 19 genomes whose assembly resolves the junction is called, with the breakpoint
+within 4 kb, and the called state equals the assembly's in 90.9% of the 5-kb blocks of the 17 of
+them whose call is settled; the other two are fractional, a fraction in the reads where the
+assembly, made from another culture of the line, holds a whole number. In the trios, of the 556
+whose three calls are settled, 553 have no 5-kb block of the core that the parents' states do
+not allow (99.6% of 33,151 blocks), and a parent explains 95% of the blocks in which a child
+deviates. The common deletions, which are in the germ line beyond doubt, pass as a germline
+variant should: where one parent lacks one copy of 197-217 kb and the other none, 67 of 137
+children lack one.
+
+What it does not buy. A genome counted alone has no cohort to pin its scale or to fit its
+polymorphic intervals: it takes both from a saved efficiency table of its own chemistry, and
+without one its level rests on the GC model, a few percent low. The shorter polymorphisms are
+left out of the level but not genotyped, and in the short polymorphic intervals a deletion is
+called in 8-16% of the children of two parents without it: an event of 10 kb is near the limit
+of what the chain can find. A fraction is seen in a window of its own: put into genomes of the
+cohort, a change in two fifths to three fifths of the cells is fractional or uncertain in half
+to nine tenths of them (a fifth to a third for a stretch of 110 kb); a change in fewer cells
+passes as none and one in more as a whole copy, though the level reads it at every share. What
+a fraction is, the measurement cannot say: a tenth of the level's offset lies between groups of
+samples handled together, and spouses' offsets go together (r = 0.20). And the trios hold
+something the calls do not explain: a whole-copy step passes to 15 of 44 children (two-sided
+binomial p = 0.05 against one half) and a partial copy, looked for in the child by its
+breakpoint, to 29 of 70 (p = 0.19), and a father's loss of a junction to 4 of 23 where a
+mother's passes to 10 of 16 (Fisher exact p = 0.007, a comparison made after the fact). The
+readings leave little room (where a step was not passed on, the parent's level lies within 0.3
+copies of its whole number in 28 of 29 pairs, and none of these parents is fractional), and the
+events did not arise in culture at a rate the children's lines would show. The results
+repository's `docs/DJ.md` has the tests.
+
 ## 8. Known-truth controls
 
 Four sequences of known copy number are measured in every sample under the same counting rules,
@@ -811,7 +915,10 @@ cohort does not bear this out. In the NGS-DOSE-1000G report (all 3,202 genomes; 
 whose line has kept both X chromosomes, chrX 1.85–2.15), DJ and female X do not move together
 (r = 0.01, 95% CI −0.04 to 0.06), where the hypothesis predicts a positive r. DJ's inherited copy-number spread between people can hide a small shared effect, so this
 weakens the S-phase explanation without ruling it out; the test against the leading control PC
-is still to come.
+is still to come. The assemblies say where the junction's deficit lies, whatever its cause: nine
+genomes whose HPRC assembly holds ten complete junction copies read 9.37–9.79 here, so the
+deficit is in the measurement's scale and not in the copies, and the cohort layer now pins the
+scale of this class to its mode (section 7).
 
 The two dosage regions say how different the two DNA batches of a cell line are. Between the
 NYGC culture and the older one, mitochondrial genomes per cell differ by a factor of 1.22 (SD of
@@ -828,8 +935,8 @@ steps of one copy in ten that are inherited: HG00512 and his daughter HG00514 bo
 over the distal 20 kb (about 8 of 10 copies), NA12891 and his daughter NA12878 both read +1 copy
 there and −1 near 380 kb, HG00731 and his daughter HG00733 both read −1 near 130 kb. Single-copy
 changes in a ten-copy paralogous sequence, seen in parent and child independently: the k-mer
-path resolves what it claims to. At cohort scale this becomes a Mendelian test on integer
-states (section 13).
+path resolves what it claims to. At cohort scale this became whole numbers of copies called
+along the unit and a Mendelian test on them (section 7).
 
 ## 9. The cohort layer
 
@@ -1194,6 +1301,10 @@ threads.
      Across 602 trios, a step present in a child and in neither parent is either a de novo
      event or an error, and a step in a parent is transmitted half the time: that calibrates
      the k-mer path at single-copy resolution, far more sharply than any regression on totals.
+     Done, with the calls of section 7: 553 of the 556 trios with three settled calls are
+     Mendelian at every position of the core, two children carry an event neither parent has,
+     and steps pass to fewer than half of the children, a father's loss least of all, which is
+     now the open question.
    - *The S-phase hypothesis.* If late-replicating sequence is under-represented in DNA from
      cycling cultures, DJ, female X and the leading control PC should move together across the
      cohort, and adjustment should tighten DJ around 10. DJ and female X do not, so far

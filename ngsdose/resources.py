@@ -150,6 +150,26 @@ class Bundle:
         tab = json.loads((self.dir / rel).read_text())
         return {cls: [tuple(iv) for iv in v["intervals"]] for cls, v in tab.items()}
 
+    def calibration(self) -> dict[str, dict]:
+        """Per class, what the cohort layer needs to know beyond the anchors (calibration.json): the intervals of the
+        unit left out of the level because copies differ there (`level_exclude`), the polymorphic intervals whose
+        efficiencies the cohort's median cannot give (`polymorphic`: an offset anchored on assemblies), how the scale
+        is set (`scale`: "mode" pins the cohort's main mode to `expected_copies`), and whether integer copy states are
+        called along the unit (`segments`). Empty when the bundle has none: every class is then calibrated as before."""
+        rel = self.meta.get("calibration")
+        if not rel:
+            return {}
+        if not (self.dir / rel).exists():
+            raise FileNotFoundError(f"{self.dir / rel} named in bundle.json is missing; restore it, or pass --no-class-rules "
+                                    "to calibrate every class on its anchors alone")
+        tab = json.loads((self.dir / rel).read_text())
+        for cls, r in tab.items():
+            for key in ("level_exclude",):
+                r[key] = [tuple(int(x) for x in iv) for iv in r.get(key, [])]
+            for p in r.get("polymorphic", []):
+                p["interval"] = tuple(int(x) for x in p["interval"])
+        return tab
+
     def contig_lengths(self) -> dict[str, int]:
         """Lengths of the build's primary contigs: what tells GRCh38 from a look-alike (hg19 has the same names)."""
         return {k: int(v) for k, v in self.meta.get("contig_lengths", {}).items()}
