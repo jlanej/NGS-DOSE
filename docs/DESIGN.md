@@ -9,7 +9,7 @@ it says on what; where it is still a plan it says so.
 Contents: [1 problem](#1-the-problem) · [2 what real data showed](#2-what-real-data-showed) ·
 [3 estimator](#3-the-estimator) · [4 counting engine](#4-the-counting-engine) ·
 [5 panels](#5-k-mer-panels) · [6 controls and the GC model](#6-controls-and-the-fragment-gc-model) ·
-[7 window calibration](#7-window-efficiencies-and-the-anchor) · [8 known-truth controls](#8-known-truth-controls) ·
+[7 window calibration](#7-window-efficiencies-and-the-anchor) · [8 known-truth controls](#8-known-truth-controls), [chromosomes in copies](#chromosomes-in-copies) ·
 [9 cohort layer](#9-the-cohort-layer) · [10 transmission](#10-transmission-reliability) ·
 [11 performance](#11-performance) · [12 limits](#12-what-it-does-not-do-and-known-limits) ·
 [13 next](#13-what-comes-next) · [14 prior work](#14-relation-to-prior-work) · [15 audit](#15-assumption-audit-before-the-cohort-run)
@@ -337,12 +337,17 @@ one fetch a slice is counted once however many contigs list it (in HG00096, 327 
 are each listed under 2 to 329 contigs, median 6, one under 329 of which 328 are HLA contigs; the
 listings are on decoy, HLA, alt and unplaced contigs); a long slice behind short ones is still
 found; and each fetch adds the compression header of every container it enters (all of them
-together are 109 MB, 0.7%, of HG00096's 15.74-GB file). On the 13 NYGC indexes the engine reads
-2-3% more than the floor in men and 11-13% more in women for `core_tel` (546.9 against 522.7 MB,
-medians), up to 27% more on the controls alone and 20-27% on `xy_arrays` in women: a woman's chrY
-holds few, sparse slices, and the 40 chrY truth regions decode the same ones one by one. Decoding
-each slice once (sorting the plan's slices, or one pass over a chromosome's runs) is a possible
-engine improvement worth that difference; the floor says what it would save. The index numbers contigs by their place in the header, so the contig order comes
+together are 109 MB, 0.7%, of HG00096's 15.74-GB file). Since 0.3.0 the engine joins a plan's
+intervals into one query where less than 50,000 bp separate them (16,384 in a BAM; `count
+--group-gap`) and skips the records that fall between them, so neighbouring intervals (a karyotype
+window's pieces, adjacent sink intervals) decode their shared slices once; the counts are those of a
+query per interval to the byte (NA12878 at gaps of 0, 16,384 and 50,000), and on the 13 indexes the
+cost fell for gaps up to 40-65 kb and rose beyond. It now reads within 0.7% of the floor in men and
+within 0.6% for `core_tel` in the median (524.5 against 522.7 MB; 546.9 with a query per run). In
+women the 40 chrY truth regions, further apart than 50 kb, still decode a few sparse slices each
+(the truth regions alone 68-95% above their floor, the base controls file 12-15%); a reader that
+sorted the plan's slices would save that. `ngsdose fetchplan` probes the engine for `--group-gap`
+and prices an older engine's fetches by its own rule (a query per run). The index numbers contigs by their place in the header, so the contig order comes
 from the reference's `.fai` or `.dict`, or `samtools view -H`; a counts file's `contigs` list will
 not do, as it holds only the contigs that held reads (2,168 of 3,366 for HG00096). The index must
 be the CRAM's own: an index of another file of the same sample gave wrong numbers, and nothing in
@@ -350,13 +355,14 @@ the index alone shows it. `ngsdose fetchplan` uses these costs to choose what a 
 
 - **Where the bytes go.** On 13 NYGC bwa-mem CRAMs (median 16.5 GB), the controls with all of the
   bundle's sinks (rDNA45S, rDNA5S, DJ, TEL: the `core_tel` preset, NGS-DOSE-1000G's fetch
-  configuration on an image newer than fae1124) read 546.9 MB per genome, 3.33% of the file
+  configuration on an image newer than fae1124) read 524.5 MB per genome, 3.24% of the file
   (medians; 522.7 MB with every slice decoded once). What each option costs alone, and what other plans cost, is in
   [fetch_examples.md](fetch_examples.md), which `resources/build/fetch_examples.sh` writes from
   `fetchplan` on the same 13 indexes; this document does not repeat those figures. The control
-  file is always read; alone, its 800 control regions cost 182.1 MB, the 180 truth regions
-  48.7 MB (up to 99.1 in a woman, whose chrY slices are decoded once per region) and chrM and
-  chrEBV 10.0 MB (medians over the 13, padded as fetched). The bytes are
+  file is always read; alone, its 800 control regions cost 179.3 MB, the 180 truth regions
+  46.7 MB (up to 74.2 in a woman, whose few sparse chrY slices each span several regions), chrM and
+  chrEBV 10.0 MB, and the 2,265 pieces of the karyotype windows, read only by a fetch whose control
+  set holds them, 189.1 MB (medians over the 13, padded as fetched). The bytes are
   set by the reads the intervals share their slices with. The smallest possible cost of a class
   is its share of the primary reads times the file size; against it, rDNA45S costs 3.7 times that
   floor (a floor of 57.7 MB), HSat2 2.9, the α-satellite HORs 2.0, but TEL 116 (a floor of
@@ -711,8 +717,8 @@ bundle carries a named subset, `controls.lite200.bed` / `controls.lite200.fa.gz`
 control regions with all 182 truth and dosage regions, chosen from the reference alone (at least
 three regions per chromosome, both of chr22's two, GC strata within each, and of 300 such draws the one whose
 position-GC distribution at L = 150, 400 and 450 is closest to the 800's), its records
-byte-identical to the bundle's. It reads 120.9 MB instead of 260.0 (median of 13 NYGC CRAMs; 93.1
-and 231.4 with every slice decoded once). The
+byte-identical to the bundle's. It reads 112.9 MB instead of the base set's 247.9 (median of 13 NYGC
+CRAMs; 93.1 and 231.4 with every slice decoded once). The
 estimator accepts counts whose control regions are exactly the bundle's or exactly one named subset
 (`controls.<name>.bed` in the bundle, or `control_subsets` in `bundle.json`), and still refuses any
 other set; the result records `controls_used` and `controls_subset`. On the 1,748 cohort genomes
@@ -937,6 +943,242 @@ there and −1 near 380 kb, HG00731 and his daughter HG00733 both read −1 near
 changes in a ten-copy paralogous sequence, seen in parent and child independently: the k-mer
 path resolves what it claims to. At cohort scale this became whole numbers of copies called
 along the unit and a Mendelian test on them (section 7).
+
+### Chromosomes in copies
+
+The known-truth regions say more than whether the method reads one copy or two. Every single-copy
+region of the bundle (the controls, the truth regions, and the karyotype windows described below)
+is a sample of its chromosome, counted by alignment position in a scan and in a fetch alike, and
+`ngsdose cohort` reads every chromosome of every genome from them (`ngsdose/karyotype.py`): a
+level in copies, its distance from the nearest whole number, and the arms and stretches that
+hold another level. A trisomy, a missing or an extra X, and a chromosome gained in a tenth of the
+cells are then columns of the table like any class: `karyotype`, written like one (`47,XY,+21`;
+`45,X`; `46,XX,-X[0.20]` for an X lost in a fifth of the cells; `46,XX,+3(165-194Mb)` for a
+stretch), `karyotype.status`, `chr1.copies` … `chrY.copies` with their `.z`, and
+`karyotype.events`. No k-mers are involved: these regions were chosen because reads place
+uniquely in them.
+
+**What stands between a region and a number of copies** is carried by a model learned on a
+cohort of fifty genomes or more, and applied to any genome one at a time (`--save-karyotype-model`
+and `--karyotype-model`; a smaller cohort is read against the bundle's, learned on the 3,202
+genomes of the 1000 Genomes cohort):
+
+- the region's *efficiency*: what it reads in a genome that holds two copies, its median over the
+  cohort (one copy for a region of chrX or chrY, over the genomes that hold one);
+- the libraries' *shared modes*: components along which the regions of one library depart
+  together. In DNA from growing cultures the late-replicating, AT-rich sequence reads low:
+  chromosomes 4, 13 and 18 move together (r 0.4 to 0.5 across the 3,202 genomes). The modes are
+  learned, and every genome is scored on them, from what the regions of a chromosome do *relative
+  to each other*: each region less its chromosome's mean. A chromosome gained or lost moves all its
+  regions alike and leaves no contrast, so it can neither enter a genome's scores nor become a
+  component, however common it is in the cohort. Components of the whole matrix did both in the
+  1000 Genomes lines, where chromosome 12 is gained in part of the culture in one genome in 65
+  (its spread collapsed from 0.011 to 0.002 copies, the trisomies learned away), and scores taken
+  on the other chromosomes still let a component that lived on chromosome 12 hide every gain below
+  0.15 copies behind its own uncertainty. The number of components is the number above the noise
+  edge (`pcselect.mp_select`; at most 20, and one per twenty genomes): a component inside the
+  bulk is noise of the cohort's own genomes, and taking it out makes them look quieter than the
+  next genome (in a simulated cohort with two modes, ten components put a null chromosome at
+  z = 5.7 that two put at 4.4). A component with more than half its weight on one chromosome is a
+  stretch that part of the cohort has gained, not a library, and is left out. In the 1000 Genomes
+  cohort 13 components stand above the edge, two of them on one chromosome, and 11 are used;
+- the region's *spread* in the cohort, which is its weight. A region that a common copy-number
+  variant moves (one on chr21 at 16.0 Mb reads up to 7.5 copies and is a quarter off in 2% of the
+  cohort; one on chr12 at 26.0 Mb in 3%) is left with little say, without being named. The spread
+  a genome outside the cohort will show is a little wider than the cohort's own residuals, by what
+  the fit took from them (a factor of √((n + p) / (n − p)) for n genomes and p loadings).
+
+A genome's own noise is measured too: the spread of its regions in units of the cohort's (0.95 in
+the median genome; 1.44 at 15x and 2.25 at 6x against a model learned at 37x). Every standard
+error carries it, so a shallow or untidy library is read with wider errors, not with false calls.
+
+**Across chromosomes.** The contrasts cannot see a shift that a whole chromosome shares, and one
+turned up. In some libraries the chromosomes richest in GC (19, 22, 17, 16) read low or high
+together, in proportion to the chromosome's GC content and with no pattern inside a chromosome:
+over 157 genomes counted with the windows, the leading pattern of their chromosome levels follows
+the chromosomes' GC at r 0.93, and the contrasts within chromosomes predict it at r 0.43 (a
+pattern that followed the regions' own GC was predicted at 0.93). Uncorrected, two genomes read
+chromosome 19 lost in 5% of the cells. Each chromosome is therefore set against the line the
+*other* autosomes of the same genome give: their levels are fitted by a common shift and a slope
+on the chromosomes' GC (bundle.json `karyotype.gc`), Huber's weights first and Tukey's biweight
+after, so that a chromosome far off the line (a gain, a loss) has no say; each chromosome's
+correction is the fit without it, in closed form, and the fit's error is carried into its own.
+That took two thirds of the chromosome levels' spread beyond their regions' noise away (189 to
+68 × 10⁻⁶ copies², summed over the autosomes of those genomes). The slope, in copies per ten
+points of GC, is `karyotype.gc_tilt`, and its distance from zero in its own standard errors
+`karyotype.gc_tilt_z`.
+
+**A level's error, and the cohort's say in it.** Places (below) are read as means of their pieces,
+and the pieces of one place share a little beyond the modes: an SD of 0.0056 (log), measured on
+the 496 places of two or more pieces; a place's error does not fall below it. The cohort then says
+how far the regions' noise is from the whole of a level's error: the spread of its levels about
+their whole numbers is fitted as factor² × SE² + floor², over chromosomes with few regions and
+with many, so the two parts separate. On the 70,444 autosomal levels of the 1000 Genomes cohort
+the factor is 1.00 and the floor 0.0013 copies; a chromosome still wider than that is widened by
+its own factor (1.00 to 1.06). The sex chromosomes take the autosomes' factor and floors of their
+own (one X 0.0023 copies, two X 0.0041, one Y 0.0040): how much a second X reads differs a little
+from one line to the next. With that, z is calibrated: its robust SD is 0.99 to 1.00 over the
+cohort's autosomes, and 1.00 in the 186 genomes counted with the windows; read with windows
+learned on half of those genomes, the other half give 1.07 (out of sample).
+
+**Along each chromosome a chain finds the levels.** Regions less than 50 kb apart (and no more
+than 150 kb in all) are one *place*: a window's pieces, which one copy-number variant can move
+together, read as one value, a piece more than 5 SDs from the others left out. The chain's states
+are levels in copies on a grid of 0.05; a place's distance from a level is judged against its
+spread and capped at 4 SDs, so that one place cannot buy a change; every change of level costs 14
+log-likelihood units, and a run of fewer than 4 places is given to a neighbour. The grid can cut
+a level that lies between two steps in two, each half on its nearer step: every change the chain
+makes is therefore judged again on the levels as measured, at the same price, (a − b)² /
+(SE_a² + SE_b²) > 28, and the closest pair is joined until none is below it (before this, a
+chromosome gained in 8 to 12% of the cells was read as its two arms at slightly different shares
+in 3 of 125 genomes; after it, in none). A stretch's level is the weighted mean of its places,
+those more than 5 SDs from it left out rather than pulled in: pulled in to four SDs, one place
+that a variant moves still shifts a chromosome of few regions by more than its error. One level
+throughout is a whole chromosome, a change at the centromere an arm, anything else a stretch.
+Regions in a chromosome or stretch found off its whole number take no part in the genome's level,
+its scores or the line across chromosomes, and the read is repeated until that set is stable.
+Each arm is also read on its own (`p`, `q` in the long table, `--karyotype-table`). Where places
+lie far from their level and are too few to be a stretch (at least 2, and 15% of a chromosome's),
+one level does not describe the chromosome: it is `uncertain`, and `karyotype.note` says so. With
+every region this never happens in the 1000 Genomes cohort; with a lighter set it marks a
+structure the set cannot resolve, such as HG02966's isodicentric Y.
+
+**Whole numbers, and what they leave.** A level is reported as measured. It is *settled* on the
+nearest whole number unless it lies 5 standard errors and 0.03 copies from it; then it is
+*fractional*: a change in part of the cells, with the share in brackets. A chromosome known no
+better than 0.10 copies is *uncertain*, and one with fewer than three places is not read.
+
+**The sex chromosomes are read on scales of their own.** A region of chrX is calibrated on the
+genomes that hold one X. A second X reads 0.960 of the first in these lymphoblastoid lines (the
+inactive X replicates late) and follows the modes more than the first; both are measured, per
+region and per component, on the cohort's two-X genomes, and chrX is reported in copies on the
+scale that puts one-X and two-X genomes at one and two. With the windows a man's X is known to
+0.0042 copies, a woman's to 0.0098, and a Y to 0.0061. A small cohort read against a saved model
+measures the second X's factor itself when it has ten two-X genomes; another tissue or library can
+differ by a few percent. The whole numbers of X and Y are taken from each chromosome's mean over
+its length, so that an isochromosome reads as its arms and not as a third X. A sample whose X and
+Y are off their whole numbers by the same amount in opposite directions is marked: two kinds of
+cells, or two people's DNA.
+
+**The karyotype windows.** The controls were chosen to make a denominator and a GC curve: rich in
+rare GC strata, wherever those lie. Read as chromosomes they are uneven (98 on chr1, 5 on chr19,
+3 on chr22, none on 18p), and a region of 12 kb lies in 1.3 CRAM slices, so a quarter of the bases
+fetched for it are counted. The windows (`resources/build/select_karyotype.py`) are the same clean
+sequence, the complement of NGS-PCA's exclusion set less the bundle's regions, taken in runs of
+5 kb or more (cut at 20 kb, so that a piece stays a unit one variant can move) and grouped into
+windows of at most 100 kb that fill the slices they are fetched in. Every chromosome gets the same
+clean bases (900 kb; chrY 600 kb, the acrocentric long arms what they have), split between its
+arms, so every chromosome is read about as precisely as every other; within an arm the windows are
+spread. Every piece aligns once to T2T-CHM13, on its own chromosome (identity 99.9% in the median),
+as do the bundle's older regions. The selection was made 1.2 times as large as wanted (2,752
+pieces), counted in 186 genomes of the cohort by fetching exactly the CRAM containers that hold
+them, and the 8 pieces that read badly there (3 too spread, 3 on chrY that women read, 2 off in
+efficiency; `build_inputs/karyotype.dropped.bed`, with the reason for each) were left out and the
+arms trimmed back: 2,265 pieces in 393 windows, 22.0 Mb. They read like the controls: their
+spread is 1.14 times what counting gives in the median piece (1.36 at the 95th percentile),
+against 1.17 (1.39) for the bundle's older regions. Every fourth window along an autosomal arm,
+and every window of chrX and chrY, is of tier 1 (`build_inputs/karyotype.windows.tsv`).
+
+**What a fetch pays, and the sets.** The engine joins intervals less than 50,000 bp apart into
+one query (section 4), so a window's pieces decode their slices once: the windows count about
+twice the bases per MB fetched that the isolated controls do. A fetch reads one of the bundle's
+control sets (`ngsdose fetchplan --controls NAME`; `ngsdose control-sets` lists them). On the 186
+genomes counted with the windows, and the 13 NYGC indexes of `fetch_examples.md`:
+
+| set | regions | MB of a CRAM (median) | SE of an autosome, copies (median, range) | reads |
+| --- | ---: | ---: | --- | --- |
+| `all` | 3,247 | 404.4 | 0.0060 (0.0046–0.0092) | every region: what a scan counts |
+| `karyotype` | 2,647 | 277.2 | 0.0068 (0.0059–0.0092) | lite200's regions and every window |
+| `base` | 982 | 247.9 | 0.0103 (0.0065–0.0349) | the regions of the bundle before 0.3.0; the menu's default |
+| `screen` | 977 | 123.4 | 0.0111 (0.0091–0.0172) | lite200's controls, the dosage regions, the windows of tier 1 |
+| `lite200` | 382 | 112.9 | 0.0173 (0.0116–0.0371) | 200 controls, the truths and the dosage regions |
+
+The calibration holds in every set (z's robust SD 0.98 to 1.00), and the sex-chromosome
+complement is the same in all of them but one genome in `screen` (HG02966, whose isodicentric Y
+the set cannot resolve and whose note says so). Of the 73 events that all regions find in a tenth
+of the cells or more, `karyotype` and `base` find 67 each and `screen` and `lite200` 56; what the
+lighter sets miss are stretches of a few Mb and arms of few regions.
+
+**What was measured**, on the 3,202 genomes of the 1000 Genomes 30x cohort (NGS-DOSE-1000G:
+section 3.10 of its page and `docs/KARYOTYPE.md`), all of them lymphoblastoid lines; 186 of them
+counted with the windows, the others read from the 980 regions their counts hold:
+
+- *Known answers.* HG01683 reads 47,XXY and HG03456 47,XYY (with chromosome 3 gained in 3% of
+  the cells, which only the windows see); both are in the literature (Richmond et al. 2021, PLoS
+  Comput Biol, in Illumina's Polaris sequencing of the same line; Logsdon et al. 2025, Nature, in
+  long-read assemblies). NGS-PCA's coverage ratio of the
+  whole X, from the same files by another method, agrees at r = 0.9995 over 3,199 genomes (0.934
+  among the genomes with two X). By their whole numbers the cohort holds 1,591 XY, 1,586 XX, 19 X,
+  3 XYY, 2 XXX and 1 XXY. The pedigree's sex is not what the chromosomes say in two genomes
+  (HG02300 two X and no Y under a man's record; NA19226 one X and no Y), and two men read as one X
+  with a Y in a third of their cells: lines that lost the Y in most of them, written
+  `45,X,+Y[0.31]`.
+- *The two arms.* A whole chromosome gained or lost shows in both arms alike. Of the 72 autosomes
+  called off as a whole whose arms can each be read, both arms lie on the same side of two copies
+  in all 72, their departures agree at r = 0.994, and the arms' difference in its own standard
+  errors spreads by 1.16; of the 32 within a tenth of a copy of two, the smallest calls made, all
+  32 agree in direction.
+- *The quiet side.* Cultures gain chromosomes and seldom lose an autosome, so the levels below two
+  copies show the measurement's own scatter: of 70,430 autosomal levels at two copies, 73 lie more
+  than 3 standard errors below, where a normal scatter gives 95; 284 lie as far above.
+- *What cannot be real.* With the places of every chromosome in random order (a window's pieces
+  kept together), a real stretch is scattered: 1,500 readings of clean genomes with the windows and
+  1,500 without give no stretch and no chromosome.
+- *A model that is fixed.* Learned on the 2,504 genomes of the first release and applied unchanged
+  to the 698 added later (another sequencing batch), the model writes 691 of the 698 karyotypes as
+  the whole cohort's own model does; the other seven differ in a share's last digit (0.50 against
+  0.49) or by one stretch at the threshold, and the levels differ by 0.0004 to 0.0021 copies, a
+  twentieth to an eighth of their standard error. A genome's reading is its own, not the cohort's.
+- *Out of sample.* With the windows learned on half of the 186 genomes counted with them, the
+  other half read with z's robust SD 1.07, and 167 of the 186 karyotypes are written alike either
+  way; the three with another set of events differ at the threshold (a 4% loss of chromosome 21,
+  a 12% gain of 8 Mb, an arm against a stretch).
+- *The fetch.* Read from the fetch of the same files against the scan's model, 3,202 of 3,202
+  karyotypes are identical to the scan's.
+- *Lower depth.* Counting noise added to 125 clean genomes as at 30x down to 4x, read against the
+  model learned at 37x: their noise factor rises from 1.05 to 2.73, z keeps a robust SD of 0.97 to
+  1.02, and no chromosome or stretch is called at any depth; a typical autosome's standard error
+  goes from 0.0060 copies to 0.0103 at 10x and 0.0159 at 4x.
+- *Read back.* A chromosome gained or lost in a share of the cells, added to the 125 clean genomes
+  with the windows and read back, is found and its share read without bias:
+
+  | change | regions | 3% of the cells | 5% | 8% | 12% |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | chromosome 1, 13 or 18 gained | 128–190 | 49–60% | 99–100% | 100% | 100% |
+  | chromosome 21 gained / lost | 113 | 30% / 20% | 98% / 95% | 100% | 100% |
+  | chromosome 19 / 22 gained | 112 / 75 | 10% / 4% | 84% / 66% | 100% | 100% |
+  | 5p / 17p / 18p gained | 53 / 41 / 28 | 0% | 25% / 21% / 2% | 96% / 86% / 55% | 100% / 99% / 99% |
+  | X lost in a woman | 153 | 3% | 60% | 100% | 98% |
+  | X gained, Y lost, Y gained in a man | 153 / 124 / 124 | 42–53% | 98–100% | 96–100% | 91–100% |
+
+  With the `screen` set (975 regions) a whole autosome is found from 8% of the cells (26% for
+  chromosome 22, 45% for 19; all from 12%), the sex chromosomes from 5 to 8%; its arms of few
+  regions are not read on their own.
+- *The alleles of the same reads.* Depth says how many copies; the alleles of the same reads say it
+  again, independently. Heterozygous sites called in the fetched reads of 68 of the genomes
+  (bcftools; NGS-DOSE-1000G `analysis/karyotype/`) give each change's share of the cells from the
+  spread of their allele fractions: over the 51 changes in 5% of the cells or more with enough
+  sites, the two shares agree at r = 0.983 and differ by 0.036 (robust SD), and 47 of 51 lie within
+  a tenth of each other. Where depth reads one copy, the sites vanish or sit at the minority's share
+  (NA12342's 11q loss in every cell: no heterozygous site where 91 were expected; NA20533's 17p,
+  lost in 80% of the cells: a minor allele at 0.20 in the median, where 0.17 is predicted). Two
+  partial gains are not borne out: 4q in NA12341 (0.19 of the cells by depth, 0.05 by the alleles)
+  and 9q34 in HG00703 (0.15 and 0.01), copies of both homologs or a property of those libraries
+  there; the calls are depth's.
+- *One clone, several chromosomes.* NA10843 reads chromosomes 5, 9, 10, 12 and 15 each gained in
+  0.20 to 0.22 of the cells, NA12248 four chromosomes in 0.15 to 0.22, NA21143 three in 0.15 to
+  0.16: one clone that carries them all, and measurements that agree without anything from outside.
+- *In the families.* A change made in a culture is not in a relative's culture. Of 80 pairs of a
+  child with an event and a parent in the cohort, two share one: the child HG01068 and the mother
+  HG01067 both read chromosome 12 gained in 7 to 8% of the cells, and HG01349 and the mother HG01348
+  an X lost in 11% and 6% of them.
+
+**What depth does not see**: a change that leaves the copies as they were (a balanced
+translocation, an inversion, both copies from one parent); a whole genome in three copies; the
+acrocentric short arms, which hold no single-copy sequence (their junctions are section 7's); a
+change in fewer cells than the standard error allows, which is reported as its level and not
+called. Whether a change was in the donor or arose in culture, one sample cannot say; a relative
+can. These are not clinical karyotypes.
 
 ## 9. The cohort layer
 
@@ -1185,7 +1427,7 @@ threads.
   TEL) figures rest on scan placements.
 
   What is fetched is then a matter of bytes (section 4). On the NYGC CRAMs the controls with the
-  bundle's four classes read 3.33% of a file; the lite control set and capture targets (by the
+  bundle's four classes read 3.24% of a file; the lite control set and capture targets (by the
   held-out statistics that ship with the sinks) read less, and the satellite families several
   times more ([fetch_examples.md](fetch_examples.md));
   `ngsdose fetchplan` chooses between them by name, preset or budget. Each biobank pipeline has to
@@ -1292,7 +1534,7 @@ threads.
      trying. (iii) **Less of everything**: fewer controls, smaller sinks, lower depth, all of
      which can be tried on the counts files alone, because they hold positions and not summaries.
      The first two now have tools and first numbers (sections 4 and 6): the lite control set and
-     capture targets of 0.995 take the controls and the bundle's sinks from 3.33% to 2.39% of a
+     capture targets of 0.995 take the controls and the bundle's sinks from 3.24% to 2.25% of a
      NYGC 1000 Genomes CRAM ([fetch_examples.md](fetch_examples.md), examples 2 and 13), and fetching about ten genomes with
      both control sets on the cluster would confirm the lite set on whole files. None of this
      needs an answer before the run; it needs the run to keep what the answers will be computed
@@ -1571,7 +1813,9 @@ for hard-clipped primary alignments, below, touches none of its bwa `-Y` alignme
 | Signed URLs stay out of the logs | a URL with a query string; a 503 answered with retries | **false**: the engine's own messages were redacted, but htslib's (`[E::hts_open_format] Failed to open file "…?X-Amz-Signature=…"`) printed the signature on every failed open | htslib's messages are turned off for an input or index URL with a query string, said once; asserted in CI against a local server |
 | A fetch that loses part of a class's sinks says so before it is spent | one sink interval on a contig the file lacks | **false**: the engine warned and fetched, `ngsdose estimate` then reported the class NaN, and no flag covered the partial case on either side | one rule (0.1.1): a class that loses any interval is refused unless `--allow-missing-sinks`, which records the loss (`sinks_skipped`) as before |
 | A rule that changes counts is versioned | the 5′ end of a soft clip behind a hard clip (`5H10S85M`) | **false**: 0.1.0 restored only an outermost soft clip, the fetch-menu build restores one behind a hard clip, and both wrote `engine_version` 0.1.0 (the cohort's bwa `-Y` alignments carry no hard-clipped primaries, so its counts are unchanged) | engine and package 0.1.1; the rule is stated in section 3 and pinned by a unit test |
-| The plan's price is what the fetch reads | the fixture as a CRAM under a read-logging shim; 13 NYGC indexes priced per interval | **false**: `cost.py` priced the union of slices once, while the engine makes one indexed fetch per run of intervals and htslib decodes a slice again for every run overlapping it - the 1.67-MB fixture CRAM was read as 37 MB, and `core_tel` costs 2-3% more than priced in men and 11-13% in women (chrY's few sparse slices decoded once per truth region), `xy_arrays` up to 27% | priced as the engine reads (one fetch per merged run, a slice once per run), the floor with every slice once reported beside it (`cum_mb_floor`); every documented figure regenerated (`core_tel` 546.9 MB, 3.33%) |
+| The plan's price is what the fetch reads | the fixture as a CRAM under a read-logging shim; 13 NYGC indexes priced per interval | **false**: `cost.py` priced the union of slices once, while the engine makes one indexed fetch per run of intervals and htslib decodes a slice again for every run overlapping it - the 1.67-MB fixture CRAM was read as 37 MB, and `core_tel` costs 2-3% more than priced in men and 11-13% in women (chrY's few sparse slices decoded once per truth region), `xy_arrays` up to 27% | priced as the engine reads (one fetch per merged run, a slice once per run), the floor with every slice once reported beside it (`cum_mb_floor`); every documented figure regenerated (`core_tel` 546.9 MB, 3.33%); since 0.3.0 the engine joins intervals less than 50,000 bp apart into one query, and `core_tel` reads 524.5 MB, 3.24% (section 4) |
+| Closing an indexed reader is safe | 186 fetches of four workers each, for the karyotype windows (one aborted: "pointer being freed was not allocated", in `cram_index_free` under the reader's drop); the fixture's CRAM fetched with freed memory overwritten (macOS `MallocScribble`, glibc `MALLOC_PERTURB_`) | **false**: rust-htslib 1.0.1 closes the file and then destroys the index, and a CRAM's index belongs to its file handle, so htslib read the freed handle at every close. While the memory still held its old contents the field read empty and nothing happened; once another thread had taken it, htslib freed a pointer that was not its own: an abort, or a damaged heap. With freed memory overwritten the engine of 0.2.0 fails every fetch of a CRAM | the engine's reader (`Indexed` in `count.rs`) keeps the binding from destroying a CRAM's index a second time (`hts_close` has freed it, so nothing leaks but 16 bytes and an `Arc` per reader); rust-htslib pinned at `=1.0.1` with a unit test that reads the lock file, and an I/O test that fetches with freed memory overwritten at one and four threads |
+| A chromosome's regions read alike whatever the GC of the chromosome | the karyotype windows of 157 genomes: each autosome's level less two, against the chromosome's GC content | **false** in some libraries: chromosomes 16, 17, 19 and 22, the richest in GC, read low or high together, in proportion to the chromosome's GC and with no pattern inside a chromosome (the leading pattern of the levels follows the chromosomes' GC at r 0.93; predicted from the contrasts within chromosomes at r 0.43, where a pattern that followed the regions' own GC was predicted at 0.93). Two genomes read chromosome 19 lost in 5% of the cells | each chromosome set against the line the other autosomes of the same genome give, a common shift and a slope on the chromosomes' GC (section 8, `karyotype.gc_tilt`) |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
 DRAGEN alignments beyond one genome per version (section 12); an orthogonal assay for the

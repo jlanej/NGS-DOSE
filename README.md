@@ -58,6 +58,18 @@ CRAM ──ngs-dose count──▶ counts.json ──ngsdose estimate──▶ p
    many as clear the noise edge of their spectrum, with a sweep against the known truths to
    confirm or overrule that number - and transmission reliability in trios to decide which
    estimator carries the most real variance.
+6. **Read every chromosome in copies** (0.3.0): the single-copy regions are samples of their
+   chromosomes, and `ngsdose cohort` reads each chromosome's level from them, with its arms and any
+   stretch at another level, against a model of the regions (their efficiencies and spreads, the
+   libraries' shared modes, learned from contrasts within chromosomes so that a common trisomy
+   cannot be learned away, and a fit across chromosomes for libraries whose GC-rich chromosomes
+   read high or low together). Whole numbers are called where a level sits on one; a level between
+   them is kept and called fractional, a change in part of the cells (`46,XX,-X[0.20]`). The
+   bundle's *karyotype windows* (2,265 pieces of clean single-copy sequence along every arm, 22 Mb)
+   read every chromosome to about half a percent of a copy at 30x, and fill the CRAM slices they
+   are fetched in: the `karyotype` control set costs 277 MB of a CRAM against 248 for the regions
+   the bundle had before. A cohort of fifty genomes learns its own model; a smaller one, or one
+   genome, is read against the bundle's (learned on the 3,202 genomes of the 1000 Genomes cohort).
 
 The reasoning, and the measurements on real data behind each step, are in
 [docs/DESIGN.md](docs/DESIGN.md).
@@ -82,8 +94,13 @@ technologies where a read-depth ratio does not (intraclass correlation 0.98 agai
 against ddPCR it reads 0.96× the assay (r = 0.94); and the distal junction, read as whole numbers
 of copies along its 400 kb, finds every partial copy that the HPRC assemblies of 28 of the genomes
 resolve and is Mendelian at every position in 553 of 556 trios, while what the whole numbers leave
-is kept, so that a change in part of the cells can show. The numbers, and what each finding
-rules out, are in that repository's `docs/EVIDENCE.md` and `docs/DJ.md`. This repository holds the method alone, so that it can be applied
+is kept, so that a change in part of the cells can show; and every chromosome of every genome is
+read in copies, the two karyotypes of the cohort in the literature (47,XXY and 47,XYY) as published,
+its X at r = 0.9995 with an independent coverage pipeline, with a model learned on one release
+reading the other release as the cohort's own model does (691 of 698 karyotypes written alike), and
+every autosome known to 0.005-0.009 copies in the 186 genomes counted with the karyotype windows.
+The numbers, and what each finding rules out, are in that repository's `docs/EVIDENCE.md`,
+`docs/DJ.md` and `docs/KARYOTYPE.md`. This repository holds the method alone, so that it can be applied
 to any cohort.
 
 ## Quick start
@@ -308,8 +325,8 @@ What each option costs, alone and in plans, is in [docs/fetch_examples.md](docs/
 `resources/build/fetch_examples.sh` runs `fetchplan` for a set of worked examples on the indexes
 of 13 NYGC 1000 Genomes CRAMs (median 16.5 GB) and writes each plan's table, count flags and total.
 The costs, like the sinks, are those of NYGC bwa-mem alignments to the GRCh38 analysis set. On
-them, the controls and all of the bundle's sinks (`--preset core_tel`) read 546.9 MB per genome,
-3.33% of the CRAM, and every option with sinks 3,416.7 MB (21.59%), medians over the 13 (522.7 and
+them, the controls and all of the bundle's sinks (`--preset core_tel`) read 524.5 MB per genome,
+3.24% of the CRAM, and every option with sinks 3,351.6 MB (21.06%), medians over the 13 (522.7 and
 3,099.5 MB with every slice decoded once).
 
 `shipped` means that the sinks are in the bundle. For rDNA45S, rDNA5S and DJ a fetch returns
@@ -402,7 +419,7 @@ ngsdose estimate sample.json.gz --fetch-sinks plan.sinks.bed -o estimates/
   numbers) and fetches with sinks learned from its own scans (`--sinks`).
 - **The controls are the floor.** They cost more than any shipped class. The bundle's
   `controls.lite200.bed` / `controls.lite200.fa.gz` keep 200 of the 800 control regions and all 182
-  truth and dosage regions: 120.9 MB of CRAM slices instead of 260.0 (medians over the 13). Over
+  truth and dosage regions: 112.9 MB of CRAM slices instead of 247.9 (medians over the 13). Over
   the cohort's first 1,748 genomes, 45S copy number with them differs from that with all 800 by a median +0.21% (SD 0.30%, largest 1.1%), against a 3.8–3.9%
   SD between independent libraries of the same cell line; 45S transmission reliability is unchanged
   (0.9993 and 0.9992 in 385 trios). These figures come from GC tables rebuilt from each scan's
@@ -486,15 +503,19 @@ reason says where a unit was looked for.
 | `HSat3.mass_Mb`, `ACRO.mass_Mb`, `TEL.mass_Mb`, … | the experimental panels: diploid sequence mass of a satellite family (scan mode, or a fetch through satellite sinks learned for the pipeline: `resources/experimental/sinks.satellites.bed` for NYGC bwa-mem, not yet compared with scans) or of the telomeric repeat (either mode; its sinks are in the bundle). The same column for a compositional candidate class (`VNTR_ACAN.mass_Mb`, `MYCO.mass_Mb`, …) when its panel was loaded. How far each is validated: `resources/experimental/README.md` |
 | `rDNA45S.status`, … | `ok`, or why the class is NA: `no_sinks_in_fetch` (a class the fetch's sinks gave no interval: listed in `sinks_missing_classes` by an engine with `--allow-missing-sinks`, or, for a fae1124 fetch of a `--unmarked-companions` plan, found from the plan's BED given to `--fetch-sinks`), `sinks_skipped`, `panel_mismatch`, `subset_only` (a fetch that read the family only at its sub-options), `unverified` (`aSatHOR`, `HSat1B` or `HSat3`, the families with sub-options, counted by a fetch whose sinks BED `estimate` does not know, such as a fetchplan `PREFIX.sinks.bed`: it cannot tell whether the fetch read the whole family or only its sub-options, so the family is not measured until `--fetch-sinks PREFIX.sinks.bed` names the BED), or `skipped: <reason>` for a positional class that neither the bundle nor an experimental unit covers (the reason says where a unit was looked for). `experimental` for a positional class estimated from an experimental unit: all usable windows, no anchor, no cohort calibration; its `.cn_se_rel` is the single-sample relative error |
 | `DXZ1.mass_Mb`, `.reads`, `.status` (and `DYZ3`, `DYZ1`, `DYZ2`) | the sub-options of `resources/experimental/subsets/`: the family's reads placed inside the named intervals, and their mass (reads × the family's mass per read). Status `ok`; `unverified` for a fetch whose sinks BED `estimate` does not know (reads given, no mass, and the family itself `unverified` too; pass `--fetch-sinks PREFIX.sinks.bed`); `not_fetched`, `not_counted`, `class_not_measured`, `not_compositional`, `name_clash` or `no_placements` (counts from an engine that wrote no placements) when there is nothing to measure |
-| `controls_used`, `controls_subset` | how many control regions the counts held (800 with the bundle's controls, 200 with `controls.lite200`), and the name of the bundle's lighter set when they were made with one |
+| `controls_used`, `controls_subset` | how many control regions the counts held (800 with the bundle's controls, 200 with `lite200`, `karyotype` or `screen`), and the name of the bundle's set when they were made with a lighter one |
 | `*.adj` | an estimate with coverage PCs regressed out (`ngsdose adjust`); NA for a sample without those PCs, or for a column with too few usable values |
 | `truth.auto`, `truth.chrX`, `truth.chrY` | held-out known-copy-number sequence (expected 2; 1 or 2; 1 or 0) |
+| `truth.karyotype`, `truth.karyotype.chrX`, `truth.karyotype.chrY` | the karyotype windows read as one set each, like the truths, in counts that hold them (a scan with the 0.3.0 bundle, or a fetch with the `karyotype`, `screen` or `all` control set) |
+| `karyotype`, `karyotype.status`, `sex_chromosomes` | every chromosome read in copies (`ngsdose cohort`; `--no-karyotype` turns it off): written like a karyotype, counts of chromosomes and not their structure (`47,XY,+21`; `45,X`; a change in part of the cells with its share in brackets, `46,XX,-X[0.20]`; an arm, `+5q`, or a stretch with its span in Mb, `+3(165-194Mb)`); `settled` (every level on a whole number), `fractional` (a chromosome or a stretch between whole numbers, beyond 5 SEs and 0.03 copies) or `uncertain` (a level known no better than 0.10 copies, or places of a chromosome that no level describes: `karyotype.note` says which); the sex chromosomes as letters |
+| `chr1.copies` … `chrY.copies`, `chr1.z` … | each chromosome's level in copies (chrX on the scale that puts one X at 1 and two at 2; chrY on that of one Y), and its distance from the nearest whole number in standard errors |
+| `karyotype.events`, `karyotype.noise`, `karyotype.regions`, `karyotype.gc_tilt`, `karyotype.note` | every chromosome, arm or stretch off its expected whole number, as `label\|copies\|z`; the genome's region noise in units of the cohort's (1 in a typical genome; it widens every error); the regions read; by how many copies a chromosome ten points richer in GC read higher in this library before the fit across chromosomes took it out; what the reading could not settle, or X and Y off their whole numbers by the same amount in opposite directions (two kinds of cells, or two people's DNA). `--karyotype-table` writes one row per chromosome and stretch, with each arm read on its own |
 | `chrM.copies`, `chrEBV.copies` | mitochondrial genomes and EBV episomes per cell: covariates of the state of the tissue or cell line, measured like the truths |
 | `engine` | engine version and the commit it was built from, as recorded in the counts file |
 | `eof_marker` | `present`; `absent` if the input lacked its end-of-file block (the engine refuses such files unless `--allow-truncated`); `unchecked` where it could not be checked (a CRAM stream decoded with several threads, or a remote check that kept failing); NA for counts files without the field. `estimate` warns on `absent` and `unchecked` |
 | `unmapped_fetched` | fetch mode: whether the unmapped bin was read (`--unmapped`) |
 | `pipeline_sq_sha256` | the hash of the input's @SQ lines, for counts made by engines that record the pipeline |
-| `depth`, `ctrl_dup_frac`, `gc_rel_35`, `gc_rel_65`, `ctrl_region_sd`, `flagged_chromosomes` | library and sample QC; an aneuploid chromosome, or a large arm-level gain, is reported and excluded from the denominator |
+| `depth`, `ctrl_dup_frac`, `gc_rel_35`, `gc_rel_65`, `ctrl_region_sd`, `flagged_chromosomes` | library and sample QC; an aneuploid chromosome, or a large arm-level gain, is reported and excluded from the denominator (a screen of the controls alone, at 4% of the chromosome's depth; the `karyotype` columns are the reading of the chromosomes) |
 | `untestable_chromosomes` | chromosomes with too few control regions (fewer than 3 after outlier trimming) to be tested for aneuploidy: chr22 in the GRCh38 bundle |
 | `*.profile_sd`, `*.profilePC*` | how far the sample's window profile departs from the cohort's |
 | `ctrlPC1…`, `ctrlPC_mp` | components of the control regions' residual depth across the cohort: internal technical covariates, usable by `ngsdose adjust` when NGS-PCA has not been run; `ctrlPC_mp` is how many of them stand above the noise edge (what `adjust` uses by default). None below 10 samples with control residuals; NA for a sample without them, or whose control regions are not the same set in the same order as the others' (the `region_order_sha256` an estimate records: another controls file or bundle revision), which are named |
@@ -508,7 +529,8 @@ path, relative to the install root when under it) and `unit_sha256`.
 ## Status
 
 Engine, estimator, cohort layer (with the distal junction's rules: core, pinned scale, polymorphic
-intervals, whole numbers of copies along the unit) and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
+intervals, whole numbers of copies along the unit; and every chromosome in copies, with the bundle's
+karyotype windows and model) and the GRCh38 bundle (45S, 5S, DJ) are implemented and tested:
 Rust unit tests, a simulated genome with known truth run end to end, a 2% subsample of real
 NA12878 reads, a mock trio cohort (that subsample sixty times over) through the whole cohort
 layer and bundle-integrity checks, all in CI (Linux with Python 3.10, 3.12 and 3.13; macOS with

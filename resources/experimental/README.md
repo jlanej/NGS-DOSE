@@ -163,7 +163,7 @@ such a target keeps all of them; with `--capture-stat median` their full capture
 up to 0.990 trims them. What fetching the families costs, alone and together, with all their intervals and with
 capture targets, is in [`docs/fetch_examples.md`](../../docs/fetch_examples.md) (examples 11 and
 12, on 13 NYGC bwa-mem CRAMs); all ten with the controls and the bundle's sinks come to
-3,416.7 MB, 21.59% of the median CRAM, as `ngs-dose count -m fetch` reads them (3,099.5 MB with
+3,351.6 MB, 21.06% of the median CRAM, as `ngs-dose count -m fetch` reads them (3,099.5 MB with
 every slice decoded once). No fetch of all ten can be cheap: they are 4.79% of all
 reads, so even a CRAM in which they sat apart from every other read would need about
 785 MB read for them.
