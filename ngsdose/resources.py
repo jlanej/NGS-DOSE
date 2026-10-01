@@ -93,7 +93,8 @@ class Bundle:
         The GRCh38 bundle ships `lite200`: 200 of the 800 control regions (at least three on every
         chromosome that has them, spread over each chromosome's GC range, the draw whose GC
         distribution is closest to all 800's) and all 182 known-truth and dosage regions. On the
-        1000 Genomes CRAM of HG00096 its controls file reads 85 MB instead of 213 MB. Against all
+        1000 Genomes CRAM of HG00096 its controls file reads 86 MB instead of the base set's 215 MB (as the engine of 0.3.0
+        reads them). Against all
         800, on the 1,748 cohort scans (GC tables rebuilt per region from the counts; the rebuild
         was checked against engine runs with subset controls files): the 45S rDNA headline moves by
         a median of +0.2% (SD 0.3%, at most 1.1%), 5S rDNA SD 0.7%, DJ SD 0.3%, truth.auto SD 0.2%,
@@ -127,8 +128,16 @@ class Bundle:
                 raise ValueError(f"{f}: a control subset must name control regions of the bundle, and "
                                  + (f"{len(extra)} of its {len(names)} are not ({', '.join(extra[:3])})" if extra else "it names none"))
             out[name] = frozenset(names)
-        self._subsets = out
-        return out
+        # the bundle's control sets (fetchplan.control_sets: which regions a fetch reads) differ in the truth regions and
+        # karyotype windows they add, and several hold the same controls: a set of control regions has one name here, the
+        # one bundle.json declares, else the first; a set that holds every control is no subset
+        declared = [n for n in self.meta.get("control_subsets", {}) if n in out]
+        uniq: dict[str, frozenset] = {}
+        for name in declared + [n for n in out if n not in declared]:
+            if out[name] != bundle and out[name] not in uniq.values():
+                uniq[name] = out[name]
+        self._subsets = uniq
+        return uniq
 
     def experimental(self) -> "ExperimentalUnits":
         """Units of positional classes the bundle does not carry: see ExperimentalUnits. One object
@@ -169,6 +178,28 @@ class Bundle:
             for p in r.get("polymorphic", []):
                 p["interval"] = tuple(int(x) for x in p["interval"])
         return tab
+
+    def karyotype(self) -> dict | None:
+        """What reading chromosomes in copies needs of the build (bundle.json `karyotype`): `arms`, per chromosome the
+        position where the short arm ends; `gc`, per chromosome its GC content (what a library's chromosomes can follow
+        together); `rules`, thresholds other than the defaults (karyotype.py); `model`, a model
+        of the regions learned on the bundle's reference cohort, for a cohort too small to learn its own; and the names
+        of the control regions in the bundle's order (estimates written before 0.3.0 keep those regions' values without
+        their names). None when the bundle has no such entry: chromosomes are then not read."""
+        k = self.meta.get("karyotype")
+        if not k:
+            return None
+        from . import karyotype
+        model = None
+        if k.get("model"):
+            f = self.dir / k["model"]
+            if not f.exists():
+                raise FileNotFoundError(f"{f}: the karyotype model named in bundle.json is missing")
+            with io._open(f) as fh:
+                model = karyotype.Model.from_json(json.load(fh))
+        return dict(arms={c: int(v) for c, v in (k.get("arms") or {}).items()}, rules=dict(k.get("rules") or {}), model=model,
+                    gc={c: float(v) for c, v in (k.get("gc") or {}).items()},
+                    control_names=[n for n, role in self.regions() if role == "control"])
 
     def contig_lengths(self) -> dict[str, int]:
         """Lengths of the build's primary contigs: what tells GRCh38 from a look-alike (hg19 has the same names)."""

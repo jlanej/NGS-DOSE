@@ -91,11 +91,15 @@ def test_a_control_outside_the_bundle_is_refused_whatever_subsets_are_named(simc
 
 
 def _bundle_copy(tmp_path) -> Path:
+    """The bundle's controls in a directory of their own, without the subset files (and so without bundle.json's names for them)."""
     src = ROOT / "resources" / "GRCh38"
     d = tmp_path / "GRCh38"
     d.mkdir()
-    for f in ("bundle.json", "controls.fa.gz", "controls.bed"):
+    for f in ("controls.fa.gz", "controls.bed"):
         (d / f).symlink_to(src / f)
+    meta = json.loads((src / "bundle.json").read_text())
+    meta.pop("control_subsets", None)
+    (d / "bundle.json").write_text(json.dumps(meta))
     return d
 
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild the reference-derived part of the GRCh38 bundle from public inputs: units/, build_inputs/,
-# panel.k31.tsv.gz, controls.bed and controls.fa.gz. sinks.bed and anchors.json need sequencing data
-# (see the end of this file). bundle.json, features.tsv and README.md are written by hand.
+# panel.k31.tsv.gz, the control regions with the karyotype windows (controls.bed, controls.fa.gz), the base
+# set (controls.base.bed, controls.base.fa.gz) and the named sets. sinks.bed, anchors.json, the karyotype model
+# and the list of windows that read badly need sequencing data (see the end of this file); the last is taken
+# from the shipped bundle as an input. bundle.json, features.tsv and README.md are written by hand.
 #
 # Needs: the ngs-dose binary, python3 + numpy, curl, samtools, minimap2. ~4.2 GB of downloads
 # (7.4 GB on disk), ~21 GB of memory (minimap2 indexes GRCh38), 5-15 min plus the downloads.
@@ -164,9 +166,25 @@ cp "$OUT/build_inputs/CHM13v2.class_loci.bed" "$WORK/masks/chm13.class_loci.bed"
   -b "$CHM13:$WORK/masks/chm13.class_loci.bed" \
   --report "$OUT/build_inputs/panel.k31.report.tsv.gz" -o "$OUT/panel.k31.tsv.gz"
 
-# ---- 5. controls and known-truth regions -------------------------------------------------------
-python3 "$HERE/select_controls.py" --reference "$GRCH38" --exclude "$EXCLUDE" --out "$OUT/controls.bed"
+# ---- 5. controls, known-truth regions and karyotype windows -----------------------------------------
+# the controls, the truths and the dosage regions: what the bundle held before 0.3.0, the base set
+python3 "$HERE/select_controls.py" --reference "$GRCH38" --exclude "$EXCLUDE" --out "$OUT/controls.base.bed"
+# the karyotype windows: the same clean sequence less those regions, selected 1.2 times over; the pieces that read badly
+# when counted in 186 genomes of the 1000 Genomes cohort left out (a list that needs sequencing data, taken from the
+# shipped bundle), and every arm trimmed back to what was wanted
+cp "$SHIPPED/build_inputs/karyotype.dropped.bed" "$OUT/build_inputs/karyotype.dropped.bed"
+input "$OUT/build_inputs/karyotype.dropped.bed" 6be78030316e0216b91a2b6fb452c4db9fd687c60e4a9610adc8cd1767578497 "resources/GRCh38/build_inputs (186 genomes counted with the candidates)"
+python3 -c 'import json, sys; json.dump(json.load(open(sys.argv[1]))["karyotype"]["arms"], open(sys.argv[2], "w"))' "$SHIPPED/bundle.json" "$WORK/karyotype.arms.json"
+python3 "$HERE/select_karyotype.py" --reference "$GRCH38" --exclude "$EXCLUDE" --controls "$OUT/controls.base.bed" --arms "$WORK/karyotype.arms.json" \
+  --over 1.2 --drop "$OUT/build_inputs/karyotype.dropped.bed" --out "$WORK/karyotype.bed" --table "$OUT/build_inputs/karyotype.windows.tsv"
+cat "$OUT/controls.base.bed" "$WORK/karyotype.bed" > "$OUT/controls.bed"
 "$BIN" controls -b "$OUT/controls.bed" -T "$GRCH38" --flank 1000 -o "$OUT/controls.fa.gz"
+"$BIN" controls -b "$OUT/controls.base.bed" -T "$GRCH38" --flank 1000 -o "$OUT/controls.base.fa.gz"
+# the named sets (lite200 is a draw recorded in the bundle, taken from it)
+cp "$SHIPPED/controls.lite200.bed" "$OUT/controls.lite200.bed"
+python3 "$HERE/make_control_sets.py" "$OUT" "$OUT/build_inputs/karyotype.windows.tsv"
+# each chromosome's GC content, which bundle.json's karyotype entry carries
+python3 "$HERE/chromosome_gc.py" "$GRCH38" > "$WORK/chromosome_gc.json"
 
 # ---- 6. data-dependent pieces ------------------------------------------------------------------
 # sinks.bed   two runs of `ngsdose sinks` on whole-file scans (ngs-dose count -m scan) of the target pipeline:
@@ -175,13 +193,19 @@ python3 "$HERE/select_controls.py" --reference "$GRCH38" --exclude "$EXCLUDE" --
 #                  ngsdose sinks <scans> --classes TEL | awk '$4=="TEL"' > tel.bed
 #             cat pos.bed tel.bed | sort -k1,1 -k2,2n > resources/GRCh38/sinks.bed   (bundle.json sinks_learned_from, sinks_history)
 # anchors.json       NGS-DOSE-1000G: python pilot/evaluate_pilot.py --write-anchors   (needs cross-chemistry replicate pairs)
+# build_inputs/karyotype.dropped.bed   the windows selected 1.2 times over (select_karyotype.py without --drop), counted in real
+#                    genomes with every piece, and the pieces whose efficiency, spread or reading in women was off left out
+#                    (NGS-DOSE-1000G: analysis/karyotype/; 186 genomes fetched by container with slice_fetch.py)
+# karyotype.model.json.gz   resources/build/karyotype_model.py on the estimates of a reference cohort (the 1000 Genomes
+#                    cohort's 3,202 scans and the 186 genomes counted with the windows)
 # efficiencies       optional, not part of the bundle: ngsdose cohort estimates/*.json.gz --save-efficiencies eff.json,
 #                    applied later with ngsdose cohort ... --efficiencies eff.json
 
 # ---- 7. build manifest: what was built from what, and how it compares with the shipped bundle ----
 for f in units/rDNA45S.KY962518.1.fa units/rDNA5S.X12811.1.fa units/DJ.CHM13v2_chr21_2708299_3108298.fa \
          build_inputs/CHM13v2.DJ.bed build_inputs/DJ.core.bed build_inputs/GRCh38.class_loci.bed \
-         build_inputs/CHM13v2.class_loci.bed build_inputs/classes.tsv panel.k31.tsv.gz controls.bed controls.fa.gz; do
+         build_inputs/CHM13v2.class_loci.bed build_inputs/classes.tsv panel.k31.tsv.gz controls.bed controls.fa.gz \
+         controls.base.bed controls.base.fa.gz controls.karyotype.bed controls.screen.bed build_inputs/karyotype.windows.tsv; do
   got=$(sha256 "$OUT/$f")
   if [ ! -e "$SHIPPED/$f" ]; then cmp="not in resources/GRCh38"
   elif [ "$got" = "$(sha256 "$SHIPPED/$f")" ]; then cmp="identical to resources/GRCh38"
@@ -189,6 +213,9 @@ for f in units/rDNA45S.KY962518.1.fa units/rDNA5S.X12811.1.fa units/DJ.CHM13v2_c
   fi
   printf 'output\t%s\t%s\t%s\n' "$f" "$got" "$cmp" >> "$MANIFEST.part"
 done
+gc_same=$(python3 -c 'import json, sys; print("identical to" if json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))["karyotype"]["gc"] else "differs from")' \
+          "$WORK/chromosome_gc.json" "$SHIPPED/bundle.json")
+printf 'output\t%s\t%s\t%s\n' "chromosome GC (bundle.json karyotype.gc)" "$(sha256 "$WORK/chromosome_gc.json")" "$gc_same resources/GRCh38/bundle.json" >> "$MANIFEST.part"
 { printf '# %s  NGS-DOSE %s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo unknown)" "$("$BIN" --version)"
   cat "$MANIFEST.part"; } > "$MANIFEST" && rm "$MANIFEST.part"
 awk -F'\t' '$1 == "output"' "$MANIFEST"

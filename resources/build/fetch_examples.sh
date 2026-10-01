@@ -86,6 +86,10 @@ EXAMPLES=(
   "biobank_lite at a capture target of 0.995|--preset biobank_lite --capture 0.995"
   "the four per-array options (preset xy_arrays)|--preset xy_arrays"
   "core_tel and the four per-array options|--preset core_tel xy_arrays"
+  "core with the karyotype set: every chromosome at full precision|--preset core --controls karyotype"
+  "core with the screen set: every chromosome, the sex chromosomes at full precision|--preset core --controls screen"
+  "core_tel with the karyotype set|--preset core_tel --controls karyotype"
+  "core with every region of the bundle (the controls and the windows)|--preset core --controls all"
 )
 
 strip() {  # repository and engine paths out of the text
@@ -121,13 +125,16 @@ total() {  # the last cumulative row: MB as the engine reads it, percent of the 
   echo "These are NYGC 30x CRAMs of the 1000 Genomes high-coverage release (bwa-mem, GRCh38 with decoys"
   echo "and HLA; contigs from \`$(basename "$CONTIGS")\`). The sinks, their statistics and so these costs belong to"
   echo "that aligner and reference: another pipeline learns its own sinks from its own scans. Percentages are of"
-  echo "each whole CRAM. The engine merges a plan's intervals where they touch or overlap and makes one indexed fetch per"
-  echo "run, and each fetch decodes every slice that overlaps its interval (with its container's compression header),"
-  echo "so a slice under several runs is decoded once per run. In each table, mb_median is the option's own intervals"
-  echo "alone and cum_mb_median the plan up to and including that row, both priced so; cum_mb_floor is the plan with"
-  echo "every slice decoded once, the floor a reader that sorted the plan's slices would reach (the engine does not:"
-  echo "the gap is a few percent in men and about 10-15% in women, whose few sparse chrY slices are decoded once per"
-  echo "chrY truth region). Candidate classes have no sinks yet: a plan lists them for the whole-file scans only."
+  echo "each whole CRAM. The engine joins a plan's intervals into one indexed fetch where less than 50,000 bp separate"
+  echo "them (16,384 in a BAM: \`count --group-gap\`), and each fetch decodes every slice that overlaps it (with its"
+  echo "container's compression header), so a slice under two fetches is decoded twice. In each table, mb_median is the"
+  echo "option's own intervals alone and cum_mb_median the plan up to and including that row, both priced so; cum_mb_floor"
+  echo "is the plan with every slice decoded once (the engine comes within a few percent of it: a slice is read twice only"
+  echo "where it spans two fetches more than 50,000 bp apart, as the few sparse chrY slices of a woman do). Over HTTPS"
+  echo "htslib moves more bytes than it decodes: each fetch opens a range request without an end, and what is in flight"
+  echo "at the next seek is thrown away (measured on the windows' candidates: 1,517 MB moved for 410 MB of slices); a"
+  echo "copy of the containers by exact byte range moves what is priced here. Candidate classes have no sinks yet: a plan"
+  echo "lists them for the whole-file scans only."
   echo
   if "$ENGINE" count --help 2>/dev/null | grep -q -- '--classes'; then takes="takes"; else takes="does not take"; fi
   echo "Engine for count_flags.txt: \`$(basename "$ENGINE")\` ($("$ENGINE" --version 2>/dev/null || echo unknown); the binary's sha256 begins"

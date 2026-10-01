@@ -279,7 +279,7 @@ def test_counts_made_before_a_truth_set_existed_are_still_usable(counts):
     args = (io.load_panel(BUNDLE.panel), BUNDLE.units(), BUNDLE.features())
     full = estimate.estimate_sample(counts["fetch"], *args, region_tables=tables, regions=regions)
     older = copy.deepcopy(counts["fetch"])
-    older["regions"] = [r for r in older["regions"] if r.get("label") not in ("chrY", "chrM", "chrEBV")]
+    older["regions"] = [r for r in older["regions"] if r.get("label") not in ("chrY", "chrM", "chrEBV") and not (r.get("label") or "").startswith("karyotype")]
     res = estimate.estimate_sample(older, *args, region_tables=tables, regions=regions)
     assert set(res["truth_regions"]) == {"auto", "chrX"}
     assert res["classes"]["rDNA45S"]["cn"] == full["classes"]["rDNA45S"]["cn"]
@@ -296,8 +296,8 @@ def test_counts_made_before_a_truth_set_existed_are_still_usable(counts):
         estimate.estimate_sample(renamed, *args, region_tables=tables, regions=regions)
     # a dosage or truth region the bundle has since retired or renamed is left out, not refused
     retired = copy.deepcopy(counts["fetch"])
-    assert retired["regions"][-1]["label"] == "chrEBV"
-    retired["regions"][-1]["name"] = "chrEBV:1-2"
+    (ebv,) = [r for r in retired["regions"] if r.get("label") == "chrEBV"]
+    ebv["name"] = "chrEBV:1-2"
     res = estimate.estimate_sample(retired, *args, region_tables=tables, regions=regions)
     assert "chrEBV" not in res["truth_regions"] and res["regions_not_in_bundle"] == ["chrEBV:1-2"]
     assert res["classes"]["rDNA45S"]["cn"] == full["classes"]["rDNA45S"]["cn"]

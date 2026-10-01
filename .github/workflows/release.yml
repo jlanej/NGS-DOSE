@@ -100,6 +100,8 @@ jobs:
         run: |
           pip install build
           python -m build --outdir dist
+          # the FASTAs of the bundle's control sets that the repository does not carry: cut from controls.fa.gz
+          python -m venv /tmp/sets && /tmp/sets/bin/pip install -q dist/*.whl && /tmp/sets/bin/ngsdose control-sets --write -r resources/GRCh38
           tar czf dist/ngs-dose-resources-${{ needs.version.outputs.version }}.tar.gz resources/GRCh38 resources/experimental resources/fetch_menu.tsv
       - uses: actions/download-artifact@v4
         with:

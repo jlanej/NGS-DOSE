@@ -34,6 +34,13 @@ def write_fai(path, contigs=CONTIGS):
     return path
 
 
+def test_the_planner_and_the_engine_join_queries_at_the_same_gap():
+    """What the plan prices is what the engine reads only while both use one rule: cost.GROUP_GAP is src/count.rs's."""
+    import re
+    src = (Path(__file__).resolve().parents[1] / "src" / "count.rs").read_text()
+    assert int(re.search(r"pub const DEFAULT_GROUP_GAP: i64 = ([\d_]+);", src)[1].replace("_", "")) == cost.GROUP_GAP
+
+
 def test_slices_are_priced_per_fetch_with_their_compression_header(tmp_path):
     """A fetch decodes every slice its interval overlaps, once, with the compression header of each container among
     them; a fetch on another contig decodes a multi-reference slice again, and the floor (bytes_once) reads it once."""
@@ -53,22 +60,35 @@ def test_slices_are_priced_per_fetch_with_their_compression_header(tmp_path):
 
 
 def test_a_slice_under_two_fetches_is_decoded_twice_and_the_floor_once(tmp_path):
-    """The engine merges a plan's intervals where they touch or overlap and fetches each run: two runs over one slice
-    decode it (and its container's compression header) twice, one run once; the floor is the union of slices, each once."""
-    ix = cost.CraiIndex(write_crai(tmp_path / "x.crai", CRAI), CONTIGS)
+    """An engine before 0.3.0 (gap 0) merges a plan's intervals where they touch or overlap and fetches each run: two runs
+    over one slice decode it (and its container's compression header) twice, one run once; the floor is the union of
+    slices, each once."""
+    ix = cost.CraiIndex(write_crai(tmp_path / "x.crai", CRAI), CONTIGS, gap=0)
     apart, touching, overlapping = [("c1", 100, 200), ("c1", 300, 400)], [("c1", 100, 200), ("c1", 200, 300)], [("c1", 100, 250), ("c1", 200, 300)]
     assert ix.price(apart) == 2 * 1010 and ix.price_once(apart) == 1010
     assert ix.price(touching) == ix.price(overlapping) == 1010 == ix.price_once(touching)
-    assert cost.merge(apart) == {"c1": ([100, 300], [200, 400])} and cost.merge(touching) == {"c1": ([100], [300])}
-    assert cost.merge(overlapping + [(cost.UNMAPPED, 0, 0), (cost.UNMAPPED, 0, 0)]) == {"c1": ([100], [300]), cost.UNMAPPED: ([0], [0])}
+    assert cost.merge(apart, 0) == {"c1": ([100, 300], [200, 400])} and cost.merge(touching, 0) == {"c1": ([100], [300])}
+    assert cost.merge(overlapping + [(cost.UNMAPPED, 0, 0), (cost.UNMAPPED, 0, 0)], 0) == {"c1": ([100], [300]), cost.UNMAPPED: ([0], [0])}
+    # the engine since 0.3.0 reads intervals no more than 50,000 bp apart with one query: the slice they share is decoded once
+    now = cost.CraiIndex(tmp_path / "x.crai", CONTIGS)
+    assert now.gap == cost.GROUP_GAP == 50_000 and now.price(apart) == 1010 == now.price_once(apart)
+    assert cost.merge(apart) == {"c1": ([100], [400])}
+    # a gap of exactly the limit joins, one bp more does not (src/count.rs group_plan)
+    assert cost.merge([("c1", 0, 10), ("c1", 50_010, 50_020), ("c1", 100_021, 100_030)]) == {"c1": ([0, 100_021], [50_020, 100_030])}
+    assert cost.merge([(cost.UNMAPPED, 0, 0), (cost.UNMAPPED, 0, 0)]) == {cost.UNMAPPED: ([0], [0])}
+    # what an interval adds under that rule: nothing within reach of a query whose slices it shares, the further slice when it extends one
+    plan_now = cost.merge(apart)
+    assert now.extra(plan_now, "c1", 600, 700) == 0 and now.extra(plan_now, "c1", 11_000, 12_000) == 2020 and now.extra(plan_now, "c2", 0, 10) == 530
+    for iv in (("c1", 600, 700), ("c1", 11_000, 12_000), ("c1", 150, 160), ("c2", 0, 10), (cost.UNMAPPED, 0, 0)):
+        assert now.extra(plan_now, *iv) == now.price(apart + [iv]) - now.price(apart), iv
     # over the two slices of c1: one run decodes each once; three runs decode the first twice and the second once
     assert ix.price([("c1", 100, 200), ("c1", 200, 12_000)]) == 3030
     assert ix.price([("c1", 100, 200), ("c1", 300, 400), ("c1", 11_000, 12_000)]) == 2 * 1010 + 2020
     # what an interval adds to a plan's fetches: nothing inside or touching a run without new slices, its own fetch apart, less when it bridges two runs
-    plan = cost.merge(apart)
+    plan = cost.merge(apart, 0)
     assert ix.extra(plan, "c1", 150, 160) == 0 and ix.extra(plan, "c1", 400, 500) == 0 and ix.extra(plan, "c1", 200, 300) == 1010 - 2 * 1010
     assert ix.extra(plan, "c1", 600, 700) == 1010 and ix.extra(plan, "c2", 0, 10) == 530
-    assert ix.extra(plan, cost.UNMAPPED, 0, 0) == 340 and ix.extra(cost.merge([(cost.UNMAPPED, 0, 0)]), cost.UNMAPPED, 0, 0) == 0
+    assert ix.extra(plan, cost.UNMAPPED, 0, 0) == 340 and ix.extra(cost.merge([(cost.UNMAPPED, 0, 0)], 0), cost.UNMAPPED, 0, 0) == 0
     for iv in (("c1", 150, 160), ("c1", 400, 500), ("c1", 200, 300), ("c1", 600, 700), ("c2", 0, 10), (cost.UNMAPPED, 0, 0)):
         assert ix.extra(plan, *iv) == ix.price(apart + [iv]) - ix.price(apart), iv
     # the multi-reference slice is one slice within a fetch, decoded again by a second run on its contig or a run on its other contig
@@ -332,14 +352,34 @@ def test_the_plan_names_the_controls_fasta_of_the_regions_it_costed(menu_dir, tm
     p = fetchplan.make_plan(m, classes=["A"], log=said.append)
     assert p.controls_fasta == str(menu_dir / "controls.fa.gz") and not any("controls" in x for x in said)
     (menu_dir / "controls.lite.bed").write_text("c1\t50000\t50500\tcontrol\n")
+    (menu_dir / "controls.lite.fa.gz").write_bytes(b"")                           # a set that ships its FASTA: named as it is
     p = fetchplan.make_plan(m, classes=["A"], controls=menu_dir / "controls.lite.bed", log=said.append)
     assert p.controls_fasta == str(menu_dir / "controls.lite.fa.gz") and p.rows[0].intervals == [("c1", 49400, 51100)]
     assert any("not the menu's controls.bed: the fetch must pass -c controls.lite.fa.gz" in x for x in said)
-    assert any("no controls FASTA" in x and "ngs-dose controls -b" in x for x in said)
+    assert not any("no controls FASTA" in x or "is cut from" in x for x in said)
     fetchplan.write(p, str(tmp_path / "q"), m)
     assert (tmp_path / "q.controls.txt").read_text() == f"{menu_dir / 'controls.lite.fa.gz'}\n"
     assert "# controls FASTA for the fetch (-c): controls.lite.fa.gz" in (tmp_path / "q.plan.tsv").read_text()
     assert (tmp_path / "q.count_flags.txt").read_text() == "--allow-missing-sinks\n"   # never a second -c: the engine refuses one
+    # a set of the bundle without a FASTA of its own, taken by name: cut from the bundle's when the plan is written
+    with gzip.open(menu_dir / "controls.fa.gz", "wt") as fh:
+        fh.write(">c1:50000-50500 flank=2 role=control\n" + "ACGT" * 126 + "\n>c1:90000-90100 flank=2 role=control\n" + "ACGT" * 26 + "\n")
+    (menu_dir / "controls.half.bed").write_text("c1\t50000\t50500\tcontrol\n")
+    said.clear()
+    p = fetchplan.make_plan(m, classes=["A"], controls="half", log=said.append)
+    assert p.controls_bed == str(menu_dir / "controls.half.bed") and any("is cut from the bundle's controls.fa.gz" in x for x in said)
+    fetchplan.write(p, str(tmp_path / "h"), m, panel_root="/opt/res")
+    cut = (tmp_path / "h.controls.fa.gz").resolve()
+    assert (tmp_path / "h.controls.txt").read_text() == f"{cut}\n" and "# controls FASTA for the fetch (-c): h.controls.fa.gz" in (tmp_path / "h.plan.tsv").read_text()
+    with gzip.open(cut, "rt") as fh:
+        assert [line[1:].split()[0] for line in fh if line.startswith(">")] == ["c1:50000-50500"]
+    with pytest.raises(ValueError, match="no control set of that name"):
+        fetchplan.make_plan(m, classes=["A"], controls="nosuch")
+    # a BED outside the bundle, without a FASTA: still to be built from the reference
+    said.clear()
+    (tmp_path / "elsewhere.bed").write_text("c1\t50000\t50500\tcontrol\n")
+    fetchplan.make_plan(m, classes=["A"], controls=tmp_path / "elsewhere.bed", log=said.append)
+    assert any("no controls FASTA" in x and "ngs-dose controls -b" in x for x in said)
     (tmp_path / "own.bed").write_text("c1\t50000\t50500\tcontrol\n")               # outside the menu: an absolute path, even with a root
     fetchplan.write(fetchplan.make_plan(m, classes=["A"], controls=tmp_path / "own.bed", log=lambda _: None), str(tmp_path / "r"), m,
                     panel_root="/opt/res")
@@ -791,3 +831,33 @@ def test_a_subset_row_is_checked(subset_menu, tmp_path):
         (subset_menu / "bad.tsv").write_text(t)
         with pytest.raises(ValueError, match=msg):
             fetchplan.read_menu(subset_menu / "bad.tsv")
+
+
+def test_a_control_set_is_taken_by_name_and_its_fasta_cut_from_the_bundles(tmp_path):
+    """`--controls NAME`: one of the sets beside the bundle's controls; a set without a FASTA of its own gets one, cut
+    from the bundle's controls.fa.gz record by record when the plan is written."""
+    d = tmp_path / "GRCh38"
+    d.mkdir()
+    recs = [("c1:100-200", "role=control"), ("c1:5000-5100", "role=control"), ("c2:10-60", "role=test label=x")]
+    with gzip.open(d / "controls.fa.gz", "wt") as fh:
+        for n, tags in recs:
+            a, b = map(int, n.split(":")[1].split("-"))
+            fh.write(f">{n} flank=5 {tags}\n" + "ACGT" * ((b - a + 10) // 4) + "AC"[: (b - a + 10) % 4] + "\n")
+    (d / "controls.bed").write_text("c1\t100\t200\tcontrol\nc1\t5000\t5100\tcontrol\nc2\t10\t60\ttest:x\n")
+    (d / "controls.small.bed").write_text("c1\t5000\t5100\tcontrol\nc2\t10\t60\ttest:x\n")
+    sets = fetchplan.control_sets(d / "controls.bed")
+    assert set(sets) == {"all", "small"} and fetchplan.resolve_controls("small", d / "controls.bed") == d / "controls.small.bed"
+    assert fetchplan.resolve_controls(str(d / "controls.small.bed"), d / "controls.bed") == d / "controls.small.bed"
+    with pytest.raises(ValueError, match="no control set of that name"):
+        fetchplan.resolve_controls("karyotype", d / "controls.bed")
+    out = tmp_path / "plan.controls.fa.gz"
+    assert fetchplan.subset_fasta(d / "controls.fa.gz", ["c2:10-60", "c1:5000-5100"], out) == 2
+    with gzip.open(out, "rt") as fh:
+        got = fh.read()
+    assert [line[1:].split()[0] for line in got.splitlines() if line.startswith(">")] == ["c1:5000-5100", "c2:10-60"]      # the source's order
+    first = out.read_bytes()
+    fetchplan.subset_fasta(d / "controls.fa.gz", ["c1:5000-5100", "c2:10-60"], out)
+    assert out.read_bytes() == first                                         # the same bytes every time
+    with pytest.raises(ValueError, match="no record for 1 of the 2 regions"):
+        fetchplan.subset_fasta(d / "controls.fa.gz", ["c1:5000-5100", "c9:1-2"], tmp_path / "bad.fa.gz")
+    assert not (tmp_path / "bad.fa.gz").exists() and not (tmp_path / "bad.fa.gz.part").exists()

@@ -72,7 +72,7 @@ def test_controls_fasta_matches_its_bed():
             else:
                 n += len(line.strip())
         lengths.append(n)
-    assert len(names) == len(bed) == 982
+    assert len(names) == len(bed) == 3247
     roles = {}
     for (c, s, e, role), (name, *tags), ln in zip(bed, names, lengths):
         assert name == f"{c}:{s}-{e}"
@@ -80,7 +80,11 @@ def test_controls_fasta_matches_its_bed():
         assert ln == int(e) - int(s) + 2 * int(t["flank"]) and int(t["flank"]) >= 600
         assert (t["role"] + (":" + t["label"] if "label" in t else "")) == role
         roles[role] = roles.get(role, 0) + 1
-    assert roles == {"control": 800, "test:auto": 80, "test:chrX": 60, "test:chrY": 40, "dosage:chrM": 1, "dosage:chrEBV": 1}
+    assert roles == {"control": 800, "test:auto": 80, "test:chrX": 60, "test:chrY": 40, "dosage:chrM": 1, "dosage:chrEBV": 1,
+                     "test:karyotype": 2088, "test:karyotype.chrX": 93, "test:karyotype.chrY": 84}
+    # the regions the bundle held before the karyotype windows, in their order, are the base set (the fetch menu's controls)
+    base = [l.rstrip("\n").split("\t") for l in open(B.dir / "controls.base.bed")]
+    assert base == [r for r in bed if not r[3].startswith("test:karyotype")] and len(base) == 982
     # controls are on the autosomes only, and spread over all of them
     assert {c for c, _, _, r in bed if r == "control"} == {f"chr{i}" for i in range(1, 23)}
     # every contig a region sits on has its GRCh38 length on record: what `estimate` tells builds apart by

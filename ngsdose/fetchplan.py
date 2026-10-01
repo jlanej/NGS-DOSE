@@ -72,6 +72,55 @@ def controls_fasta(bed: Path) -> Path:
     return bed.with_name(name + ".fa.gz")
 
 
+def control_sets(menu_ctrl: Path) -> dict[str, Path]:
+    """The control sets a bundle ships beside its controls: controls.NAME.bed -> NAME (the bundle's own
+    controls.bed, every region it has, is `all`). A set says which regions a fetch reads for the denominator,
+    the known truths and the chromosomes: bytes against what is measured."""
+    d = menu_ctrl.parent
+    out = {p.name[len("controls."):-len(".bed")]: p for p in sorted(d.glob("controls.*.bed"))}
+    if (d / "controls.bed").exists():
+        out["all"] = d / "controls.bed"
+    return out
+
+
+def resolve_controls(controls, menu_ctrl: Path) -> Path:
+    """`--controls`: a BED, or the name of one of the bundle's control sets."""
+    p = Path(controls)
+    if p.exists():
+        return p
+    sets = control_sets(menu_ctrl)
+    if str(controls) in sets:
+        return sets[str(controls)]
+    raise ValueError(f"--controls {controls}: no such file, and no control set of that name beside {menu_ctrl.name} "
+                     f"(sets: {', '.join(sorted(sets)) or 'none'})")
+
+
+def subset_fasta(source: Path, names: list[str], out: Path) -> int:
+    """Write the records of a controls FASTA named in `names` (in the source's order) to `out`, gzipped, the same
+    bytes every time. A controls FASTA holds one record per region with its flanks, so the FASTA of a subset of the
+    regions is a subset of the records: no reference genome is needed. Raises if a name has no record."""
+    import gzip
+    from .io import _open
+    want, found = set(names), set()
+    tmp = Path(str(out) + ".part")
+    with _open(source) as fh, open(tmp, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+        keep = False
+        for line in fh:
+            if line.startswith(">"):
+                n = line[1:].split()[0]
+                keep = n in want
+                if keep:
+                    found.add(n)
+            if keep:
+                gz.write(line.encode())
+    if found != want:
+        tmp.unlink()
+        miss = sorted(want - found)
+        raise ValueError(f"{source} has no record for {len(miss)} of the {len(want)} regions ({', '.join(miss[:3])}{', ...' if len(miss) > 3 else ''})")
+    tmp.replace(out)
+    return len(found)
+
+
 @dataclass
 class Option:
     name: str
@@ -281,6 +330,8 @@ class Plan:
     notes: list[str]
     n_index: int = 0
     controls_fasta: str = ""                              # the -c FASTA matching the control regions costed
+    controls_bed: str = ""                                # those regions
+    controls_source: str = ""                             # a FASTA that holds them all, when controls_fasta does not exist: `write` cuts it from there
     classes_flag: str = ""                                # what count_flags.txt says of unselected classes, and why
     capture_note: str = ""                                # what the expected capture is (plan.tsv header)
 
@@ -451,11 +502,19 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
                          f"{' --classes ' + o.name if o.kind == 'compositional' else ''}`), check their capture on held-out scans "
                          "(`ngsdose sinks HELD_OUT --evaluate BED`), then give it the sinks file in the menu")
 
-    # the CRAM indexes: bytes per option, and per interval for the byte order of capture trimming
+    # the CRAM indexes: bytes per option, and per interval for the byte order of capture trimming. An engine that takes
+    # --group-gap (0.3.0 on) reads neighbouring intervals with one query; one that does not makes a query per interval
+    gap = cost.GROUP_GAP
+    if engine:
+        had, what = probe_engine(engine)
+        if had is not None and "--group-gap" not in had:
+            gap = 0
+            notes.append(f"costed for an engine that makes one query per interval ({what} lists no --group-gap: an engine before 0.3.0); "
+                         f"one that joins intervals within {cost.GROUP_GAP:,} bp into a query reads less")
     indexes = []
     if crais:
         ctg = cost.read_contigs(contigs)
-        indexes = [cost.CraiIndex(p, ctg) for p in crais]
+        indexes = [cost.CraiIndex(p, ctg, gap=gap) for p in crais]
 
     def nbytes(ivs):
         """(contig, start, end) -> median bytes of the interval's own fetch over the indexes."""
@@ -478,11 +537,18 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
     held = {p: sinks.stats_held_out(p) for p in set(source.values())}
     rows: list[Row] = []
     menu_ctrl = menu.resolve(menu.controls.sinks)
-    ctrl_bed = Path(controls) if controls else menu_ctrl
+    ctrl_bed = resolve_controls(controls, menu_ctrl) if controls else menu_ctrl
     ctrl_fa = controls_fasta(ctrl_bed)
+    ctrl_source = ""
     if not ctrl_fa.exists():
-        notes.append(f"no controls FASTA {ctrl_fa} beside {ctrl_bed}: build it with `ngs-dose controls -b {ctrl_bed} -T REFERENCE "
-                     f"--flank 1000 -o {ctrl_fa}`; the fetch must use the FASTA of exactly these regions")
+        # the bundle's own FASTA holds every region it has: the FASTA of one of its sets is cut from it when the plan is written
+        whole = menu_ctrl.parent / "controls.fa.gz"
+        if whole.exists() and ctrl_bed.resolve().parent == menu_ctrl.resolve().parent:
+            ctrl_source = str(whole)
+            notes.append(f"the controls FASTA of {ctrl_bed.name} is cut from the bundle's {whole.name} when the plan is written (PREFIX.controls.fa.gz)")
+        else:
+            notes.append(f"no controls FASTA {ctrl_fa} beside {ctrl_bed}: build it with `ngs-dose controls -b {ctrl_bed} -T REFERENCE "
+                         f"--flank 1000 -o {ctrl_fa}`; the fetch must use the FASTA of exactly these regions")
     if ctrl_bed.resolve() != menu_ctrl.resolve():
         notes.append(f"the plan is costed on the control regions of {ctrl_bed.name}, not the menu's {menu_ctrl.name}: the fetch must pass "
                      f"-c {ctrl_fa.name} (written to controls.txt); a fetch with another controls file reads other regions than costed "
@@ -599,7 +665,7 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
             r.note = (r.note + "; " if r.note else "") + f"{absent[id(r)]:g} intervals on contigs the CRAM header lacks (median): not read"
         plan.append(r)
     if any(r.target is not None for r in plan):
-        notes += _share_between_options(plan, indexes, capture_stat)
+        notes += _share_between_options(plan, indexes, capture_stat, gap)
     for r in plan:
         notes += r.warn
     classes_in = [r.option for r in plan[1:] if r.option.kind in CLASS_KINDS]
@@ -700,7 +766,7 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
         notes.append(capture_note)
     for n in notes:
         log(f"[fetchplan] {n}")
-    return Plan(plan, scan_only, panels, scan_panels, flags, notes, len(indexes), str(ctrl_fa), classes_flag, capture_note)
+    return Plan(plan, scan_only, panels, scan_panels, flags, notes, len(indexes), str(ctrl_fa), str(ctrl_bed), ctrl_source, classes_flag, capture_note)
 
 
 def _holders(plan, r, ivs, own) -> list[str]:
@@ -708,7 +774,7 @@ def _holders(plan, r, ivs, own) -> list[str]:
     return [x.option.name for x in plan if x is not r and any(c == c2 and s < e2 and s2 < e for c, s, e in ivs for c2, s2, e2 in own(x))]
 
 
-def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
+def _share_between_options(plan: list[Row], indexes, stat, gap: int = cost.GROUP_GAP) -> list[str]:
     """Trim again with the rest of the plan in view, and say what trimming saved of the plan.
 
     Classes share sink intervals (the chr2:32.91 Mb pile-up bin is in the sinks of TEL, rDNA45S and
@@ -741,7 +807,7 @@ def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
     if indexes:
         for r in trimmed:
             rest = rest_of(r)
-            fetches = cost.merge(rest)
+            fetches = cost.merge(rest, gap)
             extra = {iv: [ix.extra(fetches, *iv) for ix in indexes] for iv in r.whole}
             free = frozenset(iv for iv, b in extra.items() if all(x <= 0 for x in b))
             if not free - set(r.intervals):
@@ -762,7 +828,7 @@ def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
         kept = set(r.intervals)
         if indexes:
             # against the plan before any is given back: intervals that each add nothing add nothing together either
-            fetches = cost.merge([iv for x in plan for iv in x.intervals])
+            fetches = cost.merge([iv for x in plan for iv in x.intervals], gap)
             back = [iv for iv in r.whole if iv not in kept and adds_nothing(fetches, iv)]
         else:
             index = sinks._index([(c, s, e, "x") for x in plan for c, s, e in x.intervals if c != cost.UNMAPPED])
@@ -773,7 +839,7 @@ def _share_between_options(plan: list[Row], indexes, stat) -> list[str]:
     for r in trimmed:
         more = sorted(set(r.intervals) - alone[id(r)])
         if indexes and more:
-            fetches = cost.merge(rest_of(r))
+            fetches = cost.merge(rest_of(r), gap)
             more = [iv for iv in more if adds_nothing(fetches, iv)]
         if not more:
             continue
@@ -871,20 +937,29 @@ def write(plan: Plan, prefix: str, menu: Menu, panel_root=None, header: str = ""
     # under the menu's directory: a path relative to it, mapped by --panel-root like the panels'. Compared as written first (the
     # menu's controls are named relative to it, and a symlinked bundle resolves elsewhere), then by their real paths
     fa, base = Path(plan.controls_fasta), menu.path.parent
-    if not fa.is_relative_to(base):
-        fa, base = fa.resolve(), base.resolve()
-    rel = str(fa.relative_to(base)) if fa.is_relative_to(base) else str(fa)
-    Path(f"{prefix}.controls.txt").write_text(where(rel) + "\n")
+    if plan.controls_source and not fa.exists():
+        # one of the bundle's control sets without a FASTA of its own: cut from the bundle's, beside the plan
+        fa = Path(f"{prefix}.controls.fa.gz").resolve()
+        subset_fasta(Path(plan.controls_source), [f"{c}:{s}-{e}" for c, s, e, _ in sinks.read_bed(plan.controls_bed)], fa)
+        plan.controls_fasta = str(fa)
+        Path(f"{prefix}.controls.txt").write_text(str(fa) + "\n")
+    else:
+        if not fa.is_relative_to(base):
+            fa, base = fa.resolve(), base.resolve()
+        rel = str(fa.relative_to(base)) if fa.is_relative_to(base) else str(fa)
+        Path(f"{prefix}.controls.txt").write_text(where(rel) + "\n")
     with open(f"{prefix}.plan.tsv", "w") as fh:
         fh.write(f"# ngsdose fetchplan: {header}\n")
         if plan.n_index:
             fh.write(f"# MB = 1e6 bytes of CRAM slices (and their containers' compression headers), median over {plan.n_index} index(es), "
-                     "as `ngs-dose count -m fetch` reads them: one indexed fetch per run of touching or overlapping intervals of the plan, "
-                     "each decoding every slice that overlaps it, so a slice under several runs is decoded once per run; cum_*: this option "
-                     "and all above it; cum_mb_floor: the same with every slice decoded once, the floor a reader that sorted the plan's "
-                     "slices would reach (the engine does not); mb_saved: what the option's capture target saved of the plan, the rest of "
+                     "as `ngs-dose count -m fetch` reads them: one query per run of the plan's intervals that lie no more than 50,000 bp "
+                     "apart (an engine before 0.3.0: per run of touching or overlapping intervals), each decoding every slice that overlaps "
+                     "it, so a slice under several queries is decoded once per query; cum_*: this option "
+                     "and all above it; cum_mb_floor: the same with every slice decoded once, the floor; mb_saved: what the option's "
+                     "capture target saved of the plan, the rest of "
                      "the plan as it is (an interval the plan's other options fetch anyway is no saving), capture_lost what it cost of its "
-                     "expected capture\n")
+                     "expected capture. A remote fetch moves more than these bytes: htslib asks for open-ended ranges and drops what is in "
+                     "flight at every query\n")
         if plan.capture_note:
             fh.write(f"# {plan.capture_note}\n")
         if plan.classes_flag:
