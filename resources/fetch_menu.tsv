@@ -44,10 +44,14 @@
 #             lower bound, from the statistics' share_max). An interval another selected class keeps is read
 #             anyway: every class that has it keeps it
 #
-# The control regions are always read. The unmapped bin is every read without a coordinate
+# The control regions are always read: the set the controls row names, or another of the bundle's control sets
+# (`fetchplan --controls NAME`; `ngsdose control-sets` lists them: `all`, every region the bundle has, which is what a
+# whole-file scan counts; `base`; `lite200`; `karyotype` and `screen`, which add the karyotype windows to lite200's
+# controls). The unmapped bin is every read without a coordinate
 # (`ngs-dose count --unmapped`). Costs are per CRAM and come from its .crai (`fetchplan --crai`), priced as
-# `ngs-dose count -m fetch` reads them: one indexed fetch per run of touching or overlapping intervals, each
-# decoding every slice that overlaps it, so a slice under several runs is decoded once per run. The MB figures
+# `ngs-dose count -m fetch` reads them: one query per run of intervals no more than 50,000 bp apart (an engine before
+# 0.3.0: per run of touching or overlapping intervals), each decoding every slice that overlaps it, so a slice under
+# several queries is decoded once per query. The MB figures
 # below are medians over 13 NYGC 30x CRAM indexes (docs/fetch_examples.md, which prices every option and the
 # presets and is the figure to re-run).
 ##preset	core	the bundle's positional classes: 45S and 5S rDNA and the distal junction; the NGS-DOSE-1000G fetch with the fae1124 engine
@@ -57,7 +61,7 @@
 ##preset	xy_arrays	the sub-options of the X and Y satellite arrays: DXZ1 and DYZ3 (the chrX and chrY centromeric HOR arrays), DYZ1 and DYZ2 (Yq12 HSat3 and HSat1B); about 84 MB beyond the controls or core_tel (median of what the four add per CRAM, 13 NYGC CRAM indexes: 38-47 MB in the six women, 84-146 MB in the seven men); fetched without their classes, which are then not measured
 ##preset	biobank_lite	core plus the telomeric repeat and the four satellites cheapest to fetch (SST1, CER, SATR, ACRO); about 600 MB, 3.6% of a 30x NYGC CRAM (567 MB with --capture 0.995, by the held-out statistics of the bundle sinks and the satellite sinks)
 class	group	kind	status	tier	presets	panel	sinks	measures	truth	notes	stats
-controls	controls	controls	shipped	A	-	-	GRCh38/controls.bed	800 single-copy control regions (the depth and fragment-GC model), 180 held-out autosomal, chrX and chrY truth regions, and the chrM and chrEBV dosage regions	held-out regions: 2 copies (autosomal), chrX and chrY by sex	always read; padded by the fetch's --pad (600 bp)	-
+controls	controls	controls	shipped	A	-	-	GRCh38/controls.base.bed	800 single-copy control regions (the depth and fragment-GC model), 180 held-out autosomal, chrX and chrY truth regions, and the chrM and chrEBV dosage regions; every chromosome is read in copies from them (`karyotype`), unevenly: the control sets `karyotype` and `screen` add windows along every arm (`--controls NAME`)	held-out regions: 2 copies (autosomal), chrX and chrY by sex	always read; padded by the fetch's --pad (600 bp). The set `base`: what the bundle held before the karyotype windows	-
 unmapped	unmapped	unmapped	shipped	C	satellites	-	-	reads without a coordinate, classified like the rest	-	8.5 MB of a 30x NYGC CRAM (median of 13); needed for the part of HSat1B left unmapped in the 698-genome batch	-
 rDNA45S	rDNA	positional	shipped	A	core,core_tel,biobank_lite	GRCh38/panel.k31.tsv.gz	GRCh38/sinks.bed	45S rDNA copy number and per-window unit dosage	HPRC r2 assemblies (partial); ddPCR of 9 cell lines (Potapova et al. 2025)	-	GRCh38/sinks.stats.tsv
 rDNA5S	rDNA	positional	shipped	A	core,core_tel,truths,biobank_lite	GRCh38/panel.k31.tsv.gz	GRCh38/sinks.bed	5S rDNA copy number	HPRC r2 assemblies (5S arrays assembled whole)	-	GRCh38/sinks.stats.tsv

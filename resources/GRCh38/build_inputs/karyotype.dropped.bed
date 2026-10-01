@@ -1,0 +1,10 @@
+# pieces of the karyotype selection left out after counting them in real genomes (work/karyotype/finalize.py):
+# 186 genomes of the 1000 Genomes 30x cohort (NYGC), fetched 2026-10-01; chrom, start, end, why
+chr2	50397686	50411110	efficiency +0.68; spread 5.4 times counting's; 5% of genomes a quarter off
+chr6	18619168	18626534	efficiency +0.23; spread 2.2 times counting's
+chr16	64676351	64695777	spread 1.7 times counting's
+chr20	22599641	22619044	spread 1.7 times counting's
+chr20	22626103	22643927	spread 1.7 times counting's
+chrY	14529743	14536235	women read 0.043 copies
+chrY	15831283	15836340	women read 0.092 copies
+chrY	20877272	20884146	women read 0.027 copies

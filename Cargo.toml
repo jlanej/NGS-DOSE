@@ -1,6 +1,6 @@
 [package]
 name = "ngs-dose"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Sequence-class dosage (rDNA, satellite and other multi-copy classes) from short-read WGS"
 repository = "https://github.com/jlanej/NGS-DOSE"
@@ -13,7 +13,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-rust-htslib = { version = "1", default-features = false, features = ["bzip2", "lzma", "curl"] }
+# pinned: count.rs closes CRAM readers around a use after free in this version's drop order (`Indexed`); read it before moving
+rust-htslib = { version = "=1.0.1", default-features = false, features = ["bzip2", "lzma", "curl"] }
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

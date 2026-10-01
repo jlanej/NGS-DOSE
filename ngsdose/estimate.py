@@ -199,6 +199,25 @@ def test_regions(counts: dict, curve: gcmodel.GCCurve, region_tables: np.ndarray
     return out
 
 
+def single_copy_regions(counts: dict, curve: gcmodel.GCCurve, region_tables: np.ndarray | None) -> dict | None:
+    """log(observed / expected) of every single-copy region the counts hold - the controls, the known-truth sets, the
+    karyotype windows; not the dosage regions (chrM, chrEBV) - under the control GC curve, each as `test_regions` pools
+    them. A region without a read is given half a read, so that an absent chromosome Y reads low and not undefined.
+    This is what chromosomes are read from (karyotype.py)."""
+    if region_tables is None:
+        return None
+    idx = [i for i, r in enumerate(counts["regions"]) if r.get("role", "control") != "dosage" and not r.get("absent")]
+    if not idx:
+        return None
+    rate = np.where(np.isnan(curve.rate), 0.0, curve.rate) * curve.rescale
+    obs = np.array([counts["regions"][i]["obs"] for i in idx], float)
+    tab = region_tables[idx]
+    exp = (tab @ rate) / np.maximum(tab[:, rate > 0].sum(1) / np.maximum(tab.sum(1), 1), 1e-9)
+    exp = exp * _undefined_window_factor([counts["regions"][i] for i in idx], tab)
+    lr = np.log(np.maximum(obs, 0.5) / np.maximum(exp, 1e-9))
+    return dict(names=[counts["regions"][i]["name"] for i in idx], log_ratio=[round(float(x), 4) for x in lr])
+
+
 def _natural(s: str):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
@@ -578,6 +597,7 @@ def estimate_sample(counts: dict, panel: Panel, units: dict[str, str], features:
         gc_curve_max_se=float(np.nanmax(curve.se_log)),
         gc_rel={f"{g}": (round(float(curve.relative()[g]), 4) if not np.isnan(curve.rate[g]) else None) for g in range(20, 85, 5)},
         truth_regions=test_regions(counts, curve, region_tables),
+        single_copy=single_copy_regions(counts, curve, region_tables),
         eof_marker=counts.get("eof_marker"),
         unmapped_fetched=counts.get("unmapped_fetched"),
         untestable_chromosomes=None if qc is None else qc.untestable_chromosomes,

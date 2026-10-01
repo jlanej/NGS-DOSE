@@ -183,6 +183,21 @@ def test_a_cram_gives_the_counts_of_its_bam(local, cram, tmp_path):
         assert c["pipeline"]["sq_sha256"] == local[mode]["pipeline"]["sq_sha256"]
 
 
+def test_closing_a_cram_reader_touches_no_freed_memory(local, cram, tmp_path):
+    """A fetch closes one indexed reader per worker while the other workers still count. A CRAM's index belongs to its
+    file handle, and the htslib binding destroys the index after it has closed the file: htslib then reads the freed
+    handle. Left alone that memory still reads as it did, and nothing happens; once in a few hundred runs another
+    thread has taken it, and the run aborts. With freed memory overwritten (macOS: MallocScribble; glibc:
+    MALLOC_PERTURB_) the read fails every time, so this is a test and not a matter of luck: the engine's reader must
+    never get there, whatever the number of workers."""
+    env = environ(REF_PATH=f"{cram}/noref/%s", REF_CACHE=f"{cram}/noref/%s", MallocScribble="1", MALLOC_PERTURB_="85")
+    for threads in (1, 4):
+        out = tmp_path / f"t{threads}.json"
+        r = count(cram / "fx.cram", "fetch", out, threads=threads, env=env)
+        assert r.returncode == 0, (threads, r.returncode, r.stderr[-400:])
+        assert strip(io.load_counts(out)) == strip(local["fetch"])
+
+
 def test_a_truncated_file_is_refused(cram, tmp_path):
     """A copy that stopped early lacks the end-of-file marker: refused, with no counts written, unless
     --allow-truncated, which records the marker as absent."""

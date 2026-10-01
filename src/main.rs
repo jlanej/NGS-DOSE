@@ -110,6 +110,14 @@ enum Cmd {
         /// at least 400, the longest read span it has to cover
         #[arg(long, default_value_t = count::DEFAULT_PAD, value_parser = clap::value_parser!(i64).range(count::READLEN_MAX as i64..))]
         pad: i64,
+        /// fetch mode: intervals of one contig with no more than this many bp between them are read
+        /// with one query, the reads that start between them skipped. The counts do not depend on it;
+        /// the bytes read do: an index cannot start a query nearer than it resolves (16,384 bp in a
+        /// BAM index, a slice of some 10,000 reads in a CRAM index), so queries closer than that
+        /// read the same blocks again. Default: 50000 for a CRAM (two typical slices of a 30x file),
+        /// 16384 for a BAM. 0 reads every interval with a query of its own
+        #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
+        group_gap: Option<i64>,
         /// fetch mode: go on when a loaded panel class has no interval in the sinks BED, or loses any
         /// of its intervals to a contig this file's header lacks. Its reads are then counted only where
         /// they fall inside the intervals read - an undercount, which `ngsdose estimate` reports as NA -
@@ -423,6 +431,7 @@ fn run(cli: Cli) -> Result<()> {
             retries,
             allow_truncated,
             pad,
+            group_gap,
             allow_missing_sinks,
             stall_timeout,
         } => {
@@ -467,7 +476,8 @@ fn run(cli: Cli) -> Result<()> {
             }
             let tid_of = |name: &str| header.tid(name.as_bytes()).map(|t| t as i32);
             let ctrl = controls::Controls::load(&controls_path, &tid_of)?;
-            let params = count::Params { min_hits, min_frac, bin, l_grid, threads, place_bin, unmapped, pad, retries };
+            let group_gap = group_gap.unwrap_or(if inp.cram { count::DEFAULT_GROUP_GAP } else { count::DEFAULT_GROUP_GAP_BAM });
+            let params = count::Params { min_hits, min_frac, bin, l_grid, threads, place_bin, unmapped, pad, retries, group_gap };
             let mut sink_contigs: Vec<String> = Vec::new();
             let mut sinks_missing: Vec<String> = Vec::new();
             let mut sinks_skipped = Default::default();

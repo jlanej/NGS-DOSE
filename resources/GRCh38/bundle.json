@@ -88,5 +88,67 @@
       ],
       "change": "the telomeric repeat's intervals were added on 2026-09-22; the rows of the classes listed are unchanged (the file without the TEL rows hashes to this value), so fetch counts that record this hash are complete for them and lack only the TEL class"
     }
-  ]
+  ],
+  "control_subsets": {
+    "lite200": "controls.lite200.bed"
+  },
+  "karyotype": {
+    "arms": {
+      "chr1": 123400000,
+      "chr2": 93900000,
+      "chr3": 90900000,
+      "chr4": 50000000,
+      "chr5": 48800000,
+      "chr6": 59800000,
+      "chr7": 60100000,
+      "chr8": 45200000,
+      "chr9": 43000000,
+      "chr10": 39800000,
+      "chr11": 53400000,
+      "chr12": 35500000,
+      "chr13": 17700000,
+      "chr14": 17200000,
+      "chr15": 19000000,
+      "chr16": 36800000,
+      "chr17": 25100000,
+      "chr18": 18500000,
+      "chr19": 26200000,
+      "chr20": 28100000,
+      "chr21": 12000000,
+      "chr22": 15000000,
+      "chrX": 61000000,
+      "chrY": 10400000
+    },
+    "gc": {
+      "chr1": 0.4172,
+      "chr2": 0.4023,
+      "chr3": 0.3967,
+      "chr4": 0.3824,
+      "chr5": 0.3951,
+      "chr6": 0.3961,
+      "chr7": 0.407,
+      "chr8": 0.4016,
+      "chr9": 0.4128,
+      "chr10": 0.4154,
+      "chr11": 0.4154,
+      "chr12": 0.4077,
+      "chr13": 0.3855,
+      "chr14": 0.4089,
+      "chr15": 0.4203,
+      "chr16": 0.4458,
+      "chr17": 0.4532,
+      "chr18": 0.3978,
+      "chr19": 0.4836,
+      "chr20": 0.438,
+      "chr21": 0.4107,
+      "chr22": 0.4748,
+      "chrX": 0.3953,
+      "chrY": 0.3919
+    },
+    "gc_source": "GC fraction of each chromosome's A, C, G and T in GRCh38 (GRCh38_full_analysis_set_plus_decoy_hla.fa), computed with resources/build/chromosome_gc.py",
+    "rules": {},
+    "model": "karyotype.model.json.gz",
+    "model_source": "learned with resources/build/karyotype_model.py on the 3,202 genomes of the 1000 Genomes Project's 30x cohort (NYGC): the 982 regions the bundle held before 0.3.0 on all of them, the karyotype windows on the 186 counted with them; a cohort of 50 genomes or more learns its own",
+    "arms_source": "UCSC hg38 cytoBand: the end of the short arm's centromeric band (acen)"
+  }
 }

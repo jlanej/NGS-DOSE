@@ -1,4 +1,4 @@
-"""Command line for the modelling layer: `ngsdose estimate | cohort | adjust | pcsweep | trios | sinks | fetchplan | selftest`."""
+"""Command line for the modelling layer: `ngsdose estimate | cohort | adjust | pcsweep | trios | sinks | fetchplan | control-sets | selftest`."""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, cohort, contract, estimate, fetchplan, io, pcselect, resources, sinks, trios
+from . import __version__, cohort, contract, estimate, fetchplan, io, karyotype, pcselect, resources, sinks, trios
 from .tables import dump as _dump, load_result as _load_result, num as _num, summary_row, write_table
 
 
@@ -219,13 +219,35 @@ def cmd_cohort(a):
         raise SystemExit(f"ngsdose cohort: {e}") from None
     profiles = {} if a.segments else None
     try:
+        kar = None if a.no_karyotype else resources.Bundle(a.resources).karyotype()
+        if a.karyotype_model:
+            if kar is None:
+                raise ValueError("--karyotype-model: this bundle says nothing about chromosomes (bundle.json `karyotype`)")
+            with io._open(a.karyotype_model) as fh:
+                kar.update(model=karyotype.Model.from_json(json.load(fh)), fit_own=False)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"ngsdose cohort: {e}") from None
+    kout: dict = {}
+    try:
         rows, eff, _ = cohort.cohort_table(_estimates(a.estimates), anchors, max_window_sd=a.max_window_sd,
                                            n_profile_pcs=a.profile_pcs, n_control_pcs=a.control_pcs, mp_margin=a.mp_margin,
-                                           efficiencies=eff_in, log=lambda m: print(m, file=sys.stderr), rules=rules, profiles=profiles)
+                                           efficiencies=eff_in, log=lambda m: print(m, file=sys.stderr), rules=rules, profiles=profiles,
+                                           karyotype=kar, karyotypes=kout)
     except ValueError as e:
         raise SystemExit(f"ngsdose cohort: {e}") from None
     if a.save_efficiencies:
         Path(a.save_efficiencies).write_text(json.dumps(eff))
+    if a.save_karyotype_model:
+        if kout.get("model") is None:
+            print("[cohort] --save-karyotype-model: no model to save (chromosomes were not read)", file=sys.stderr)
+        else:
+            _dump(kout["model"].to_json(), a.save_karyotype_model)
+    if a.karyotype_table:
+        long = karyotype.long_table(kout.get("samples") or [], kout.get("readings") or [])
+        if long:
+            write_table([{k: r.get(k) for k in karyotype.LONG_COLUMNS} for r in long], a.karyotype_table)
+        else:
+            Path(a.karyotype_table).write_text("\t".join(karyotype.LONG_COLUMNS) + "\n")
     if a.segments:
         cols = ["sample", "class", "kind", "start", "end", "windows", "state", "mean", "se", "raw", "off_integer", "z", "scale_f", "complete_copies", "call"]
         segs = []
@@ -720,6 +742,29 @@ def cmd_fetchplan(a):
               f"{a.out}.controls.txt (-c {Path(plan.controls_fasta).name}), {a.out}.scan_panels.txt, {a.out}.plan.tsv", file=sys.stderr)
 
 
+def cmd_controlsets(a):
+    """The bundle's control sets: which of its single-copy regions a fetch reads."""
+    try:
+        res = resources.Bundle(a.resources)
+        sets = fetchplan.control_sets(res.dir / "controls.bed")
+        if not sets:
+            sys.exit(f"ngsdose control-sets: no controls.bed in {res.dir}")
+        print("set\tregions\tMb\tcontrols\ttruth_regions\tkaryotype_pieces\tfasta")
+        for name in ["all"] + sorted(n for n in sets if n != "all"):
+            rows = sinks.read_bed(sets[name])
+            fa = res.controls if name == "all" else fetchplan.controls_fasta(sets[name])
+            if a.write and not fa.exists():
+                n = fetchplan.subset_fasta(res.controls, [f"{c}:{s0}-{e0}" for c, s0, e0, _ in rows], fa)
+                print(f"[control-sets] wrote {fa} ({n} regions, cut from {res.controls.name})", file=sys.stderr)
+            role = lambda r: r[3] or "control"
+            print("\t".join(map(str, (name, len(rows), f"{sum(e0 - s0 for _, s0, e0, _ in rows) / 1e6:.2f}", sum(1 for r in rows if role(r) == "control"),
+                                      sum(1 for r in rows if role(r).startswith("test:") and not role(r).startswith("test:karyotype")),
+                                      sum(1 for r in rows if role(r).startswith("test:karyotype")),
+                                      fa.name if fa.exists() else "not written: `ngsdose control-sets --write`, or `ngsdose fetchplan --controls NAME` cuts it for a plan"))))
+    except (OSError, ValueError) as e:
+        sys.exit(f"ngsdose control-sets: {e}")
+
+
 def cmd_selftest(a):
     from . import selftest
     sys.exit(0 if selftest.run(verbose=True) else 1)
@@ -763,6 +808,15 @@ def main(argv=None):
                    help="write the integer copy states called along the unit, one row per genome and segment (kind `segment`; `raw` is the segment's mean as "
                         "the reads give it, before the genome's scale and lean), and one per stretch that reads a fraction of a copy off them (kind `fraction`, "
                         "with its z against the cohort), for the classes whose rules ask for them")
+    c.add_argument("--no-karyotype", action="store_true", help="do not read chromosomes in copies (the karyotype columns)")
+    c.add_argument("--karyotype-model", metavar="JSON",
+                   help="read the chromosomes against this saved model of the single-copy regions instead of learning one on this cohort "
+                        "(a cohort of fewer than 50 genomes takes the bundle's model without it): a genome's reading then does not depend on "
+                        "which other genomes are given")
+    c.add_argument("--save-karyotype-model", metavar="JSON", help="save the model the chromosomes were read against (.gz for gzip)")
+    c.add_argument("--karyotype-table", metavar="TSV",
+                   help="write every genome's chromosomes, one row each (copies, SE, whole number, distance from it, z, status), and one row per "
+                        "stretch where a chromosome holds more than one level (an arm, a segment)")
     c.add_argument("--max-window-sd", type=float, default=None)
     c.add_argument("--profile-pcs", type=int, default=3)
     c.add_argument("--mp-margin", type=float, default=0.01,
@@ -896,8 +950,11 @@ def main(argv=None):
     f.add_argument("--stats", nargs="+", metavar="FILE", help="interval statistics from `ngsdose sinks --stats` (later files win per class)")
     f.add_argument("--sinks", nargs="+", metavar="BED", help="take every class's intervals from these sinks BEDs (learned for this pipeline) "
                    "instead of the files the menu names")
-    f.add_argument("--controls", metavar="BED", help="the control regions as BED (default: the menu's controls row); the fetch must then use the "
-                   "controls FASTA of the same name (controls.NAME.bed -> controls.NAME.fa.gz), which controls.txt names")
+    f.add_argument("--controls", metavar="SET", help="the regions a fetch reads for the denominator, the known truths and the chromosomes: the name of one of "
+                   "the bundle's control sets (controls.NAME.bed beside its controls: `all`, `base`, `lite200`, `karyotype`, `screen` in the GRCh38 bundle; "
+                   "README, 'Choosing what a fetch reads') or a BED (default: the menu's controls row). The fetch must use the controls FASTA of exactly "
+                   "these regions, which controls.txt names: controls.NAME.fa.gz where the bundle ships it, else PREFIX.controls.fa.gz, cut from the "
+                   "bundle's controls.fa.gz when the plan is written")
     f.add_argument("--pad", type=int, default=600, help="padding of the control regions, as `ngs-dose count --pad` (default 600, at least 400); another value goes to "
                    "count_flags.txt so the fetch reads the regions costed here")
     f.add_argument("--crai", nargs="+", metavar="CRAI", help="CRAM indexes to cost the plan on (median over them); each from the same place "
@@ -922,6 +979,15 @@ def main(argv=None):
     f.add_argument("-o", "--out", metavar="PREFIX", help="write PREFIX.sinks.bed, .panels.txt, .count_flags.txt, .controls.txt, .scan_panels.txt, .plan.tsv "
                    "(without it, only the table is printed)")
     f.set_defaults(fn=cmd_fetchplan)
+
+    k = sub.add_parser("control-sets", help="list the bundle's control sets (which single-copy regions a fetch reads), and write their FASTAs",
+                       description="The bundle's controls.bed holds every single-copy region it has; controls.NAME.bed beside it is a set of them that a "
+                                   "fetch can read instead (`ngsdose fetchplan --controls NAME`). The engine takes a set as a FASTA of exactly its "
+                                   "regions (-c). --write cuts each set's FASTA that is not there yet from the bundle's controls.fa.gz, into the "
+                                   "bundle's directory (an image or an install does this once; no reference genome is needed).")
+    k.add_argument("-r", "--resources", default=None, help="resource bundle directory (default: packaged GRCh38)")
+    k.add_argument("--write", action="store_true", help="write the FASTAs of the sets that lack one")
+    k.set_defaults(fn=cmd_controlsets)
 
     s = sub.add_parser("selftest", help="simulation-based check of the estimator; needs no data")
     s.set_defaults(fn=cmd_selftest)

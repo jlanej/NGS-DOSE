@@ -27,6 +27,9 @@ COPY pyproject.toml README.md ./
 COPY ngsdose ./ngsdose
 COPY resources ./resources
 RUN pip install --no-cache-dir . && pip freeze > /opt/ngs-dose/pip-freeze.txt
+# the FASTAs of the bundle's control sets that the repository does not carry (controls.karyotype, controls.screen): cut from
+# controls.fa.gz, so that a fetch plan with `--controls NAME` finds its controls file in the bundle's directory
+RUN ngsdose control-sets --write -r /opt/ngs-dose/resources/GRCh38
 COPY docs ./docs
 ENV NGSDOSE_RESOURCES=/opt/ngs-dose/resources/GRCh38 \
     NGSDOSE_SATELLITES=/opt/ngs-dose/resources/experimental/satellites.CHM13v2.k31.panel.tsv.gz \

@@ -130,7 +130,10 @@ def test_bundle_readme_quotes_the_controls():
     states(doc, f"{roles['control']} control regions ({fmt_mb(ctrl_bp)}); {roles['test:auto']} held-out autosomal, "
                 f"{roles['test:chrX']} chrX and {roles['test:chrY']} chrY known-truth regions; one dosage region each on chrM and chrEBV; "
                 "all with 1 kb flanks", path)
-    assert roles["dosage:chrM"] == roles["dosage:chrEBV"] == 1 and len(roles) == 6
+    kar = [(s, e) for _, s, e, r in bed if r.startswith("test:karyotype")]
+    windows = {line.split("\t")[3] for line in open(BUNDLE / "build_inputs" / "karyotype.windows.tsv") if not line.startswith(("chrom", "#"))}
+    states(doc, f"{len(kar):,} pieces of the karyotype windows ({len(windows)} windows, {fmt_mb(sum(int(e) - int(s) for s, e in kar))})", path)
+    assert roles["dosage:chrM"] == roles["dosage:chrEBV"] == 1 and len(roles) == 9
 
 
 def test_bundle_readme_quotes_the_panel():
@@ -197,9 +200,11 @@ def test_fixture_readme_quotes_the_fixture():
     ctrl = intervals([(c, int(s), int(e)) for c, s, e, r in bed if r == "control"])
     states(doc, f"~{depth(prim, ctrl):.2f}× over the {sum(len(v[0]) for v in ctrl.values())} control regions "
                 f"(duplicates included; ~{depth([r for r in prim if not r[2] & 0x400], ctrl):.2f}× without)", path)
-    # the regions make_fixture.sh cut: the controls with 1,600 bp either side, and the sinks of the day (no TEL)
+    # the regions make_fixture.sh cut: the bundle's regions of the day (the base set: no karyotype windows) with 1,600 bp either
+    # side, and the sinks of the day (no TEL)
     rows = sinks()
-    kept = intervals([(c, max(0, int(s) - 1600), int(e) + 1600) for c, s, e, _ in bed] + [(c, s, e) for c, s, e, k in rows if k != "TEL"])
+    base = [line.rstrip("\n").split("\t") for line in open(BUNDLE / "controls.base.bed")]
+    kept = intervals([(c, max(0, int(s) - 1600), int(e) + 1600) for c, s, e, _ in base] + [(c, s, e) for c, s, e, k in rows if k != "TEL"])
     states(doc, f"~{depth(prim, kept):.1f}× over all retained regions", path)
     # which TEL sinks hold fixture reads
     tel = [(c, s, e) for c, s, e, k in rows if k == "TEL"]

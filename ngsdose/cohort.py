@@ -338,7 +338,7 @@ def fixed_efficiencies(table: dict, cls: str, starts: np.ndarray) -> np.ndarray:
 
 def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_profile_pcs: int = 3, n_control_pcs="mp",
                  mp_margin: float = 0.01, efficiencies: dict | None = None, log=None, rules: dict | None = None,
-                 profiles: dict | None = None) -> tuple[list[dict], dict, dict]:
+                 profiles: dict | None = None, karyotype: dict | None = None, karyotypes: dict | None = None) -> tuple[list[dict], dict, dict]:
     """The cohort layer over per-sample estimates: window calibration of every positional class,
     profile PCs, and the control-region PCs with their Marchenko-Pastur count.
 
@@ -358,13 +358,24 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
     end of the unit; `.variants`, every event; `.scale_f`; `.call`, settled or uncertain, with `.call_gap`, how far behind
     the best other reading is; `<class>.cn_unit` is the level over the whole unit, what `<class>.cn` was before the class
     had a core). `profiles`, a dict, is filled per class with every genome's
-    calibrated window profile and its segments, for a caller that draws or tabulates them."""
+    calibrated window profile and its segments, for a caller that draws or tabulates them.
+
+    `karyotype`: what reading chromosomes in copies needs (`resources.Bundle.karyotype()`: the arms, the rules, a saved
+    model, the control regions' names; `fit_own` False keeps the saved model whatever the cohort's size). Every genome
+    then gets `karyotype` (written like one: 46,XX; 47,XY,+21; a change in part of the cells with its share in
+    brackets), `karyotype.status` (settled, fractional, uncertain), `sex_chromosomes`, `<chromosome>.copies` and
+    `<chromosome>.z` for chr1..chr22, chrX and chrY, `karyotype.events`, `karyotype.noise`, `karyotype.regions`,
+    `karyotype.gc_tilt` and `karyotype.gc_tilt_z`, and `karyotype.note` where the reading could not settle something
+    (karyotype.py). `karyotypes`, a dict, is filled with the readings and the model, for a caller that tabulates the
+    stretches or saves the model. The summary is returned under `karyotype` in the third value."""
+    from . import karyotype as kary
     from . import pcselect
     from . import segments as seg
     from .tables import summary_row
     say = log or (lambda *a, **k: None)
     rows, order, classes, win, layout, lacking, ctrl = {}, [], [], {}, {}, {}, []
     ctrl_key = []                                          # which control regions, in which order, per sample
+    kv = []                                                # each sample's single-copy regions, for the chromosomes
     for r in results:
         s = r["sample"]
         if s in rows:
@@ -393,6 +404,8 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
                 lacking.setdefault(cls, {})[s] = "no usable window"
                 continue
             win.setdefault(cls, []).append((s, y, gc))
+        if karyotype is not None:
+            kv.append(kary.gather(r, karyotype.get("control_names")))
         qc = r.get("control_qc") or {}
         x = qc.get("region_log_ratio")
         ctrl.append(None if x is None else np.asarray(x, float))
@@ -505,6 +518,18 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
             profiles[cls] = dict(samples=list(cal.samples), start=cal.window_start.tolist(), end=[int(e) for e in layout[cls][1]],
                                  cn=np.where(kept[None, :], calibrated, np.nan).astype(np.float32), level=cal.level.copy(), calls=calls,
                                  scale=cal.scale, offsets=cal.offsets)
+    kinfo = None
+    if karyotype is not None and order:
+        readings, model, kinfo = kary.cohort(kv, karyotype.get("arms") or {}, model=karyotype.get("model"), rules=karyotype.get("rules"),
+                                             fit_own=karyotype.get("fit_own"), log=say, gc=karyotype.get("gc"))
+        del kv
+        if model is not None:
+            chroms = kary.table(model.names, model.arms).chromosomes()
+            for s, rd in zip(order, readings):
+                rows[s].update(kary.columns(rd, chroms))
+        if karyotypes is not None:
+            karyotypes.update(samples=list(order), readings=readings, model=model, info=kinfo)
+        info["karyotype"] = kinfo
     # control-region PCs: how many are structure is decided at the Marchenko-Pastur edge of the noise
     # bulk ("mp"); the table carries more than that, so that `pcsweep` can look beyond the choice
     want = None if str(n_control_pcs).lower() == "mp" else int(n_control_pcs)
@@ -548,6 +573,8 @@ def cohort_table(results, anchors: dict, max_window_sd: float | None = None, n_p
             rows[s][f"ctrlPC{k + 1}"] = round(float(scores[j, k]), 5)
     info = dict(mp=sel.n_pc, describe=sel.describe(), n_written=n_write, variance=[round(float(v), 5) for v in var[:n_write]],
                 singular_values=[round(float(v), 5) for v in sv], shape=list(shape))
+    if kinfo is not None:
+        info["karyotype"] = kinfo
     other = other_n + other_set
     if no_qc or other:
         info["excluded"] = no_qc + other

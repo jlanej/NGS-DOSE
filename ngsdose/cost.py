@@ -2,17 +2,27 @@
 
 A CRAM is read slice by slice: a region query decodes every slice whose alignment span overlaps
 the region, whole. The engine merges the intervals of a plan where they touch or overlap
-(src/count.rs `fetch_plan`: per contig, sorted, a start at or before the running end joins) and
-makes one indexed fetch per merged interval (`read_interval`), and htslib decodes a slice again for
-every fetch whose interval overlaps it. So a fetch of a plan reads, per merged interval, every slice
-overlapping it plus the compression header of each container those slices are in, and a slice under
-k merged intervals that do not touch is decoded k times: that is what `CraiIndex.price` charges (the
-figure the plan reports), computed with the engine's own merge rule (`merge`). Reading every slice
-once (`price_once`) is the floor a reader that sorted the plan's slices would reach; the shipped
-engine does not, and the gap is largest where a few slices hold many small intervals (the sparse
-chrY slices of a woman's CRAM, decoded once per chrY truth region). A consequence of the rule: an
-interval that bridges two intervals of the plan can make it cheaper (one decode of their shared
-slices instead of two), so adding an option does not always make a plan dearer.
+(src/count.rs `fetch_plan`), and reads the merged intervals of one contig that lie no more than
+`GROUP_GAP` bp apart with one query from the first to the last (`group_plan`; the reads that start
+between them are skipped): an index cannot start a query nearer than it resolves, so two queries
+that close would read the same slices twice. htslib decodes a slice again for every query that
+overlaps it. So a fetch of a plan reads, per query, every slice overlapping its span plus the
+compression header of each container those slices are in, and a slice under k queries is decoded k
+times: that is what `CraiIndex.price` charges (the figure the plan reports), computed with the
+engine's own rule (`merge`). Reading every slice once (`price_once`) is the floor; the gap between
+the two is what queries further apart than `GROUP_GAP` still share, and the slices a query reads
+through that hold none of its intervals (a slice of 10,000 reads spans 25 to 40 kb at 30 to 40x; of
+gaps from 0 to 100 kb, the bundle's regions and sinks are read in the fewest bytes at 40 to 65 kb, by
+the indexes of eight 1000 Genomes files). An engine before 0.3.0 made one query per merged interval: `gap=0` prices that, and
+the difference was largest where a few slices hold many small intervals (the sparse chrY slices of a
+woman's CRAM, decoded once per chrY truth region; the pieces of a karyotype window). A consequence
+of the rule: an interval that bridges two queries can make a plan cheaper (one decode of their
+shared slices instead of two), so adding an option does not always make a plan dearer.
+
+These are the bytes of the slices, which is what a local file costs to read. Over HTTP, htslib
+asks for an open-ended range at every query and drops what is in flight at the next, so a remote
+fetch moves more than this (three to four times as much was measured for 1,400 queries of a 1000
+Genomes CRAM on S3): the number of queries matters there as much as their bytes.
 
 The .crai index lists every slice (gzip-compressed TSV: reference id, 1-based alignment start,
 alignment span, container byte offset, slice byte offset within the container's data, slice size in
@@ -21,11 +31,11 @@ from the header of the CRAMs (or the .fai or .dict of the reference they were al
 lists the same contigs in the same order). A counts file's `contigs` list will not do: it holds only
 the contigs that had reads. A slice that holds reads of several contigs (CRAM's multi-reference
 slices, used for the small decoy and unplaced contigs where many sinks are) is listed once per contig
-with the same offsets: it is one slice, counted once within one fetch, and decoded again by a fetch
+with the same offsets: it is one slice, counted once within one query, and decoded again by a query
 on each of its other contigs. Slices of reads without a coordinate are listed under id -1: the
 unmapped bin, which a fetch reads once, whole, only with `ngs-dose count --unmapped`.
 
-The bytes of one fetch are the sizes of the slices it overlaps plus, once per container among them,
+The bytes of one query are the sizes of the slices it overlaps plus, once per container among them,
 the bytes between the container's data start and its first listed slice (its compression header).
 Container headers themselves (a few dozen bytes) are not in the index and not counted. A .crai says
 nothing of the file it indexes: take it from the same place as the CRAM (an index of another copy of
@@ -38,6 +48,7 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 
 UNMAPPED = "*"                                             # the contig name of the unmapped bin in an interval list
+GROUP_GAP = 50_000                                         # src/count.rs DEFAULT_GROUP_GAP (CRAM): intervals this close share one query
 
 
 def read_contigs(path) -> list[tuple[str, int | None]]:
@@ -68,11 +79,13 @@ def read_contigs(path) -> list[tuple[str, int | None]]:
     return got
 
 
-def merge(intervals) -> dict[str, tuple[list[int], list[int]]]:
-    """The fetches `ngs-dose count -m fetch` makes for a set of intervals ((contig, 0-based start,
-    end), contig UNMAPPED for the unmapped bin): per contig, sorted and merged where they touch or
-    overlap, exactly as src/count.rs `fetch_plan` merges them (a start at or before the running end
-    joins), as (starts, ends). The unmapped bin is one fetch, ([0], [0])."""
+def merge(intervals, gap: int = GROUP_GAP) -> dict[str, tuple[list[int], list[int]]]:
+    """The queries `ngs-dose count -m fetch` makes for a set of intervals ((contig, 0-based start,
+    end), contig UNMAPPED for the unmapped bin): per contig, sorted, merged where they touch or
+    overlap (src/count.rs `fetch_plan`) and joined into one query where no more than `gap` bp lie
+    between one's end and the next one's start (`group_plan`; a start within `gap` of the running
+    end joins), as the queries' (starts, ends). `gap=0` is an engine before 0.3.0: one query per
+    merged interval. The unmapped bin is one query, ([0], [0])."""
     by: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for c, s, e in intervals:
         by[c].append((s, e))
@@ -82,7 +95,7 @@ def merge(intervals) -> dict[str, tuple[list[int], list[int]]]:
         starts: list[int] = []
         ends: list[int] = []
         for s, e in v:
-            if ends and s <= ends[-1]:
+            if ends and s - ends[-1] <= (0 if c == UNMAPPED else gap):
                 if e > ends[-1]:
                     ends[-1] = e
             else:
@@ -95,9 +108,10 @@ def merge(intervals) -> dict[str, tuple[list[int], list[int]]]:
 class CraiIndex:
     """The slices of one CRAM, from its .crai and the contig list of its header (`read_contigs`)."""
 
-    def __init__(self, path, contigs: list[tuple[str, int | None]]):
+    def __init__(self, path, contigs: list[tuple[str, int | None]], gap: int = GROUP_GAP):
         from .io import _open
         self.path = str(path)
+        self.gap = gap                                     # how far apart the engine's queries are: `merge`
         self.size: dict[tuple[int, int], int] = {}         # (container offset, slice offset) -> slice bytes
         head: dict[int, int] = {}                          # container offset -> offset of its first listed slice
         per: dict[str, list[tuple[int, int, tuple[int, int]]]] = defaultdict(list)
@@ -176,10 +190,10 @@ class CraiIndex:
         return got
 
     def price(self, intervals) -> int:
-        """What `ngs-dose count -m fetch` reads for a set of intervals: merged as the engine merges
-        them (`merge`), one fetch per merged interval, a slice under several of them decoded once per
-        fetch."""
-        return sum(self.fetch(c, s, e) for c, (starts, ends) in merge(intervals).items() for s, e in zip(starts, ends))
+        """What `ngs-dose count -m fetch` reads for a set of intervals: joined into queries as the
+        engine joins them (`merge`, with this index's `gap`), a slice under several queries decoded
+        once per query."""
+        return sum(self.fetch(c, s, e) for c, (starts, ends) in merge(intervals, self.gap).items() for s, e in zip(starts, ends))
 
     def price_once(self, intervals) -> int:
         """The floor: every slice the intervals overlap decoded once, with each container's
@@ -188,14 +202,15 @@ class CraiIndex:
         return self.bytes(self.keys(intervals)[0])
 
     def extra(self, plan: dict[str, tuple[list[int], list[int]]], contig, s0, e0) -> int:
-        """The bytes the fetches of `plan` (from `merge`) grow by when an interval is added: the
-        fetch of the merged interval it joins or makes, less the fetches of the plan's intervals it
-        joined. 0 when it lies inside one of them (or overlaps no slice), negative when it bridges
-        two that decode the same slices."""
+        """The bytes the queries of `plan` (from `merge` with this index's `gap`) grow by when an
+        interval is added: the query it joins or makes, less the plan's queries it joined. 0 when it
+        lies inside one of them (or overlaps no slice), negative when it bridges two that decode the
+        same slices."""
         if contig == UNMAPPED:
             return 0 if UNMAPPED in plan else self.fetch(UNMAPPED, 0, 0)
         starts, ends = plan.get(contig, ([], []))
-        i, j = bisect_left(ends, s0), bisect_right(starts, e0)      # the plan's intervals ending at or after s0 and starting at or before e0: those it joins
+        # the plan's queries ending within `gap` before s0 or later, and starting within `gap` after e0 or earlier: those it joins
+        i, j = bisect_left(ends, s0 - self.gap), bisect_right(starts, e0 + self.gap)
         if i >= j:
             return self.fetch(contig, s0, e0)
         return self.fetch(contig, min(s0, starts[i]), max(e0, ends[j - 1])) - sum(self.fetch(contig, starts[x], ends[x]) for x in range(i, j))

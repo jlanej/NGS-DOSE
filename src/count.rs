@@ -29,6 +29,16 @@ pub const READLEN_MAX: usize = 400;
 /// Padding (bp) of the control regions in a fetch, shared by `count` and `plan`, which must agree
 /// for a cut along the plan to reproduce the fetch. At least READLEN_MAX: see `fetch_plan`.
 pub const DEFAULT_PAD: i64 = 600;
+/// Fetch: intervals this close on one contig are read with one query. An index cannot start a query
+/// nearer than it resolves - a BAM index in 16,384-bp windows, a CRAM index in slices of some 10,000
+/// reads (25 to 40 kb at 30 to 40x) - so two queries this close read the same compressed blocks
+/// twice, and over a network each one is a new request whose bytes in flight are thrown away.
+/// Reading through the gap costs little that the two queries did not, and the reads that start in
+/// it are skipped, so the counts are the same. For a CRAM the gap is two typical slices: by the
+/// indexes of eight 1000 Genomes 30x files, a fetch of the bundle's regions reads least between
+/// 40 and 65 kb (ngsdose/cost.py prices a plan by the same rule); for a BAM it is the index's window.
+pub const DEFAULT_GROUP_GAP: i64 = 50_000;
+pub const DEFAULT_GROUP_GAP_BAM: i64 = 16_384;
 pub const DEFAULT_RETRIES: usize = 5;
 
 #[derive(Clone)]
@@ -43,6 +53,9 @@ pub struct Params {
     pub pad: i64,
     /// attempts per interval (fetch) and per open of a remote input before giving up
     pub retries: usize,
+    /// fetch: intervals of one contig with no more than this many bp between them are read with
+    /// one query
+    pub group_gap: i64,
 }
 
 impl Params {
@@ -863,7 +876,7 @@ impl Input {
     /// One attempt at opening the input with its index. htslib does not check the header read of
     /// an indexed open, so a failed one (a 503 from a server) leaves a reader without a header:
     /// that is an open failure too, and may pass on another attempt.
-    pub fn open_indexed(&self) -> Result<bam::IndexedReader> {
+    pub fn open_indexed(&self) -> Result<Indexed> {
         self.check_scheme()?;
         let rd = if self.is_url() {
             let full = match &self.index {
@@ -880,17 +893,19 @@ impl Input {
                 None => bam::IndexedReader::from_path(&self.path),
             }
         };
-        let mut rd = rd.map_err(|e| {
+        let rd = rd.map_err(|e| {
             let errno = std::io::Error::last_os_error().raw_os_error();
             self.open_failed(" with its index", e, errno)
         })?;
+        // wrapped before anything can fail: the reader is closed through `Indexed` on every path
+        let mut rd = Indexed::new(rd);
         if rd.header().inner_ptr().is_null() {
             bail!("cannot read the header of {}", self.display());
         }
         if let Some(r) = &self.reference {
             rd.set_reference(r).map_err(|e| anyhow::anyhow!("set_reference: {}", e))?;
         }
-        set_cram_fields(&mut rd);
+        set_cram_fields(&mut *rd);
         Ok(rd)
     }
     pub fn open_stream(&self, threads: usize) -> Result<bam::Reader> {
@@ -949,8 +964,8 @@ impl Input {
         self.retry("open the input", retries, |last| {
             let (header, eof, cram, unplaced_unmapped) = if indexed {
                 let rd = self.open_indexed()?;
-                let n = if is_cram(&rd) { None } else { Some(unsafe { htslib::hts_idx_get_n_no_coor(rd.index().inner_ptr()) }) };
-                (rd.header().clone(), eof_code(&rd), is_cram(&rd), n)
+                let n = if rd.cram { None } else { Some(unsafe { htslib::hts_idx_get_n_no_coor(rd.index().inner_ptr()) }) };
+                (rd.header().clone(), eof_code(&*rd), rd.cram, n)
             } else {
                 let rd = self.open_stream(1)?;
                 (rd.header().clone(), eof_code(&rd), is_cram(&rd), None)
@@ -1005,6 +1020,55 @@ impl Input {
 
 fn is_cram<R: Read>(rd: &R) -> bool {
     unsafe { (*rd.htsfile()).format.format == htslib::htsExactFormat_cram }
+}
+
+/// An indexed reader that can be closed while other threads work.
+///
+/// rust-htslib closes the file and then destroys the index. A CRAM's index belongs to its file handle (htslib's
+/// `hts_idx_destroy` on a .crai calls `cram_index_free` on the handle), so the second step reads a handle that the
+/// first has freed. A thread alone finds the freed field still null and returns. With other threads allocating, the
+/// memory can be someone else's by then, and htslib frees a pointer that is not its own: an abort ("pointer being
+/// freed was not allocated", seen once in 186 fetches of four threads each) or a damaged heap. `hts_close` frees a
+/// CRAM's index itself, so nothing is lost by never running the second step: on drop, one count of the index's `Arc`
+/// is kept for good (the `Arc` and htslib's 16-byte wrapper stay allocated, per reader closed). A BAM's index is an
+/// allocation of its own and is destroyed as before.
+///
+/// This rests on `IndexedReader::index` returning a reference into an `Arc<IndexView>`, as rust-htslib 1.0.1 does
+/// (Cargo.toml pins the version, and a test reads the lock file): look at `IndexedReader`'s fields and its `Drop`
+/// before moving to another version.
+pub struct Indexed {
+    rd: bam::IndexedReader,
+    cram: bool,
+}
+
+impl Indexed {
+    fn new(rd: bam::IndexedReader) -> Self {
+        let cram = is_cram(&rd);
+        Indexed { rd, cram }
+    }
+}
+
+impl Drop for Indexed {
+    fn drop(&mut self) {
+        if self.cram {
+            // SAFETY: `index()` is `&*self.idx` of an `Arc<IndexView>` (see above), so the pointer is one `Arc::as_ptr`
+            // would give, and the `Arc` is alive: `self.rd` has not been dropped yet.
+            unsafe { std::sync::Arc::increment_strong_count(self.rd.index() as *const bam::IndexView) };
+        }
+    }
+}
+
+impl std::ops::Deref for Indexed {
+    type Target = bam::IndexedReader;
+    fn deref(&self) -> &bam::IndexedReader {
+        &self.rd
+    }
+}
+
+impl std::ops::DerefMut for Indexed {
+    fn deref_mut(&mut self) -> &mut bam::IndexedReader {
+        &mut self.rd
+    }
 }
 
 /// htslib's end-of-file check: 1 present, 0 absent, 2 unseekable, 3 no marker in this format,
@@ -1374,6 +1438,19 @@ pub fn fetch_plan(controls: &Controls, sinks: &[(String, i64, i64)], pad: i64) -
     plan
 }
 
+/// The queries of a fetch: runs of plan intervals (sorted by contig and start) on one contig with
+/// no more than `gap` bp between one's end and the next one's start, as index ranges [first, end).
+pub fn group_plan(plan: &[(i32, i64, i64, String)], gap: i64) -> Vec<(usize, usize)> {
+    let mut groups: Vec<(usize, usize)> = Vec::new();
+    for i in 0..plan.len() {
+        match groups.last_mut() {
+            Some(g) if plan[i].0 == plan[g.1 - 1].0 && plan[i].1 - plan[g.1 - 1].2 <= gap => g.1 = i + 1,
+            _ => groups.push((i, i + 1)),
+        }
+    }
+    groups
+}
+
 /// Targeted pass: only reads placed in the control regions and in the class sinks are
 /// retrieved (plus, optionally, the unmapped bin). `header` is the input's, from the probe.
 pub fn fetch(
@@ -1398,15 +1475,22 @@ pub fn fetch(
         plan.push((tid, s, e, c));
     }
     plan.sort_unstable();
+    // one query per group of neighbouring intervals (DEFAULT_GROUP_GAP): a record is counted, as
+    // before, only if it starts inside one of the plan's intervals
+    let groups = group_plan(&plan, p.group_gap.max(0));
     let m5 = sq_m5(header);
     let label = |job: Option<usize>| match job {
-        Some(i) => format!("{}:{}-{}", plan[i].3, plan[i].1, plan[i].2),
+        Some(g) => {
+            let (i, j) = groups[g];
+            let more = if j - i > 1 { format!(" ({} intervals)", j - i) } else { String::new() };
+            format!("{}:{}-{}{}", plan[i].3, plan[i].1, plan[j - 1].2, more)
+        }
         None => "the unmapped bin".to_string(),
     };
-    let workers = p.threads.max(1).min(plan.len().max(1));
+    let workers = p.threads.max(1).min(groups.len().max(1));
     let (tx, rx) = crossbeam_channel::unbounded::<Option<usize>>();
-    for i in 0..plan.len() {
-        tx.send(Some(i)).ok();
+    for g in 0..groups.len() {
+        tx.send(Some(g)).ok();
     }
     if p.unmapped {
         tx.send(None).ok();
@@ -1418,10 +1502,10 @@ pub fn fetch(
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 let rx = rx.clone();
-                let (plan, m5, label, abort) = (&plan, &m5, &label, &abort);
+                let (plan, groups, m5, label, abort) = (&plan, &groups, &m5, &label, &abort);
                 scope.spawn(move || -> Result<(Acc, ReadStats)> {
                     // opened on first use and again after any failure, each open one attempt
-                    let mut rd: Option<bam::IndexedReader> = None;
+                    let mut rd: Option<Indexed> = None;
                     let mut acc = Acc::new(panel, p.bin);
                     let mut st = ReadStats::new(p.place_bin, false);
                     let mut s = Scratch::new(panel.classes.len());
@@ -1431,7 +1515,7 @@ pub fn fetch(
                         if abort.load(Relaxed) {
                             break;
                         }
-                        let iv = job.map(|i| (plan[i].0, plan[i].1, plan[i].2));
+                        let iv = job.map(|g| &plan[groups[g].0..groups[g].1]);
                         let mut attempt = 0usize;
                         loop {
                             // an interval is committed only if it was read to its end
@@ -1460,8 +1544,9 @@ pub fn fetch(
                                     rd = None;
                                     attempt += 1;
                                     let why = match job {
-                                        Some(i) if attempt == 1 && !is_permanent(&e) => {
-                                            input.reference_mismatch(&plan[i].3, m5.get(&plan[i].3), true)
+                                        Some(g) if attempt == 1 && !is_permanent(&e) => {
+                                            let c = &plan[groups[g].0].3;
+                                            input.reference_mismatch(c, m5.get(c), true)
                                         }
                                         _ => None,
                                     };
@@ -1502,7 +1587,7 @@ pub fn fetch(
 #[allow(clippy::too_many_arguments)]
 fn read_interval(
     rd: &mut bam::IndexedReader,
-    job: Option<(i32, i64, i64)>,
+    job: Option<&[(i32, i64, i64, String)]>,
     panel: &Panel,
     controls: &Controls,
     p: &Params,
@@ -1514,16 +1599,25 @@ fn read_interval(
 ) -> Result<()> {
     take_io_error(rd);
     match job {
-        Some((tid, a, b)) => rd.fetch((tid, a, b)),
+        // one query from the group's first interval to its last
+        Some(ivs) => rd.fetch((ivs[0].0, ivs[0].1, ivs[ivs.len() - 1].2)),
         None => rd.fetch(bam::FetchDefinition::Unmapped),
     }
     .map_err(|e| anyhow::anyhow!("fetch failed: {}", e))?;
+    let mut at = 0usize; // the interval a record's start is looked for in: records come in order
     while let Some(r) = rd.read(rec) {
         r.map_err(|e| anyhow::anyhow!("read error: {}", e))?;
         check_record(rec)?;
-        if let Some((_, a, b)) = job {
-            if rec.pos() < a || rec.pos() >= b {
-                continue; // belongs to a neighbouring interval, or starts before this one
+        if let Some(ivs) = job {
+            let pos = rec.pos();
+            while at < ivs.len() && pos >= ivs[at].2 {
+                at += 1;
+            }
+            if at == ivs.len() {
+                break; // past the group's last interval
+            }
+            if pos < ivs[at].1 {
+                continue; // starts before the group, or in a gap between two of its intervals
             }
         }
         if !handle_record_meta(rec, controls, st, Some(pending)) {
@@ -1934,8 +2028,46 @@ mod tests {
         )
     }
 
+    /// `Indexed` rests on the fields of rust-htslib's `IndexedReader` (its index in an `Arc`, the file closed before
+    /// the index is destroyed). Another version has to be read before it is trusted.
+    #[test]
+    fn the_htslib_binding_is_the_version_the_reader_wrapper_was_written_for() {
+        let lock = include_str!("../Cargo.lock");
+        let at = lock.find("name = \"rust-htslib\"").expect("rust-htslib in Cargo.lock");
+        let version = lock[at..].lines().nth(1).unwrap_or("");
+        assert_eq!(
+            version.trim(),
+            "version = \"1.0.1\"",
+            "rust-htslib changed: re-read `Indexed` in count.rs against IndexedReader's fields and Drop"
+        );
+    }
+
+    #[test]
+    fn neighbouring_intervals_are_grouped_into_one_query() {
+        let iv = |tid: i32, s: i64, e: i64| (tid, s, e, format!("c{}", tid));
+        let plan = vec![iv(0, 100, 200), iv(0, 250, 300), iv(0, 20_000, 20_100), iv(0, 36_484, 36_500), iv(0, 60_000, 60_010), iv(1, 60_020, 60_030)];
+        // a gap of exactly the limit joins, one bp more does not; a new contig never joins
+        assert_eq!(group_plan(&plan, 16_384), vec![(0, 2), (2, 4), (4, 5), (5, 6)]);
+        assert_eq!(group_plan(&plan, 16_383), vec![(0, 2), (2, 3), (3, 4), (4, 5), (5, 6)]);
+        assert_eq!((DEFAULT_GROUP_GAP, DEFAULT_GROUP_GAP_BAM), (50_000, 16_384));
+        assert_eq!(group_plan(&plan, 0), vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)]);
+        assert_eq!(group_plan(&plan, i64::MAX / 2), vec![(0, 5), (5, 6)]);
+        assert!(group_plan(&[], 16_384).is_empty());
+    }
+
     fn params() -> Params {
-        Params { min_hits: 4, min_frac: 0.0, bin: 10, l_grid: vec![], threads: 1, place_bin: 10000, unmapped: false, pad: 0, retries: 1 }
+        Params {
+            min_hits: 4,
+            min_frac: 0.0,
+            bin: 10,
+            l_grid: vec![],
+            threads: 1,
+            place_bin: 10000,
+            unmapped: false,
+            pad: 0,
+            retries: 1,
+            group_gap: DEFAULT_GROUP_GAP,
+        }
     }
 
     // pseudo-random but fixed unit so that all k-mers are unique
