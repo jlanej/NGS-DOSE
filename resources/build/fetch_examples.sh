@@ -130,11 +130,12 @@ total() {  # the last cumulative row: MB as the engine reads it, percent of the 
   echo "container's compression header), so a slice under two fetches is decoded twice. In each table, mb_median is the"
   echo "option's own intervals alone and cum_mb_median the plan up to and including that row, both priced so; cum_mb_floor"
   echo "is the plan with every slice decoded once (the engine comes within a few percent of it: a slice is read twice only"
-  echo "where it spans two fetches more than 50,000 bp apart, as the few sparse chrY slices of a woman do). Over HTTPS"
-  echo "htslib moves more bytes than it decodes: each fetch opens a range request without an end, and what is in flight"
-  echo "at the next seek is thrown away (measured on the windows' candidates: 1,517 MB moved for 410 MB of slices); a"
-  echo "copy of the containers by exact byte range moves what is priced here. Candidate classes have no sinks yet: a plan"
-  echo "lists them for the whole-file scans only."
+  echo "where it spans two fetches more than 50,000 bp apart, as the few sparse chrY slices of a woman do). Over HTTP(S)"
+  echo "an engine from 0.4.0 on asks for each container once (\`count --transport ranges\`, its default) and moves about"
+  echo "cum_mb_floor; htslib's own reader (\`--transport htslib\`, and every older engine) asks for everything to the end of"
+  echo "the file at each fetch and drops what is in flight at the next, which moved 3.4 to 4.7 times as much on the wire"
+  echo "(DESIGN.md section 4, a remote fetch). Candidate classes have no sinks yet: a plan lists them for the whole-file"
+  echo "scans only."
   echo
   if "$ENGINE" count --help 2>/dev/null | grep -q -- '--classes'; then takes="takes"; else takes="does not take"; fi
   echo "Engine for count_flags.txt: \`$(basename "$ENGINE")\` ($("$ENGINE" --version 2>/dev/null || echo unknown); the binary's sha256 begins"

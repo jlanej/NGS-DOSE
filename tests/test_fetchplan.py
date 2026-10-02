@@ -637,6 +637,23 @@ def test_count_flags_follow_what_the_engine_takes(menu_dir, tmp_path):
     assert any("fae1124 does not and refuses the fetch" in x for x in said)
 
 
+def test_a_priced_plan_says_when_its_engine_moves_more_over_http(menu_dir, tmp_path):
+    """Over HTTP(S) an engine before 0.4.0 lets htslib read the CRAM, which moves several times the priced bytes; an
+    engine that takes --transport asks for the priced containers and moves about the floor. A priced plan's notes
+    say so for the former only, and an unpriced plan says nothing of bytes."""
+    m = fetchplan.read_menu(menu_dir / "menu.tsv")
+    takes = ["    --classes <CLASSES>", "    --allow-missing-sinks", "    --pad <PAD>", "    --group-gap <GAP>"]
+    old, new = fake_engine(tmp_path / "old", *takes), fake_engine(tmp_path / "new", *takes, "    --transport <TRANSPORT>")
+    priced = dict(classes=["A"], crais=[menu_dir / "a.crai"], contigs=menu_dir / "ref.fai")
+    for eng, noted in ((old, True), (new, False)):
+        said = []
+        fetchplan.make_plan(m, engine=eng, log=said.append, **priced)
+        assert any("lists no --transport" in x and cost.HTSLIB_OVER_HTTP in x and "cum_mb_floor" in x for x in said) == noted, said
+    said = []
+    fetchplan.make_plan(m, classes=["A"], engine=old, log=said.append)
+    assert not any("--transport" in x for x in said), said
+
+
 def test_the_cli_refuses_a_plan_the_engine_cannot_run_and_records_the_override(menu_dir, tmp_path):
     old = fake_engine(tmp_path / "old", "    --unmapped")
     r = run("--menu", menu_dir / "menu.tsv", "--classes", "A", "--engine", old, "-o", tmp_path / "x")

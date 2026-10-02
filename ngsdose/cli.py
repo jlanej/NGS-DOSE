@@ -960,7 +960,9 @@ def main(argv=None):
     f.add_argument("--crai", nargs="+", metavar="CRAI", help="CRAM indexes to cost the plan on (median over them); each from the same place "
                    "as its CRAM. The plan is priced as `ngs-dose count -m fetch` reads it: one indexed fetch per run of touching or "
                    "overlapping intervals, each decoding every CRAM slice that overlaps it (with its container's compression header), "
-                   "so a slice under several runs is decoded once per run; cum_mb_floor is the plan with every slice decoded once")
+                   "so a slice under several runs is decoded once per run; cum_mb_floor is the plan with every slice decoded once. Over "
+                   "HTTP(S) an engine from 0.4.0 on (`count --transport ranges`, its default) moves about cum_mb_floor: it asks for the "
+                   "containers its queries read, each once; an older one, or --transport htslib, moves several times the MB")
     f.add_argument("--contigs", metavar="FILE", help="the contigs of the CRAMs in header order: the .fai or .dict of their reference, or "
                    "`samtools view -H` output")
     f.add_argument("--engine", default="ngs-dose", help="the ngs-dose that will run the fetch (default: ngs-dose on PATH). When the plan "
