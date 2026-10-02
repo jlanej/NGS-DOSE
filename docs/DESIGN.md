@@ -283,10 +283,11 @@ touches the alignment again, so models can be revised without re-reading a bioba
   interval's counts are committed only once it has been read to its end, and a failed interval
   is retried with a fresh connection, so transient network errors neither lose nor double-count
   reads. CRAM decoding is restricted to the fields used (no
-  qualities, names or tags). Remote `https://` inputs work through htslib (not `s3://` or
+  qualities, names or tags). Remote `http://` and `https://` inputs are fetched by exact byte
+  ranges from 0.4.0 on (below: a remote fetch) and scanned through htslib's stream (not `s3://` or
   `gs://`: this build of htslib has no S3 or GCS plugin); the engine points the bundled libcurl
   at the system CA store. A remote input that still fails after `--retries` attempts (default 5, per
-  open and per interval) ends the process with exit status 75 (`EX_TEMPFAIL`), so that the caller
+  open, per interval and per byte range) ends the process with exit status 75 (`EX_TEMPFAIL`), so that the caller
   can try again later; a missing file, a refused request (404, 403) or a wrong reference exits 1 at
   once, as does a remote file with no index beside it. A lost index request (a 503 on a remote
   BAM's `.csi`, for one) is retried like any other open. The engine's own messages and the counts'
@@ -347,7 +348,11 @@ within 0.6% for `core_tel` in the median (524.5 against 522.7 MB; 546.9 with a q
 women the 40 chrY truth regions, further apart than 50 kb, still decode a few sparse slices each
 (the truth regions alone 68-95% above their floor, the base controls file 12-15%); a reader that
 sorted the plan's slices would save that. `ngsdose fetchplan` probes the engine for `--group-gap`
-and prices an older engine's fetches by its own rule (a query per run). The index numbers contigs by their place in the header, so the contig order comes
+and prices an older engine's fetches by its own rule (a query per run). These are the bytes a fetch
+decodes, which is what it reads of a local file. Over HTTP(S) the engine (0.4.0 on) asks for each
+container once however many queries decode it, so a remote fetch moves about the floor (below: a
+remote fetch); htslib's own reader, which every engine before 0.4.0 used, moved 3.4 to 4.7 times as
+much, and `fetchplan` says so in its notes when the engine it probes is one of those. The index numbers contigs by their place in the header, so the contig order comes
 from the reference's `.fai` or `.dict`, or `samtools view -H`; a counts file's `contigs` list will
 not do, as it holds only the contigs that held reads (2,168 of 3,366 for HG00096). The index must
 be the CRAM's own: an index of another file of the same sample gave wrong numbers, and nothing in
@@ -478,6 +483,62 @@ and another writer cuts slices differently, so a site costs its options on its o
 (`fetchplan --crai`, the median over several) with sinks learned from its own scans (`--sinks`).
 The experimental sinks and sub-options here were learned from NYGC bwa-mem scans of the GRCh38
 analysis set and are for those CRAMs only.
+
+### A remote fetch, by exact byte ranges
+
+htslib reads a URL with open-ended range requests (`hfile_libcurl`): a seek starts a request from
+the new offset to the end of the file and abandons the one before, and what was in flight on it is
+thrown away (htslib's source carries a to-do for bounded requests). A fetch seeks at every query,
+so over HTTPS it moved several times the bytes its index prices, the more the more queries and the
+faster the link: the fetch of HG02300's karyotype windows (1,294 queries) took 2,184 MB on the wire
+against 464 MB by exact ranges (1,517 MB in an earlier measurement of the same fetch), NA12878's with
+the bundle's controls and sinks (1,298 queries) 2,531 MB against 746 MB (a Mac on a home connection
+fetching from the 1000 Genomes bucket on S3, bytes received by the network interface, 2026-10-01).
+
+From 0.4.0 a fetch of an `http://` or `https://` input reads its bytes by exact ranges (`count
+--transport ranges`, the default; `--transport htslib` keeps htslib's reader). The engine
+downloads the index once (or reads `--index`), works out from it which bytes each query of the
+fetch will read, and asks for exactly those, each once, with bounded `Range: bytes=a-b` requests
+over kept-alive connections, as many as `-@` (2 to 16), in file order and ahead of the workers (a
+worker that needs a range no connection has reached asks for it itself). htslib never sees the
+URL: it opens the input through an hFILE backend of the engine's own (`src/ranges.rs`, the
+`ngsdose:` scheme), which serves it those bytes at their offsets. htslib therefore decodes what it
+would have decoded from the server, byte for byte, through the same iterator, and the counts
+cannot differ from htslib's transport. A read the plan did not foresee is fetched when it happens
+and counted (reads outside the plan, in the engine's last line): a plan that misses costs bytes,
+never counts.
+
+- **What a query reads.** For a CRAM the engine replays htslib's walk: the container
+  `cram_index_query` starts at (the .crai nested as `cram_index_load` nests it), then container
+  after container as `cram_next_slice` reads them, whole when it overlaps the query or holds
+  several references, its header only (1 kB) when it lies wholly before the query or is the first
+  past it. For a BAM, htslib's own iterator gives each query's chunks; their whole BGZF blocks are
+  asked for, and the block a chunk ends inside is completed after its header, which holds its length,
+  has come (a second request). The unmapped bin (`--unmapped`) is everything from its first container
+  or block to the end of the file. Ranges less than 16 kB apart are joined, and no request is larger
+  than 4 MiB, so the data reach the workers in pieces. The first 64 kB (the format, the header), the
+  rest of a CRAM's header container and the end-of-file marker are read when the input is opened.
+- **What it moves.** HG02300: 423.8 MB of bodies (422.2 MB planned, the header and the 1.4-MB
+  index) for a floor of 420.2 MB and a price of 451.7 MB (`ngsdose.cost`), in 1,264 requests and
+  63 s against 146 s through htslib. NA12878: 675.0 MB for 671.5 and 697.4, in 1,302 requests and
+  71 s against 180 s. Nothing was read outside the plan in either, and both counts files equal
+  those of main's engine through htslib in every field but `elapsed_sec`. A remote fetch thus moves
+  about the floor (`cum_mb_floor`): each container once, plus a container header per query, the index
+  and the header; the price (`cum_mb_median`) is what it decodes. On the wire the bodies grow by
+  about 10% (TCP, TLS and HTTP).
+- **When it fails.** Each request is retried as an open is (`--retries`; 1, 2, 4 ... s apart). A range
+  that still fails fails the reads that need it, and their interval is retried as before, asking
+  again; a remote input that keeps failing exits 75. Every answer is checked: 206 with the bytes
+  asked for, the file's size, and its entity tag (ETag) against the first answer's. A file replaced
+  during the fetch, a server that answers a range with the whole file (stopped after 64 kB) or a
+  temporary file that cannot be written ends the run with exit 1, as a 404 for the file or its index
+  does.
+- **What it needs.** The downloaded bytes are kept in an unlinked temporary file in `TMPDIR` (or
+  `--spool-dir`) as large as the fetch, 0.4–0.7 GB for the bundle's plans on a 30x CRAM, removed when
+  the run ends, however it ends; memory holds one request's body per connection (at most 4 MiB). A
+  server must answer range requests, as S3, GCS, Azure and the common web servers do. `ftp://`
+  inputs, and runs with `HTS_AUTH_LOCATION` set (whose bearer tokens only htslib's reader sends),
+  stay with htslib's reader.
 
 ## 5. k-mer panels
 
@@ -1348,7 +1409,9 @@ Apple M1 Max, NA12878 (15.8 GB CRAM, 758 M primary reads), bundle GRCh38-v1:
 | scan, 8 threads, with the experimental panels (1.1 M k-mers, 14 classes in all) | local CRAM | 1 min 40 s | 13.5 min | 15.8 GB |
 | scan, the same | the same CRAM over HTTPS, home connection (~15 MB/s) | 15–18 min | 14 min | 15.8 GB, network-bound |
 | fetch, 8 threads | local CRAM | 2–3 s (cohort: 5.4 s, see below) | ~15 s | ~0.51 GB (about 2,010 of 79,637 slices with the current sinks, TEL included; chrM and chrEBV about 10 MB of it, chrY about 5 MB) |
-| fetch, 16 threads | `https://1000genomes.s3.amazonaws.com/…` from a home connection | 60–100 s | ~20 s | ~0.51 GB |
+| fetch, 16 threads, through htslib's reader (before 0.4.0) | `https://1000genomes.s3.amazonaws.com/…` from a home connection | 60–100 s | ~20 s | ~0.51 GB decoded, several times that moved |
+| fetch, 4 threads, by exact byte ranges (0.4.0), the 0.3.0 bundle's controls (3,247 regions) and sinks | the same, 2026-10-01 | 71–76 s | 28 s | 0.68 GB moved (0.75 GB on the wire) |
+| fetch, the same through htslib's reader (`--transport htslib`) | the same, the same day | 180 s | | 2.53 GB on the wire |
 | estimate | counts JSON | ~1 s | | 70–340 kB |
 
 The fetch timings were measured on one genome before the TEL sinks were added (0.47 GB, about
@@ -1362,7 +1425,8 @@ per genome) and never needs a CRAM on disk; scanned whole it is about 750 CPU-ho
 transfer. The 1000 Genomes run does both on each staged CRAM, a few files at a time, and deletes
 the CRAM afterwards (NGS-DOSE-1000G's `pipeline/01_stage_and_dose.sh`), so that fetch can be
 checked against scan in every genome. Peak memory is 0.6 GB (fetch) and 1.3 GB (scan) at 8
-threads.
+threads, and 0.8 GB for the remote fetch by exact ranges above (4 threads, the 0.3.0 bundle; the
+downloaded bytes wait in a temporary file, not in memory).
 
 ## 12. What it does not do, and known limits
 
@@ -1816,6 +1880,7 @@ for hard-clipped primary alignments, below, touches none of its bwa `-Y` alignme
 | The plan's price is what the fetch reads | the fixture as a CRAM under a read-logging shim; 13 NYGC indexes priced per interval | **false**: `cost.py` priced the union of slices once, while the engine makes one indexed fetch per run of intervals and htslib decodes a slice again for every run overlapping it - the 1.67-MB fixture CRAM was read as 37 MB, and `core_tel` costs 2-3% more than priced in men and 11-13% in women (chrY's few sparse slices decoded once per truth region), `xy_arrays` up to 27% | priced as the engine reads (one fetch per merged run, a slice once per run), the floor with every slice once reported beside it (`cum_mb_floor`); every documented figure regenerated (`core_tel` 546.9 MB, 3.33%); since 0.3.0 the engine joins intervals less than 50,000 bp apart into one query, and `core_tel` reads 524.5 MB, 3.24% (section 4) |
 | Closing an indexed reader is safe | 186 fetches of four workers each, for the karyotype windows (one aborted: "pointer being freed was not allocated", in `cram_index_free` under the reader's drop); the fixture's CRAM fetched with freed memory overwritten (macOS `MallocScribble`, glibc `MALLOC_PERTURB_`) | **false**: rust-htslib 1.0.1 closes the file and then destroys the index, and a CRAM's index belongs to its file handle, so htslib read the freed handle at every close. While the memory still held its old contents the field read empty and nothing happened; once another thread had taken it, htslib freed a pointer that was not its own: an abort, or a damaged heap. With freed memory overwritten the engine of 0.2.0 fails every fetch of a CRAM | the engine's reader (`Indexed` in `count.rs`) keeps the binding from destroying a CRAM's index a second time (`hts_close` has freed it, so nothing leaks but 16 bytes and an `Arc` per reader); rust-htslib pinned at `=1.0.1` with a unit test that reads the lock file, and an I/O test that fetches with freed memory overwritten at one and four threads |
 | A chromosome's regions read alike whatever the GC of the chromosome | the karyotype windows of 157 genomes: each autosome's level less two, against the chromosome's GC content | **false** in some libraries: chromosomes 16, 17, 19 and 22, the richest in GC, read low or high together, in proportion to the chromosome's GC and with no pattern inside a chromosome (the leading pattern of the levels follows the chromosomes' GC at r 0.93; predicted from the contrasts within chromosomes at r 0.43, where a pattern that followed the regions' own GC was predicted at 0.93). Two genomes read chromosome 19 lost in 5% of the cells | each chromosome set against the line the other autosomes of the same genome give, a common shift and a slope on the chromosomes' GC (section 8, `karyotype.gc_tilt`) |
+| A remote fetch moves the bytes its index prices | HG02300's fetch of the karyotype windows and NA12878's of the bundle's controls and sinks from the 1000 Genomes bucket on S3, the bytes the network interface received | **false**: htslib asks for everything from each query's start to the end of the file and drops what is in flight at the next query: 2,184 MB on the wire for 451.7 MB priced (420.2 MB with every slice once), 2,531 MB for 697.4 MB (1,517 MB in a first measurement of the same HG02300 fetch) | engine 0.4.0 reads a remote input by exact byte ranges, planned from the index as htslib's iterator will read it, each container once, and serves htslib those bytes through an hFILE backend of its own (section 4: a remote fetch): 464 and 746 MB on the wire, 423.8 and 675.0 MB of bodies, no read outside the plan, counts equal in every field but `elapsed_sec` |
 
 Not tested, and the cohort run will not test them either: a chemistry other than Illumina's;
 DRAGEN alignments beyond one genome per version (section 12); an orthogonal assay for the

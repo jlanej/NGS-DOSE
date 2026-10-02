@@ -19,10 +19,15 @@ woman's CRAM, decoded once per chrY truth region; the pieces of a karyotype wind
 of the rule: an interval that bridges two queries can make a plan cheaper (one decode of their
 shared slices instead of two), so adding an option does not always make a plan dearer.
 
-These are the bytes of the slices, which is what a local file costs to read. Over HTTP, htslib
-asks for an open-ended range at every query and drops what is in flight at the next, so a remote
-fetch moves more than this (three to four times as much was measured for 1,400 queries of a 1000
-Genomes CRAM on S3): the number of queries matters there as much as their bytes.
+These are the bytes of the slices a fetch decodes, which is what a local file costs to read. Over
+HTTP(S) the engine (0.4.0 on, `count --transport ranges`, its default) asks for the containers its
+queries read, each once however many queries decode it, so a remote fetch moves about the floor
+(`price_once`), plus a container header after each query and the index: HG02300 with the karyotype
+windows moved 423.8 MB for a floor of 420.2 MB and a price of 451.7 MB, NA12878 with the bundle's
+controls and sinks 675.0 MB for 671.5 and 697.4 (HTTP bodies). htslib's own reader (`--transport
+htslib`, and every engine before 0.4.0) asks for an open-ended range at every query and drops what is
+in flight at the next, so it moves several times as much (HTSLIB_OVER_HTTP): for it the price is a
+lower bound, and the number of queries matters as much as their bytes.
 
 The .crai index lists every slice (gzip-compressed TSV: reference id, 1-based alignment start,
 alignment span, container byte offset, slice byte offset within the container's data, slice size in
@@ -49,6 +54,10 @@ from collections import defaultdict
 
 UNMAPPED = "*"                                             # the contig name of the unmapped bin in an interval list
 GROUP_GAP = 50_000                                         # src/count.rs DEFAULT_GROUP_GAP (CRAM): intervals this close share one query
+# what htslib's own reader moves over HTTPS (`count --transport htslib`, every engine before 0.4.0), against the engine's exact
+# ranges: bytes received by the network interface during each run, a Mac fetching from the 1000 Genomes bucket on S3, 2026-10-01
+HTSLIB_OVER_HTTP = ("3.4 to 4.7 times the bytes on the wire, measured on 1000 Genomes CRAMs on S3: HG02300, 2,184 MB against 464 MB by exact "
+                    "ranges; NA12878, 2,531 MB against 746 MB")
 
 
 def read_contigs(path) -> list[tuple[str, int | None]]:

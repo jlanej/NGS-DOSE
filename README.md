@@ -145,10 +145,18 @@ target/release/ngs-dose count -m fetch -@ 16 \
     -p $B/panel.k31.tsv.gz -c $B/controls.fa.gz --sinks $B/sinks.bed -o NA12878.json.gz
 ```
 
-A remote open or fetched interval that still fails after `--retries` attempts (and a stalled
-connection) ends with exit status 75, for the scheduler to retry the sample later (a lost index
-request is retried like any other); a read error in the middle of a remote scan, which cannot
-resume, still exits 1 at once, as does a file with no index beside it. Other errors exit 1, and
+A fetch of an `http://` or `https://` URL reads the CRAM's index first and asks for exactly the
+containers its queries read, each once, over kept-alive connections (engine 0.4.0; `--transport
+ranges`, the default): it moves about what `ngsdose fetchplan` prices with every slice once - 675 MB
+for NA12878 above, where htslib's own reader (`--transport htslib`, and every engine before 0.4.0),
+which asks for everything to the end of the file at every query and drops what is in flight at the
+next, moved 3.4 times as much on the wire - and the counts are the same, field for field. The bytes
+are kept in a temporary file in `TMPDIR` (or `--spool-dir`), as large as the fetch, until the run
+ends. A remote open, byte range or fetched interval that still fails after `--retries` attempts
+(and a stalled connection) ends with exit status 75, for the scheduler to retry the sample later (a
+lost index request is retried like any other); a read error in the middle of a remote scan, which
+cannot resume, still exits 1 at once, as does a file with no index beside it, a server without range
+requests in a fetch, and a file that changes while it is fetched (its ETag). Other errors exit 1, and
 bad arguments 2. The engine's messages and the counts' `input` carry a URL with its query string
 redacted; for an input or `--index` URL that has one (a signed URL), htslib's own messages, which
 would print the signature in full on every failed open, are turned off before the first open, and
@@ -287,7 +295,10 @@ overlapping intervals, each decoding every slice that overlaps it with its conta
 compression header, so a slice under several runs is decoded once per run. Beside that figure the
 plan reports the floor with every slice decoded once (`cum_mb_floor`), which a reader that sorted
 the plan's slices would reach: a few percent below in men and 11-13% in women on `core_tel`,
-whose few sparse chrY slices are decoded once per chrY truth region. It writes the files that
+whose few sparse chrY slices are decoded once per chrY truth region. The first figure is what a fetch
+decodes; over HTTP(S) an engine from 0.4.0 on moves about the floor, since it asks for each
+container once (DESIGN.md §4, a remote fetch), and an older engine several times the first figure,
+which `fetchplan` notes when the engine it probes is one. It writes the files that
 `ngs-dose count -m fetch` takes. The options are
 the rows of `resources/fetch_menu.tsv`; its header documents the format, and its tiers and presets
 are meant to be edited. The menu is found beside the bundle's directory (the repository, the image
@@ -542,7 +553,9 @@ DESIGN.md §15 lists what held and what was wrong, each with its fix. Validated 
 the 1000 Genomes cohort in NGS-DOSE-1000G (a twelve-genome pilot with independent library
 replicates, then the cohort run: trios, two counting modes, ddPCR, assemblies, published
 estimates); its results page covers all 3,202 genomes and 602 complete trios (the run finished on
-2026-09-28).
+2026-09-28). A remote fetch asks for exact byte ranges (0.4.0): over HTTPS it moves about the floor
+its index prices, a third to a fifth of what htslib's own reader moved, with counts equal field for
+field (DESIGN.md §4).
 Experimental panels - ten satellite families, measured by scan, with experimental NYGC sinks
 that no fetch has yet been compared against, and the telomeric repeat, which the bundle's sinks
 make fetchable (no TEL fetch has yet been compared with its scan) - ship under

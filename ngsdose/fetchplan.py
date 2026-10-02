@@ -511,6 +511,12 @@ def make_plan(menu: Menu, classes=(), presets=(), budget_mb=None, fill=False, st
             gap = 0
             notes.append(f"costed for an engine that makes one query per interval ({what} lists no --group-gap: an engine before 0.3.0); "
                          f"one that joins intervals within {cost.GROUP_GAP:,} bp into a query reads less")
+        # over HTTP(S) an engine before 0.4.0 lets htslib read the CRAM, which moves several times the bytes priced here
+        if had is not None and crais and "--transport" not in had:
+            notes.append(f"over HTTP(S) this engine moves more than these MB ({what} lists no --transport: an engine before 0.4.0, whose "
+                         f"htslib asks for everything from each query's start to the end of the file and drops what is in flight at the "
+                         f"next query: {cost.HTSLIB_OVER_HTTP}); from 0.4.0 on the engine asks for exactly the containers priced here, each "
+                         "once, and moves about cum_mb_floor")
     indexes = []
     if crais:
         ctg = cost.read_contigs(contigs)
