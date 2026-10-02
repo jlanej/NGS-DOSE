@@ -6,6 +6,7 @@ mod count;
 mod fasta;
 mod kmer;
 mod panel;
+mod ranges;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -17,6 +18,16 @@ use std::path::{Path, PathBuf};
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// How a fetch reads an http:// or https:// input.
+#[derive(Clone, Copy, ValueEnum, PartialEq, Debug)]
+enum Transport {
+    /// the bytes the index says the queries read, asked for exactly (bounded range requests, kept-alive
+    /// connections, several at a time), each once
+    Ranges,
+    /// htslib's own reader: an open-ended request at every query, the bytes in flight at the next one thrown away
+    Htslib,
 }
 
 #[derive(Clone, Copy, ValueEnum, PartialEq)]
@@ -35,9 +46,10 @@ enum Cmd {
         /// messages without its query, fragment and user info, where signed URLs keep their keys.
         #[arg(short, long)]
         input: String,
-        /// index path or URL. A local path is safest: without --index, and for a BAM index given as a
-        /// URL, htslib saves the index in the working directory and reuses a same-named file there
-        /// unchecked (a CRAM index URL is read into memory)
+        /// index path or URL. A remote fetch by exact byte ranges (--transport ranges) reads an index URL, or
+        /// the index beside the file, into memory. Otherwise a local path is safest: without --index, and for
+        /// a BAM index given as a URL, htslib saves the index in the working directory and reuses a same-named
+        /// file there unchecked (a CRAM index URL is read into memory)
         #[arg(long)]
         index: Option<String>,
         /// reference FASTA the CRAM was made with (for DRAGEN CRAMs, DRAGEN's own hg38). A CRAM is
@@ -130,6 +142,21 @@ enum Cmd {
         /// HTTPS connection waits for ever rather than failing); 0 disables
         #[arg(long, default_value_t = 300)]
         stall_timeout: u64,
+        /// fetch mode, an http:// or https:// input: how its bytes are read. `ranges` reads the index first
+        /// (downloaded once, or --index), works out from it which bytes every query reads (the CRAM containers,
+        /// the BGZF blocks of a BAM's chunks) and asks for exactly those, each once, over kept-alive
+        /// connections (as many as -@, 2 to 16): a remote fetch moves the floor `ngsdose fetchplan` prices
+        /// (every slice once). `htslib` lets htslib read the URL, which asks for everything from each query's
+        /// start to the end of the file and drops what is in flight at the next query (3.4 to 4.7 times the
+        /// bytes on the wire, measured on 1000 Genomes CRAMs). The counts are the same. Local files, scans and
+        /// other URLs are read by htslib
+        #[arg(long, value_enum, default_value = "ranges")]
+        transport: Transport,
+        /// fetch mode, `--transport ranges`: the directory of the temporary file that holds the downloaded bytes
+        /// until the run ends, removed however it ends (as large as the fetch: 0.4 to 0.7 GB for the bundle's
+        /// plans on a 30x CRAM). Default: TMPDIR, else /tmp
+        #[arg(long)]
+        spool_dir: Option<PathBuf>,
     },
     /// Build a k-mer panel from class FASTAs, filtered against background genomes
     Panel {
@@ -272,6 +299,8 @@ fn main() {
     // htslib loads its I/O plugins at the first open, leaving errno from the search; done here, so
     // that errno after a failed open is the open's own (a 404 is final, a 503 is retried)
     unsafe { rust_htslib::htslib::hfile_has_plugin(c"libcurl".as_ptr()) };
+    // the scheme a remote fetch by exact byte ranges is read through, registered before any thread opens a file
+    ranges::register();
     if let Err(e) = run(Cli::parse()) {
         // htslib's messages carry URLs, signed ones too
         eprintln!("Error: {}", count::scrub_urls(&format!("{:?}", e)));
@@ -434,6 +463,8 @@ fn run(cli: Cli) -> Result<()> {
             group_gap,
             allow_missing_sinks,
             stall_timeout,
+            transport,
+            spool_dir,
         } => {
             let t0 = std::time::Instant::now();
             let mut panel = panel::Panel::load_many(&panel_path)?;
@@ -452,6 +483,21 @@ fn run(cli: Cli) -> Result<()> {
             }
             if mode == Mode::Fetch && sinks.is_none() {
                 bail!("--mode fetch needs --sinks (class sink intervals for this reference build)");
+            }
+            // a remote fetch by exact byte ranges: the first bytes, the index and the end-of-file marker now; the
+            // probe and the workers read the file through it
+            if mode == Mode::Fetch && transport == Transport::Ranges && inp.is_url() {
+                let htslib_reads = if !ranges::supports(&inp.path) {
+                    Some("--transport ranges reads http:// and https:// URLs")
+                } else if std::env::var_os("HTS_AUTH_LOCATION").is_some() {
+                    Some("HTS_AUTH_LOCATION is set, and only htslib's reader sends its tokens")
+                } else {
+                    None
+                };
+                match htslib_reads {
+                    None => inp.remote = Some(ranges::Remote::open(&inp.path, inp.index.as_deref(), retries, spool_dir.as_deref())?),
+                    Some(why) => eprintln!("[count] note: {} is read by htslib ({})", inp.display(), why),
+                }
             }
             // header: contig ids and the sample name
             let probe = inp.probe(mode == Mode::Fetch, mode == Mode::Fetch, retries)?;

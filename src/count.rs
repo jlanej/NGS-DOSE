@@ -110,7 +110,7 @@ fn is_permanent(e: &anyhow::Error) -> bool {
 }
 
 /// Wait before attempt `attempt + 1`: 1, 2, 4, 8, 16, then 16 s.
-fn backoff(attempt: usize) {
+pub(crate) fn backoff(attempt: usize) {
     std::thread::sleep(std::time::Duration::from_millis(500 << attempt.min(5)));
 }
 
@@ -138,7 +138,7 @@ pub struct Acc {
 pub static PROGRESS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[inline]
-fn tick() {
+pub(crate) fn tick() {
     PROGRESS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -660,6 +660,8 @@ pub struct Input {
     pub reference: Option<PathBuf>,
     /// the input is a CRAM (set from the probe)
     pub cram: bool,
+    /// a URL read by exact byte ranges (`count --transport ranges`, ranges.rs): htslib opens it through this
+    pub remote: Option<std::sync::Arc<crate::ranges::Remote>>,
 }
 
 /// What opening the input once tells: its header, its end-of-file marker, and its format.
@@ -783,15 +785,20 @@ extern "C" {
 
 /// errno = 0, so that what htslib leaves in it after a failed call is its own.
 pub fn clear_errno() {
+    set_errno(0);
+}
+
+/// errno = n: how an hFILE backend (ranges.rs) tells htslib why a call failed.
+pub fn set_errno(n: i32) {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "linux", target_os = "android"))]
     unsafe {
-        *errno_location() = 0;
+        *errno_location() = n;
     }
 }
 
 impl Input {
     pub fn new(path: String, index: Option<String>, reference: Option<PathBuf>) -> Input {
-        Input { path, index, reference, cram: false }
+        Input { path, index, reference, cram: false, remote: None }
     }
     pub fn is_url(&self) -> bool {
         self.path.contains("://")
@@ -878,25 +885,37 @@ impl Input {
     /// that is an open failure too, and may pass on another attempt.
     pub fn open_indexed(&self) -> Result<Indexed> {
         self.check_scheme()?;
-        let rd = if self.is_url() {
-            let full = match &self.index {
-                Some(i) => format!("{}##idx##{}", self.path, i),
-                None => self.path.clone(),
-            };
-            let url = url::Url::parse(&full).map_err(|e| anyhow::Error::new(Permanent(format!("bad URL {}: {}", redact(&full), e))))?;
+        let rd = if let Some(r) = &self.remote {
+            // the file and its index as ranges.rs serves them: what went wrong is the downloads' to say
             clear_errno();
-            bam::IndexedReader::from_url(&url)
+            bam::IndexedReader::from_url(&r.htslib_url()).map_err(|e| {
+                let msg = format!("cannot open {} with its index: {}", self.display(), scrub_urls(&e.to_string()));
+                match e {
+                    rust_htslib::errors::Error::BamInvalidIndex { .. } => anyhow::Error::new(Permanent(msg + " (htslib cannot read the index)")),
+                    _ => r.explain(anyhow::anyhow!(msg)),
+                }
+            })?
         } else {
-            clear_errno();
-            match &self.index {
-                Some(i) => bam::IndexedReader::from_path_and_index(&self.path, i),
-                None => bam::IndexedReader::from_path(&self.path),
-            }
+            let rd = if self.is_url() {
+                let full = match &self.index {
+                    Some(i) => format!("{}##idx##{}", self.path, i),
+                    None => self.path.clone(),
+                };
+                let url = url::Url::parse(&full).map_err(|e| anyhow::Error::new(Permanent(format!("bad URL {}: {}", redact(&full), e))))?;
+                clear_errno();
+                bam::IndexedReader::from_url(&url)
+            } else {
+                clear_errno();
+                match &self.index {
+                    Some(i) => bam::IndexedReader::from_path_and_index(&self.path, i),
+                    None => bam::IndexedReader::from_path(&self.path),
+                }
+            };
+            rd.map_err(|e| {
+                let errno = std::io::Error::last_os_error().raw_os_error();
+                self.open_failed(" with its index", e, errno)
+            })?
         };
-        let rd = rd.map_err(|e| {
-            let errno = std::io::Error::last_os_error().raw_os_error();
-            self.open_failed(" with its index", e, errno)
-        })?;
         // wrapped before anything can fail: the reader is closed through `Indexed` on every path
         let mut rd = Indexed::new(rd);
         if rd.header().inner_ptr().is_null() {
@@ -1478,6 +1497,17 @@ pub fn fetch(
     // one query per group of neighbouring intervals (DEFAULT_GROUP_GAP): a record is counted, as
     // before, only if it starts inside one of the plan's intervals
     let groups = group_plan(&plan, p.group_gap.max(0));
+    // over HTTP(S) by exact byte ranges: the bytes the queries read, asked for before the workers need them
+    if let Some(r) = &input.remote {
+        let queries: Vec<(i32, i64, i64)> = groups.iter().map(|&(i, j)| (plan[i].0, plan[i].1, plan[j - 1].2)).collect();
+        r.prefetch(&queries, p.unmapped, || input.open_indexed(), p.threads.clamp(2, 16)).map_err(|e| {
+            if is_permanent(&e) {
+                e
+            } else {
+                e.context(TempFail)
+            }
+        })?;
+    }
     let m5 = sq_m5(header);
     let label = |job: Option<usize>| match job {
         Some(g) => {
@@ -1543,6 +1573,10 @@ pub fn fetch(
                                     tick();
                                     rd = None;
                                     attempt += 1;
+                                    let e = match &input.remote {
+                                        Some(r) => r.explain(e),
+                                        None => e,
+                                    };
                                     let why = match job {
                                         Some(g) if attempt == 1 && !is_permanent(&e) => {
                                             let c = &plan[groups[g].0].3;
@@ -1574,12 +1608,18 @@ pub fn fetch(
             .collect();
         handles.into_iter().map(|h| h.join().unwrap_or_else(|x| Err(panicked(x)))).collect()
     });
+    if let Some(r) = &input.remote {
+        r.finish();
+    }
     let mut acc = Acc::new(panel, p.bin);
     let mut stats = ReadStats::new(p.place_bin, false);
     for r in results {
         let (a, s) = r?;
         acc.merge(&a);
         stats.merge(&s);
+    }
+    if let Some(r) = &input.remote {
+        eprintln!("{}", r.summary());
     }
     Ok((acc, stats))
 }
